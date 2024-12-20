@@ -22,7 +22,6 @@ from .hclient import HClient as Client
 from .scale_up import server_name_prefix, runner_name_prefix
 from .config import Config
 from .actions import Action
-from .request import request
 
 
 def all(args, config: Config):
@@ -46,17 +45,7 @@ def all(args, config: Config):
             continue
 
         with Action(f"Deleting runner {runner.name}") as action:
-            _, resp = request(
-                f"https://api.github.com/repos/{config.github_repository}/actions/runners/{runner.id}",
-                headers={
-                    "Accept": "application/vnd.github+json",
-                    "Authorization": f"Bearer {config.github_token}",
-                    "X-GitHub-Api-Version": "2022-11-28",
-                },
-                method="DELETE",
-                data={},
-            )
-            action.note(f"{resp.status}")
+            repo.remove_self_hosted_runner(runner.id)
 
     with Action("Getting list of servers"):
         servers: list[BoundServer] = client.servers.get_all()

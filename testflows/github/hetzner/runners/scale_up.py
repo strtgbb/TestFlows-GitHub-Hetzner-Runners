@@ -21,7 +21,6 @@ import threading
 from dataclasses import dataclass
 
 from .actions import Action
-from .request import request
 from .args import image_type
 from .logger import logger
 from .config import Config, check_image, check_startup_script, check_setup_script
@@ -43,6 +42,8 @@ from github import Github
 from github.Repository import Repository
 from github.WorkflowRun import WorkflowRun
 from github.SelfHostedActionsRunner import SelfHostedActionsRunner
+
+import requests
 
 from concurrent.futures import ThreadPoolExecutor, Future
 
@@ -117,17 +118,18 @@ def server_setup(
         wait_ssh(server=server, timeout=timeout)
 
     with Action("Getting registration token for the runner", server_name=server.name):
-        content, resp = request(
+        response = requests.post(
             f"https://api.github.com/repos/{github_repository}/actions/runners/registration-token",
             headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {github_token}",
-                "X-GitHub-Api-Version": "2022-11-28",
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {github_token}",
+            "X-GitHub-Api-Version": "2022-11-28",
             },
-            data={},
-            format="json",
+            json={},
+            allow_redirects=True,
         )
-        GITHUB_RUNNER_TOKEN = content["token"]
+        response.raise_for_status()
+        GITHUB_RUNNER_TOKEN = response.json()["token"]
 
     with Action("Executing setup.sh script", server_name=server.name):
         ssh(server, f"bash -s  < {setup_script}", stacklevel=5)

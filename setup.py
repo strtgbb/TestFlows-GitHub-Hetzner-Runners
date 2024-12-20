@@ -52,9 +52,9 @@ setup(
     scripts=["testflows/github/hetzner/runners/bin/github-hetzner-runners"],
     zip_safe=False,
     install_requires=[
-        "PyGithub==1.59.0",
+        "PyGithub==2.5.0",
         "hcloud==1.26.0",
-        "requests-cache==1.1.0",
+        "requests==2.32.3",
         "PyYAML==6.0.2",
     ],
     extras_require={"dev": []},

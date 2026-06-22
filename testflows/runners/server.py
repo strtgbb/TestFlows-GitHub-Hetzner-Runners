@@ -18,6 +18,7 @@ import socket
 import ipaddress
 import subprocess
 import signal
+import shlex
 
 from datetime import datetime, timezone
 from collections import namedtuple
@@ -147,9 +148,12 @@ def ssh_command(server, options: str = ""):
     port_option = ""
     if isinstance(server, ProviderServer) and getattr(server, "ssh_port", None):
         port_option = f'-p {server.ssh_port} '
+    identity_option = ""
+    if isinstance(server, ProviderServer) and getattr(server, "ssh_key_path", None):
+        identity_option = f'-i {shlex.quote(server.ssh_key_path)} '
     return (
         f'ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
-        f"{port_option}{options}{' ' if options else ''}{user}@{ip}"
+        f"{port_option}{identity_option}{options}{' ' if options else ''}{user}@{ip}"
     )
 
 
@@ -164,9 +168,19 @@ def ssh(server, cmd: str, *args, stacklevel=3, **kwargs):
     )
 
 
-def scp(source: str, destination: str, *args, **kwargs):
+def scp(source: str, destination: str, *args, server=None, **kwargs):
     """Execute copy over SSH."""
-    scp_command = f'scp -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" {source} {destination}'
+    port_option = ""
+    identity_option = ""
+    if server is not None:
+        if getattr(server, "ssh_port", None):
+            port_option = f"-P {server.ssh_port} "
+        if getattr(server, "ssh_key_path", None):
+            identity_option = f"-i {shlex.quote(server.ssh_key_path)} "
+    scp_command = (
+        'scp -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
+        f"{port_option}{identity_option}{source} {destination}"
+    )
     return shell(f"{scp_command}", *args, **kwargs)
 
 

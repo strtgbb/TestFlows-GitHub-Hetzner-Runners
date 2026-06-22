@@ -6,7 +6,8 @@ config:
     dedicated_static:
       ssh_defaults:
         user: runner
-        key: ~/.ssh/id_ed25519.pub
+        # Private key used by controller SSH/SCP connections.
+        key: ~/.ssh/id_ed25519
         port: 22
       groups:
         metal_large_dc1:

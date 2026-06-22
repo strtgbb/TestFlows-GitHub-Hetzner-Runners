@@ -106,11 +106,17 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 if group.ssh is not None
                 else dedicated_cfg.ssh_defaults.port
             )
+            ssh_key_path = (
+                group.ssh.key
+                if group.ssh is not None and group.ssh.key
+                else dedicated_cfg.ssh_defaults.key
+            )
             groups[group_name] = {
                 "labels": group.labels,
                 "hosts": group.hosts,
                 "ssh_user": ssh_user,
                 "ssh_port": ssh_port,
+                "ssh_key_path": ssh_key_path,
             }
 
         providers.append(

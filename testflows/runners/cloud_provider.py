@@ -54,6 +54,8 @@ class ProviderServer:
     ssh_user: str = "root"
     # SSH TCP port.
     ssh_port: int = 22
+    # Optional SSH private key path to use when connecting to this host.
+    ssh_key_path: str | None = None
     # Action performed when the ephemeral runner process exits.
     # Supported values: "poweroff" (default) and "reboot".
     runner_on_exit: str = "poweroff"

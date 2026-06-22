@@ -31,6 +31,7 @@ class _StaticHost:
     labels: set[str]
     ssh_user: str
     ssh_port: int
+    ssh_key_path: str | None
     lease_name: str | None = None
     lease_labels: dict[str, str] | None = None
     lease_server_type: str | None = None
@@ -61,6 +62,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
             group_labels = {label.lower() for label in group["labels"]}
             group_ssh_user = group.get("ssh_user") or default_ssh_user
             group_ssh_port = group.get("ssh_port", 22)
+            group_ssh_key_path = group.get("ssh_key_path")
             for label in group_labels:
                 if label.startswith("type-"):
                     self._supported_types.add(label.split("type-", 1)[1])
@@ -77,6 +79,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
                         labels=set(group_labels),
                         ssh_user=group_ssh_user,
                         ssh_port=group_ssh_port,
+                        ssh_key_path=group_ssh_key_path,
                     )
                 )
 
@@ -134,6 +137,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
             public_ipv6=None,
             ssh_user=host.ssh_user,
             ssh_port=host.ssh_port,
+            ssh_key_path=host.ssh_key_path,
             runner_on_exit="reboot",
             _native=host,
         )

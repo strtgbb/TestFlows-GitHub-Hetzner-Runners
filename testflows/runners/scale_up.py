@@ -269,6 +269,7 @@ def server_setup(
             f'GITHUB_RUNNER_LABELS="{runner_labels}" '
             f'GITHUB_RUNNER_NAME="{server.name}" '
             f'SERVER_NAME="{server.name}" '
+            f'RUNNER_ON_EXIT="{server.runner_on_exit}" '
             f'SERVER_ID="{server.id}" '
             f'SERVER_TYPE_NAME="{server.server_type}" '
             f'SERVER_LOCATION_NAME="{server.location}" '

@@ -52,6 +52,11 @@ class ProviderServer:
     # SSH login user for this server. Defaults to 'root' (Hetzner); override
     # for providers whose AMIs use a different default user (e.g. 'ubuntu' on AWS).
     ssh_user: str = "root"
+    # SSH TCP port.
+    ssh_port: int = 22
+    # Action performed when the ephemeral runner process exits.
+    # Supported values: "poweroff" (default) and "reboot".
+    runner_on_exit: str = "poweroff"
     # Underlying provider object (e.g. hcloud BoundServer). Internal use only.
     _native: Any = field(default=None, repr=False)
 

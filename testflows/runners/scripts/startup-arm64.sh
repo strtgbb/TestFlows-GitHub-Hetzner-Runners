@@ -59,4 +59,4 @@ RUNNER_NAME="${RUNNER_NAME_BASE}-${SERVER_TYPE_NAME}-${SERVER_LOCATION_NAME}"
 ./config.sh --unattended --replace --url https://github.com/${GITHUB_REPOSITORY} --token ${GITHUB_RUNNER_TOKEN} --name "${RUNNER_NAME}" --runnergroup "${GITHUB_RUNNER_GROUP}" --labels "${GITHUB_RUNNER_LABELS}" --work _work --ephemeral
 
 echo "Start runner"
-bash -c "screen -d -m bash -c './run.sh; sudo poweroff'"
+bash -c "screen -d -m bash -c './run.sh; if [ \"${RUNNER_ON_EXIT}\" = \"reboot\" ]; then sudo reboot; else sudo poweroff; fi'"

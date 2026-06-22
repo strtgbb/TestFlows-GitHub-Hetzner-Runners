@@ -144,7 +144,13 @@ def ssh_command(server, options: str = ""):
 
     ip = ip_address(server=server)
     user = server.ssh_user if isinstance(server, ProviderServer) else "root"
-    return f'ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" {options}{" " if options else ""}{user}@{ip}'
+    port_option = ""
+    if isinstance(server, ProviderServer) and getattr(server, "ssh_port", None):
+        port_option = f'-p {server.ssh_port} '
+    return (
+        f'ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
+        f"{port_option}{options}{' ' if options else ''}{user}@{ip}"
+    )
 
 
 def ssh(server, cmd: str, *args, stacklevel=3, **kwargs):

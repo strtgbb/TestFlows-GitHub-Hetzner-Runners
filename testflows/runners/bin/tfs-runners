@@ -1837,7 +1837,16 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
 
         for p in providers:
             with Action(f"Checking if SSH key exists ({p.name})"):
-                p_keys = [p.get_or_create_ssh_key(config.ssh_key, is_file=True)]
+                ssh_key_path = config.ssh_key
+                if (
+                    p.name == "dedicated_static"
+                    and config.providers.dedicated_static is not None
+                    and config.providers.dedicated_static.ssh_defaults is not None
+                    and config.providers.dedicated_static.ssh_defaults.key
+                ):
+                    ssh_key_path = config.providers.dedicated_static.ssh_defaults.key
+
+                p_keys = [p.get_or_create_ssh_key(ssh_key_path, is_file=True)]
                 for key in (config.additional_ssh_keys or []):
                     p_keys.append(p.get_or_create_ssh_key(key, is_file=False))
                 ssh_keys[p.name] = p_keys

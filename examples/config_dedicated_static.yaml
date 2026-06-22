@@ -1,0 +1,32 @@
+config:
+  github_token: ${GITHUB_TOKEN}
+  github_repository: ${GITHUB_REPOSITORY}
+
+  providers:
+    dedicated_static:
+      ssh_defaults:
+        user: runner
+        key: ~/.ssh/id_ed25519.pub
+        port: 22
+      groups:
+        metal_large_dc1:
+          labels:
+            - self-hosted
+            - linux
+            - x64
+            - type-metallarge
+            - in-dc1
+          hosts:
+            - 203.0.113.10
+            - 203.0.113.11
+        metal_arm_dc2:
+          labels:
+            - self-hosted
+            - linux
+            - arm64
+            - type-metalarm
+            - in-dc2
+          ssh:
+            user: ubuntu
+          hosts:
+            - 203.0.113.20

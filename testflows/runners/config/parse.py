@@ -13,6 +13,9 @@ from .config import (
     server_type,
     hetzner_provider,
     aws_provider,
+    dedicated_static_provider,
+    dedicated_static_group,
+    dedicated_static_ssh,
     provider_defaults,
     provider_list,
 )
@@ -557,13 +560,163 @@ def parse_config(filename: str):
                 )
             _aws = aws_provider(**_aws_kwargs)
 
-        _unimplemented = set(_p.keys()) - {"hetzner", "aws"}
+        _dedicated_static = None
+        if _p.get("dedicated_static") is not None:
+            d = _p["dedicated_static"]
+            assert isinstance(
+                d, dict
+            ), "config.providers.dedicated_static: is not a dictionary"
+
+            ssh_defaults_raw = d.get("ssh_defaults") or {}
+            assert isinstance(
+                ssh_defaults_raw, dict
+            ), "config.providers.dedicated_static.ssh_defaults: is not a dictionary"
+
+            ssh_defaults = dedicated_static_ssh()
+            if ssh_defaults_raw.get("user") is not None:
+                assert isinstance(
+                    ssh_defaults_raw["user"], str
+                ), "config.providers.dedicated_static.ssh_defaults.user: is not a string"
+                assert (
+                    ssh_defaults_raw["user"].strip()
+                ), "config.providers.dedicated_static.ssh_defaults.user: cannot be empty"
+                ssh_defaults.user = ssh_defaults_raw["user"].strip()
+            if ssh_defaults_raw.get("port") is not None:
+                assert (
+                    isinstance(ssh_defaults_raw["port"], int)
+                    and 1 <= ssh_defaults_raw["port"] <= 65535
+                ), "config.providers.dedicated_static.ssh_defaults.port: must be an integer between 1 and 65535"
+                ssh_defaults.port = ssh_defaults_raw["port"]
+            if ssh_defaults_raw.get("key") is not None:
+                assert isinstance(
+                    ssh_defaults_raw["key"], str
+                ), "config.providers.dedicated_static.ssh_defaults.key: is not a string"
+                assert (
+                    ssh_defaults_raw["key"].strip()
+                ), "config.providers.dedicated_static.ssh_defaults.key: cannot be empty"
+                ssh_defaults.key = path(ssh_defaults_raw["key"].strip(), check_exists=False)
+
+            groups_raw = d.get("groups")
+            assert isinstance(
+                groups_raw, dict
+            ), "config.providers.dedicated_static.groups: is not a dictionary"
+            assert groups_raw, "config.providers.dedicated_static.groups: cannot be empty"
+
+            groups: dict[str, dedicated_static_group] = {}
+            meta = doc.get("meta_label") or {}
+
+            for group_name, group in groups_raw.items():
+                assert isinstance(
+                    group_name, str
+                ), "config.providers.dedicated_static.groups: group name is not a string"
+                assert (
+                    group_name.strip()
+                ), "config.providers.dedicated_static.groups: group name cannot be empty"
+                assert isinstance(
+                    group, dict
+                ), f"config.providers.dedicated_static.groups.{group_name}: is not a dictionary"
+
+                labels = group.get("labels")
+                assert isinstance(
+                    labels, list
+                ), f"config.providers.dedicated_static.groups.{group_name}.labels: is not a list"
+                normalized_labels = []
+                for i, label in enumerate(labels):
+                    assert isinstance(
+                        label, str
+                    ), f"config.providers.dedicated_static.groups.{group_name}.labels[{i}]: is not a string"
+                    label = label.lower().strip()
+                    assert (
+                        label
+                    ), f"config.providers.dedicated_static.groups.{group_name}.labels[{i}]: cannot be empty"
+                    normalized_labels.append(label)
+                    if label in meta:
+                        normalized_labels.extend(
+                            [meta_label.lower().strip() for meta_label in meta[label]]
+                        )
+                normalized_labels = list(dict.fromkeys(normalized_labels))
+                assert any(
+                    l.startswith("type-") for l in normalized_labels
+                ), f"config.providers.dedicated_static.groups.{group_name}.labels: must include at least one type-* label (or a meta label that expands to one)"
+                for label in normalized_labels:
+                    if label.startswith("type-"):
+                        type_name = label.split("type-", 1)[1]
+                        assert "-" not in type_name, (
+                            f"config.providers.dedicated_static.groups.{group_name}.labels: "
+                            f"invalid type label '{label}' (type names with '-' are not supported)"
+                        )
+
+                hosts = group.get("hosts")
+                assert isinstance(
+                    hosts, list
+                ), f"config.providers.dedicated_static.groups.{group_name}.hosts: is not a list"
+                assert (
+                    hosts
+                ), f"config.providers.dedicated_static.groups.{group_name}.hosts: cannot be empty"
+                normalized_hosts = []
+                for i, host in enumerate(hosts):
+                    assert isinstance(
+                        host, str
+                    ), f"config.providers.dedicated_static.groups.{group_name}.hosts[{i}]: is not a string"
+                    host = host.strip()
+                    assert (
+                        host
+                    ), f"config.providers.dedicated_static.groups.{group_name}.hosts[{i}]: cannot be empty"
+                    normalized_hosts.append(host)
+
+                group_ssh = None
+                if group.get("ssh") is not None:
+                    raw_ssh = group["ssh"]
+                    assert isinstance(
+                        raw_ssh, dict
+                    ), f"config.providers.dedicated_static.groups.{group_name}.ssh: is not a dictionary"
+                    group_ssh = dedicated_static_ssh(
+                        user=ssh_defaults.user,
+                        port=ssh_defaults.port,
+                        key=ssh_defaults.key,
+                    )
+                    if raw_ssh.get("user") is not None:
+                        assert isinstance(
+                            raw_ssh["user"], str
+                        ), f"config.providers.dedicated_static.groups.{group_name}.ssh.user: is not a string"
+                        assert (
+                            raw_ssh["user"].strip()
+                        ), f"config.providers.dedicated_static.groups.{group_name}.ssh.user: cannot be empty"
+                        group_ssh.user = raw_ssh["user"].strip()
+                    if raw_ssh.get("port") is not None:
+                        assert isinstance(raw_ssh["port"], int) and 1 <= raw_ssh["port"] <= 65535, (
+                            f"config.providers.dedicated_static.groups.{group_name}.ssh.port: "
+                            "must be an integer between 1 and 65535"
+                        )
+                        group_ssh.port = raw_ssh["port"]
+                    if raw_ssh.get("key") is not None:
+                        assert isinstance(
+                            raw_ssh["key"], str
+                        ), f"config.providers.dedicated_static.groups.{group_name}.ssh.key: is not a string"
+                        assert (
+                            raw_ssh["key"].strip()
+                        ), f"config.providers.dedicated_static.groups.{group_name}.ssh.key: cannot be empty"
+                        group_ssh.key = path(raw_ssh["key"].strip(), check_exists=False)
+
+                groups[group_name.strip()] = dedicated_static_group(
+                    labels=normalized_labels,
+                    hosts=normalized_hosts,
+                    ssh=group_ssh,
+                )
+
+            _dedicated_static = dedicated_static_provider(
+                ssh_defaults=ssh_defaults, groups=groups
+            )
+
+        _unimplemented = set(_p.keys()) - {"hetzner", "aws", "dedicated_static"}
         assert not _unimplemented, (
             f"config.providers: {', '.join(sorted(_unimplemented))} "
             f"{'is' if len(_unimplemented) == 1 else 'are'} not yet implemented"
         )
 
-        doc["providers"] = provider_list(hetzner=_hetzner, aws=_aws)
+        doc["providers"] = provider_list(
+            hetzner=_hetzner, aws=_aws, dedicated_static=_dedicated_static
+        )
 
     try:
         return Config(**doc)

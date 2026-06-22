@@ -1,3 +1,4 @@
+set -euo pipefail
 set -x
 
 # Create hostedtoolcache directory for GitHub Actions (required by setup-ruby, setup-python, etc.)

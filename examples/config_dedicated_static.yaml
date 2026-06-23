@@ -1,6 +1,12 @@
 config:
   github_token: ${GITHUB_TOKEN}
   github_repository: ${GITHUB_REPOSITORY}
+  with_label:
+    - self-hosted
+  recycle: true
+  # No-rebuild recycle mode is used by recyclable providers (e.g. Hetzner/AWS).
+  # Dedicated static hosts are long-lived inventory and are always reused.
+  recycle_without_rebuild: true
 
   providers:
     dedicated_static:

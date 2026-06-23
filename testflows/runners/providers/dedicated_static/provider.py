@@ -223,7 +223,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
     def power_off_server(self, server: ProviderServer) -> None:
         raise NotImplementedError("static dedicated provider cannot power off hosts")
 
-    def power_on_server(self, server: ProviderServer) -> None:
+    def power_on_server(
+        self, server: ProviderServer, timeout: int | None = None
+    ) -> None:
+        del timeout
         raise NotImplementedError("static dedicated provider cannot power on hosts")
 
     def rebuild_server(self, server: ProviderServer, image_spec: object) -> None:

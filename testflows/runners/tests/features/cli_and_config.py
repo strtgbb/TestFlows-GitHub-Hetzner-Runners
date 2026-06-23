@@ -183,9 +183,9 @@ def schema_only_hetzner_and_aws_defined(self):
     with Given("the schema.json file"):
         with open(_SCHEMA_PATH) as f:
             schema = json.load(f)
-    with Then("only hetzner and aws are defined under providers"):
+    with Then("only supported providers are defined under providers"):
         props = _providers_properties(schema)
-        assert set(props.keys()) == {"hetzner", "aws"}, (
+        assert set(props.keys()) == {"hetzner", "aws", "dedicated_static"}, (
             f"Unexpected providers in schema: {set(props.keys())}"
         )
 

@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
-from ...constants import github_runner_label, server_ssh_key_label
+from ...constants import github_runner_label, server_ssh_key_label, runner_name_prefix
 from ...errors import ServerTypeError, LocationError, ImageSpecFormatError
 
 
@@ -32,11 +32,8 @@ class _StaticHost:
     ssh_user: str
     ssh_port: int
     ssh_key_path: str | None
+    static_name: str
     lease_name: str | None = None
-    lease_labels: dict[str, str] | None = None
-    lease_server_type: str | None = None
-    lease_location: str | None = None
-    lease_created: datetime | None = None
 
 
 class DedicatedStaticCloudProvider(CloudProvider):
@@ -71,6 +68,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
             for index, endpoint in enumerate(group["hosts"]):
                 host_id = f"{group_name}:{index}"
+                static_name = (
+                    f"{runner_name_prefix}static-{group_name}-{index}".replace(":", "-")
+                )
                 self._hosts.append(
                     _StaticHost(
                         host_id=host_id,
@@ -80,6 +80,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
                         ssh_user=group_ssh_user,
                         ssh_port=group_ssh_port,
                         ssh_key_path=group_ssh_key_path,
+                        static_name=static_name,
                     )
                 )
 
@@ -103,10 +104,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
         if host.lease_name is None and not include_idle:
             return None
 
-        labels = host.lease_labels if host.lease_labels else {}
-        name = host.lease_name if host.lease_name else f"dedicated-static-{host.host_id}"
-        lease_created = host.lease_created or datetime.now(timezone.utc)
-        location = host.lease_location or next(
+        labels = self.build_server_labels(sorted(host.labels))
+        name = host.lease_name if host.lease_name else host.static_name
+        location = next(
             (
                 label.split("in-", 1)[1]
                 for label in sorted(host.labels)
@@ -114,7 +114,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
             ),
             "",
         )
-        server_type = host.lease_server_type or next(
+        server_type = next(
             (
                 label.split("type-", 1)[1]
                 for label in sorted(host.labels)
@@ -132,7 +132,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
             labels=dict(labels),
             server_type=server_type,
             location=location,
-            created=lease_created,
+            created=datetime.now(timezone.utc),
             volumes=[],
             public_ipv6=None,
             ssh_user=host.ssh_user,
@@ -141,6 +141,12 @@ class DedicatedStaticCloudProvider(CloudProvider):
             runner_on_exit="reboot",
             _native=host,
         )
+
+    def _set_lease(self, host: _StaticHost, runner_name: str):
+        host.lease_name = runner_name
+
+    def _clear_lease(self, host: _StaticHost):
+        host.lease_name = None
 
     def _host_matches_request(
         self, host: _StaticHost, server_type_name: str, location_name: str | None
@@ -163,26 +169,22 @@ class DedicatedStaticCloudProvider(CloudProvider):
         automount: bool = False,
         public_net: object = None,
     ) -> ProviderServer:
-        del image, ssh_keys, volumes, automount, public_net
+        del image, ssh_keys, labels, volumes, automount, public_net
         requested_type = server_type.name
         requested_location = location.name if hasattr(location, "name") else location
 
         with self._lock:
             for host in self._hosts:
-                if host.lease_name is not None:
-                    continue
                 if not self._host_matches_request(
                     host=host,
                     server_type_name=requested_type,
                     location_name=requested_location,
                 ):
                     continue
+                if host.lease_name is not None:
+                    continue
 
-                host.lease_name = name
-                host.lease_labels = dict(labels)
-                host.lease_server_type = requested_type
-                host.lease_location = requested_location
-                host.lease_created = datetime.now(timezone.utc)
+                self._set_lease(host, runner_name=name)
                 return self._as_provider_server(host)
 
         if requested_location:
@@ -195,11 +197,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
         with self._lock:
             for host in self._hosts:
                 if host.lease_name == server.name or host.host_id == server.id:
-                    host.lease_name = None
-                    host.lease_labels = None
-                    host.lease_server_type = None
-                    host.lease_location = None
-                    host.lease_created = None
+                    self._clear_lease(host)
                     return
 
     def get_server(self, name: str) -> ProviderServer | None:
@@ -239,6 +237,16 @@ class DedicatedStaticCloudProvider(CloudProvider):
             servers = [self._as_provider_server(host) for host in self._hosts]
         return [server for server in servers if server is not None]
 
+    def reconcile_runner_leases(self, runner_names: set[str]) -> None:
+        """Reconcile host leases from currently registered GitHub runner names."""
+        with self._lock:
+            for host in self._hosts:
+                match = host.static_name if host.static_name in runner_names else None
+                if match is None:
+                    self._clear_lease(host)
+                    continue
+                self._set_lease(host, runner_name=match)
+
     # ---------------------------------------------------------------------------
     # Runner label helpers
     # ---------------------------------------------------------------------------
@@ -257,11 +265,6 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
     def set_server_tags(self, server: ProviderServer, tags: dict[str, str]) -> None:
         server.labels = {**server.labels, **tags}
-        with self._lock:
-            for host in self._hosts:
-                if host.lease_name == server.name:
-                    host.lease_labels = dict(server.labels)
-                    break
 
     # ---------------------------------------------------------------------------
     # SSH key management
@@ -312,7 +315,6 @@ class DedicatedStaticCloudProvider(CloudProvider):
             for host in self._hosts:
                 if host.host_id == server.id or host.lease_name == server.name:
                     host.lease_name = name
-                    host.lease_labels = dict(labels)
                     break
         return server
 

@@ -419,6 +419,26 @@ def scale_down(
         ) as scale_down_cycle:
 
             with Action(
+                "Getting list of self-hosted runners",
+                level=logging.DEBUG,
+                interval=interval,
+            ):
+                runners: list[SelfHostedActionsRunner] = repo.get_self_hosted_runners()
+
+            with Action(
+                "Reconciling dedicated static leases from GitHub runner list",
+                level=logging.DEBUG,
+                interval=interval,
+            ):
+                managed_runner_names = {
+                    runner.name
+                    for runner in runners
+                    if runner.name.startswith(runner_name_prefix)
+                }
+                for _p in providers:
+                    _p.reconcile_runner_leases(managed_runner_names)
+
+            with Action(
                 "Getting list of servers", level=logging.DEBUG, interval=interval
             ):
                 server_providers: dict[str, CloudProvider] = {}
@@ -439,13 +459,6 @@ def scale_down(
                     servers_labels[ps.name] = (
                         _sp.get_runner_labels(ps) if _sp is not None else set()
                     )
-
-            with Action(
-                "Getting list of self-hosted runners",
-                level=logging.DEBUG,
-                interval=interval,
-            ):
-                runners: list[SelfHostedActionsRunner] = repo.get_self_hosted_runners()
 
             with Action(
                 "Looking for recyclable servers",

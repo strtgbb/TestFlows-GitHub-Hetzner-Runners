@@ -214,6 +214,10 @@ class CloudProvider(ABC):
         convention (e.g. Hetzner uses ``github-hetzner-runner=active``).
         """
 
+    def reconcile_runner_leases(self, runner_names: set[str]) -> None:
+        """Optional hook for providers that derive occupancy from GitHub runner names."""
+        del runner_names
+
     # ---------------------------------------------------------------------------
     # Runner label helpers
     # ---------------------------------------------------------------------------

@@ -1196,7 +1196,8 @@ def get_server_count_with_labels(servers, label_set, futures=None):
         count += sum(
             1
             for future in futures
-            if hasattr(future, "server_labels")
+            if getattr(future, "counts_toward_capacity", True)
+            and hasattr(future, "server_labels")
             and label_set.issubset(future.server_labels)
         )
 
@@ -1619,33 +1620,6 @@ def scale_up(
                     workflow_runs = queued_runs + in_progress_runs
 
                 with Action(
-                    "Getting list of servers", level=logging.DEBUG, interval=interval
-                ):
-                    servers = filtered_servers(
-                        [
-                            RunnerServer(
-                                name=ps.name,
-                                server_status=ps.status,
-                                labels=p.get_runner_labels(ps),
-                                server_type=ps.server_type,
-                                server_location=ps.location,
-                                server_volumes=[
-                                    Volume(
-                                        name=get_volume_name(v.name),
-                                        size=v.size,
-                                    )
-                                    for v in ps.volumes
-                                ],
-                                server=ps,
-                                provider_name=p.name,
-                            )
-                            for p in providers
-                            for ps in p.list_runner_servers()
-                        ],
-                        with_label,
-                    )
-
-                with Action(
                     "Getting list of available volumes",
                     level=logging.DEBUG,
                     interval=interval,
@@ -1677,6 +1651,46 @@ def scale_up(
                         for runner in repo.get_self_hosted_runners()
                         if runner.name.startswith(runner_name_prefix)
                     ]
+                registered_runner_names = {runner.name for runner in runners}
+
+                with Action(
+                    "Reconciling dedicated static leases from GitHub runner list",
+                    level=logging.DEBUG,
+                    interval=interval,
+                ):
+                    for _p in providers:
+                        _p.reconcile_runner_leases(registered_runner_names)
+
+                with Action(
+                    "Getting list of servers", level=logging.DEBUG, interval=interval
+                ):
+                    servers = filtered_servers(
+                        [
+                            RunnerServer(
+                                name=ps.name,
+                                server_status=ps.status,
+                                labels=(
+                                    p.get_runner_labels(ps) | set(with_label or [])
+                                    if p.name == "dedicated_static"
+                                    else p.get_runner_labels(ps)
+                                ),
+                                server_type=ps.server_type,
+                                server_location=ps.location,
+                                server_volumes=[
+                                    Volume(
+                                        name=get_volume_name(v.name),
+                                        size=v.size,
+                                    )
+                                    for v in ps.volumes
+                                ],
+                                server=ps,
+                                provider_name=p.name,
+                            )
+                            for p in providers
+                            for ps in p.list_runner_servers()
+                        ],
+                        with_label,
+                    )
 
                 with Action(
                     "Setting status of servers based on the runner status",
@@ -1877,6 +1891,57 @@ def scale_up(
                     except Exception:
                         pass
 
+                with Action(
+                    "Maintaining dedicated static runners",
+                    level=logging.DEBUG,
+                    interval=interval,
+                ):
+                    for _p in providers:
+                        if _p.name != "dedicated_static":
+                            continue
+
+                        configured_hosts: list[ProviderServer] = _p.list_servers()
+                        pending_host_names = {
+                            f.server_name
+                            for f in futures
+                            if getattr(f, "provider_name", None) == _p.name
+                            and hasattr(f, "server_name")
+                            and getattr(f, "counts_toward_capacity", True)
+                        }
+                        active_runner_names = registered_runner_names
+
+                        for configured_host in configured_hosts:
+                            if configured_host.name in pending_host_names:
+                                continue
+                            if configured_host.name in active_runner_names:
+                                continue
+                            labels = list(
+                                dict.fromkeys(
+                                    list(_p.get_runner_labels(configured_host))
+                                    + (with_label or [])
+                                )
+                            )
+                            try:
+                                with Action(
+                                    f"Setting up dedicated static runner {configured_host.name} with labels {labels}",
+                                    server_name=configured_host.name,
+                                    interval=interval,
+                                ):
+                                    create_runner_server(
+                                        name=configured_host.name,
+                                        labels=labels,
+                                        setup_worker_pool=setup_worker_pool,
+                                        futures=futures,
+                                        servers=servers,
+                                        volumes=volumes,
+                                    )
+                            except Exception as exc:
+                                # Conservative mode: on ambiguity/failure, skip host this cycle.
+                                logging.debug(
+                                    f"Skipping dedicated static host {configured_host.name} this cycle: {exc}"
+                                )
+                                continue
+
                 if standby_runners:
                     try:
                         with Action("Checking standby runner pool", interval=interval):
@@ -1889,12 +1954,16 @@ def scale_up(
                                 replenish_immediately = (
                                     standby_runner.replenish_immediately
                                 )
+                                # Include pending creates so this cycle does not over-replenish.
+                                available = get_server_count_with_labels(
+                                    servers=[], label_set=set(labels), futures=futures
+                                )
                                 if replenish_immediately:
-                                    available = count_available(
+                                    available += count_available(
                                         servers=servers, labels=labels
                                     )
                                 else:
-                                    available = count_present(
+                                    available += count_present(
                                         servers=servers, labels=labels
                                     )
 

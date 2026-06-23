@@ -68,8 +68,11 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
             for index, endpoint in enumerate(group["hosts"]):
                 host_id = f"{group_name}:{index}"
+                endpoint_id = hashlib.md5(
+                    endpoint.strip().lower().encode("utf-8")
+                ).hexdigest()[:12]
                 static_name = (
-                    f"{runner_name_prefix}static-{group_name}-{index}".replace(":", "-")
+                    f"{runner_name_prefix}static-{group_name}-{endpoint_id}"
                 )
                 self._hosts.append(
                     _StaticHost(
@@ -94,6 +97,14 @@ class DedicatedStaticCloudProvider(CloudProvider):
     @property
     def supports_recycling(self) -> bool:
         return False
+
+    def build_runner_name(self, server: ProviderServer) -> str:
+        host = getattr(server, "_native", None)
+        if host is not None and hasattr(host, "static_name"):
+            return host.static_name
+        raise ValueError(
+            "dedicated_static runner name requires server._native.static_name"
+        )
 
     # ---------------------------------------------------------------------------
     # Server lifecycle

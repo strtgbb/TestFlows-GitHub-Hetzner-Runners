@@ -146,6 +146,7 @@ def get_runner_server_type(runner_name: str) -> str | None:
 
 
 def server_setup(
+    provider: CloudProvider,
     server: ProviderServer,
     setup_script: str,
     startup_script: str,
@@ -156,6 +157,7 @@ def server_setup(
 ):
     """Setup new server instance."""
     cache_volume_name = "cache"
+    runner_name = provider.build_runner_name(server)
 
     with Action("Wait for SSH connection to be ready", server_name=server.name):
         wait_ssh(server=server, timeout=timeout)
@@ -267,7 +269,7 @@ def server_setup(
             f'GITHUB_RUNNER_TOKEN="{GITHUB_RUNNER_TOKEN}" '
             f"GITHUB_RUNNER_GROUP=Default "
             f'GITHUB_RUNNER_LABELS="{runner_labels}" '
-            f'GITHUB_RUNNER_NAME="{server.name}" '
+            f'GITHUB_RUNNER_NAME="{runner_name}" '
             f'SERVER_NAME="{server.name}" '
             f'RUNNER_ON_EXIT="{server.runner_on_exit}" '
             f'SERVER_ID="{server.id}" '
@@ -912,6 +914,7 @@ def create_server(
 
     setup_worker_pool.submit(
         server_setup,
+        provider=provider,
         server=provider_server,
         setup_script=setup_script,
         startup_script=startup_script,
@@ -985,6 +988,7 @@ def recycle_server(
 
     setup_worker_pool.submit(
         server_setup,
+        provider=provider,
         server=provider_server,
         setup_script=setup_script,
         startup_script=startup_script,

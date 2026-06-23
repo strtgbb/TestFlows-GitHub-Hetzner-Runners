@@ -1,6 +1,7 @@
 import yaml
 import logging
 import logging.config
+import re
 
 from .config import (
     Config,
@@ -21,6 +22,7 @@ from .config import (
 )
 
 logger = logging.getLogger("testflows.runners")
+DEDICATED_STATIC_GROUP_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 def parse_config(filename: str):
@@ -612,6 +614,11 @@ def parse_config(filename: str):
                 assert (
                     group_name.strip()
                 ), "config.providers.dedicated_static.groups: group name cannot be empty"
+                group_name = group_name.strip().lower()
+                assert DEDICATED_STATIC_GROUP_NAME_RE.match(group_name), (
+                    "config.providers.dedicated_static.groups: invalid group name "
+                    f"'{group_name}' (must match ^[a-z0-9][a-z0-9-]*$)"
+                )
                 assert isinstance(
                     group, dict
                 ), f"config.providers.dedicated_static.groups.{group_name}: is not a dictionary"
@@ -698,7 +705,7 @@ def parse_config(filename: str):
                         ), f"config.providers.dedicated_static.groups.{group_name}.ssh.key: cannot be empty"
                         group_ssh.key = path(raw_ssh["key"].strip(), check_exists=False)
 
-                groups[group_name.strip()] = dedicated_static_group(
+                groups[group_name] = dedicated_static_group(
                     labels=normalized_labels,
                     hosts=normalized_hosts,
                     ssh=group_ssh,

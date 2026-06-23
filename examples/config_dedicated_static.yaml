@@ -16,7 +16,7 @@ config:
         key: ~/.ssh/id_ed25519
         port: 22
       groups:
-        metal_large_dc1:
+        metal-large-dc1:
           labels:
             - self-hosted
             - linux
@@ -26,7 +26,7 @@ config:
           hosts:
             - 203.0.113.10
             - 203.0.113.11
-        metal_arm_dc2:
+        metal-arm-dc2:
           labels:
             - self-hosted
             - linux

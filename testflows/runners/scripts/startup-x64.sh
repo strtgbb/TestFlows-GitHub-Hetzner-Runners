@@ -54,9 +54,13 @@ fi
 tar xzf "./${ACTIONS_RUNNER_FILE}"
 
 echo "Configure runner"
-# Use SERVER_NAME when recycling without rebuild; keep GITHUB_RUNNER_NAME for compatibility.
-RUNNER_NAME_BASE="${SERVER_NAME:-${GITHUB_RUNNER_NAME:-$(hostname)}}"
-RUNNER_NAME="${RUNNER_NAME_BASE}-${SERVER_TYPE_NAME}-${SERVER_LOCATION_NAME}"
+# Provider computes runner name in controller and passes it via GITHUB_RUNNER_NAME.
+if [ -n "${GITHUB_RUNNER_NAME:-}" ]; then
+    RUNNER_NAME="${GITHUB_RUNNER_NAME}"
+else
+    RUNNER_NAME_BASE="${SERVER_NAME:-$(hostname)}"
+    RUNNER_NAME="${RUNNER_NAME_BASE}-${SERVER_TYPE_NAME}-${SERVER_LOCATION_NAME}"
+fi
 ./config.sh --unattended --replace --url https://github.com/${GITHUB_REPOSITORY} --token ${GITHUB_RUNNER_TOKEN} --name "${RUNNER_NAME}" --runnergroup "${GITHUB_RUNNER_GROUP}" --labels "${GITHUB_RUNNER_LABELS}" --work _work --ephemeral
 
 echo "Start runner"

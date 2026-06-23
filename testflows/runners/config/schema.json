@@ -196,7 +196,8 @@
                                     "description": "Named host groups keyed by group name.",
                                     "type": "object",
                                     "minProperties": 1,
-                                    "additionalProperties": {
+                                    "patternProperties": {
+                                        "^[a-z0-9][a-z0-9-]*$": {
                                         "type": "object",
                                         "properties": {
                                             "labels": {
@@ -225,6 +226,8 @@
                                         "required": ["labels", "hosts"],
                                         "additionalProperties": false
                                     }
+                                    },
+                                    "additionalProperties": false
                                 }
                             },
                             "required": ["groups"],

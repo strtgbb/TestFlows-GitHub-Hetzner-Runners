@@ -218,6 +218,14 @@ class CloudProvider(ABC):
         """Optional hook for providers that derive occupancy from GitHub runner names."""
         del runner_names
 
+    def build_runner_name(self, server: ProviderServer) -> str:
+        """Build GitHub runner registration name for a server.
+
+        Default naming preserves legacy behavior: <server-name>-<type>-<location>.
+        Providers can override to enforce provider-specific stable identities.
+        """
+        return f"{server.name}-{server.server_type}-{server.location}"
+
     # ---------------------------------------------------------------------------
     # Runner label helpers
     # ---------------------------------------------------------------------------

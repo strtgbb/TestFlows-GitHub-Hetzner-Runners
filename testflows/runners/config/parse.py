@@ -607,6 +607,16 @@ def parse_config(filename: str):
             groups: dict[str, dedicated_static_group] = {}
             meta = doc.get("meta_label") or {}
 
+            # Type labels carry the configured label_prefix at runtime
+            # (get_server_types prepends "<label_prefix>-" before "type-"), so the
+            # validation must look for the same prefixed form, not a bare "type-".
+            # label_prefix conventionally ends with "-" (like server_name_prefix);
+            # tolerate either form, matching get_server_types.
+            type_prefix = (doc.get("label_prefix") or "").strip().lower()
+            if type_prefix and not type_prefix.endswith("-"):
+                type_prefix += "-"
+            type_prefix += "type-"
+
             for group_name, group in groups_raw.items():
                 assert isinstance(
                     group_name, str
@@ -643,11 +653,11 @@ def parse_config(filename: str):
                         )
                 normalized_labels = list(dict.fromkeys(normalized_labels))
                 assert any(
-                    l.startswith("type-") for l in normalized_labels
-                ), f"config.providers.dedicated_static.groups.{group_name}.labels: must include at least one type-* label (or a meta label that expands to one)"
+                    l.startswith(type_prefix) for l in normalized_labels
+                ), f"config.providers.dedicated_static.groups.{group_name}.labels: must include at least one '{type_prefix}*' label (or a meta label that expands to one)"
                 for label in normalized_labels:
-                    if label.startswith("type-"):
-                        type_name = label.split("type-", 1)[1]
+                    if label.startswith(type_prefix):
+                        type_name = label.split(type_prefix, 1)[1]
                         assert "-" not in type_name, (
                             f"config.providers.dedicated_static.groups.{group_name}.labels: "
                             f"invalid type label '{label}' (type names with '-' are not supported)"

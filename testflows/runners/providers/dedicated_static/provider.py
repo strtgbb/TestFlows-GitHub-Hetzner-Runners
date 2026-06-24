@@ -63,12 +63,22 @@ class DedicatedStaticCloudProvider(CloudProvider):
         groups: dict[str, dict],
         default_ssh_user: str = "root",
         claim_timeout: float = 360,
+        label_prefix: str = "",
     ):
         self._default_image = None
         self._default_location = None
         # Seconds a claim marker stays authoritative before it is treated as
         # stale (a crashed/abandoned setup) and the host may be reclaimed.
         self._claim_timeout = claim_timeout
+        # Routing labels carry the configured label_prefix (e.g. labels look
+        # like "<prefix>type-x" / "<prefix>in-y"), so type/location extraction
+        # and matching must use the prefixed form — same normalization as
+        # get_server_types (tolerate a missing trailing dash).
+        lp = (label_prefix or "").strip().lower()
+        if lp and not lp.endswith("-"):
+            lp += "-"
+        self._type_label_prefix = f"{lp}type-"
+        self._loc_label_prefix = f"{lp}in-"
         self._lock = threading.Lock()
         self._hosts: list[_StaticHost] = []
         self._supported_types: set[str] = set()
@@ -81,10 +91,14 @@ class DedicatedStaticCloudProvider(CloudProvider):
             group_ssh_port = group.get("ssh_port", 22)
             group_ssh_key_path = group.get("ssh_key_path")
             for label in group_labels:
-                if label.startswith("type-"):
-                    self._supported_types.add(label.split("type-", 1)[1])
-                elif label.startswith("in-"):
-                    self._supported_locations.add(label.split("in-", 1)[1])
+                if label.startswith(self._type_label_prefix):
+                    self._supported_types.add(
+                        label.split(self._type_label_prefix, 1)[1]
+                    )
+                elif label.startswith(self._loc_label_prefix):
+                    self._supported_locations.add(
+                        label.split(self._loc_label_prefix, 1)[1]
+                    )
 
             for index, endpoint in enumerate(group["hosts"]):
                 host_id = f"{group_name}:{index}"
@@ -139,17 +153,17 @@ class DedicatedStaticCloudProvider(CloudProvider):
         name = host.lease_name if host.lease_name else host.static_name
         location = next(
             (
-                label.split("in-", 1)[1]
+                label.split(self._loc_label_prefix, 1)[1]
                 for label in sorted(host.labels)
-                if label.startswith("in-")
+                if label.startswith(self._loc_label_prefix)
             ),
             "",
         )
         server_type = next(
             (
-                label.split("type-", 1)[1]
+                label.split(self._type_label_prefix, 1)[1]
                 for label in sorted(host.labels)
-                if label.startswith("type-")
+                if label.startswith(self._type_label_prefix)
             ),
             "dedicated",
         )
@@ -217,9 +231,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
     def _host_matches_request(
         self, host: _StaticHost, server_type_name: str, location_name: str | None
     ) -> bool:
-        if f"type-{server_type_name}" not in host.labels:
+        if f"{self._type_label_prefix}{server_type_name}" not in host.labels:
             return False
-        if location_name and f"in-{location_name}" not in host.labels:
+        if location_name and f"{self._loc_label_prefix}{location_name}" not in host.labels:
             return False
         return True
 

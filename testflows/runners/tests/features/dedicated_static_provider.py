@@ -188,6 +188,32 @@ def reconcile_confirms_active_and_clears_others(self):
     assert h1.lease_name is None, "no live runner -> lease cleared"
 
 
+@TestScenario
+def label_prefix_aware_type_and_location(self):
+    """With a label_prefix set, the provider must extract type/location from the
+    prefixed `<prefix>type-*` / `<prefix>in-*` labels (not a bare `type-`), so
+    supported types are recognized and a matching job leases a host."""
+    groups = {
+        "g1": {
+            "labels": ["altinity-type-x", "altinity-in-y", "altinity-self-hosted"],
+            "hosts": ["1.2.3.4"],
+        }
+    }
+    prov = DedicatedStaticCloudProvider(
+        groups, claim_timeout=360, label_prefix="altinity-"
+    )
+    with Then("the prefixed type is recognized as supported"):
+        assert prov.get_server_type("x").name == "x"
+    with And("a job for that type+location leases the host"):
+        with patch.object(provider_mod, "ssh", _ssh_by_code(find=11)):
+            srv = prov.create_server(
+                name="github-runner-abc", server_type=ProviderServerType("x"),
+                location="y", image=None, ssh_keys=[], labels={},
+            )
+        assert srv is not None
+        assert prov._hosts[0].lease_name == "github-runner-abc"
+
+
 # ---------------------------------------------------------------------------
 # Feature entry point
 # ---------------------------------------------------------------------------
@@ -197,15 +223,5 @@ def reconcile_confirms_active_and_clears_others(self):
 @Name("dedicated static provider")
 def feature(self):
     """Durable claim-marker lease behavior for DedicatedStaticCloudProvider."""
-    for scenario in (
-        claim_window_minutes_from_timeout,
-        free_host_is_claimed_and_marker_written,
-        fresh_marker_host_is_skipped_then_raises,
-        unreachable_host_is_not_claimed,
-        busy_host_skipped_next_free_claimed,
-        release_on_success_clears_marker_keeps_lease,
-        release_on_failure_clears_marker_and_frees_lease,
-        release_claim_is_noop_for_foreign_server,
-        reconcile_confirms_active_and_clears_others,
-    ):
-        Scenario(run=scenario)
+    for scenario in loads(current_module(), Scenario):
+        scenario()

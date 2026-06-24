@@ -128,6 +128,8 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 # stale/abandoned claim and the host may be reclaimed.
                 claim_timeout=config.max_server_ready_time
                 + config.max_runner_registration_time,
+                # Routing labels (type-/in-) carry the global label_prefix.
+                label_prefix=config.label_prefix,
             )
         )
 

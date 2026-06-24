@@ -162,6 +162,66 @@ def config_rejects_removed_providers(self):
 
 
 # ---------------------------------------------------------------------------
+# 3b. dedicated_static type validation must honor label_prefix
+# ---------------------------------------------------------------------------
+
+
+_LABEL_PREFIX_STATIC_CONFIG = """
+config:
+  github_token: token
+  github_repository: owner/repo
+  ssh_key: /tmp/key
+  label_prefix: "{prefix}"
+  providers:
+    dedicated_static:
+      ssh_defaults:
+        user: runner
+        key: /tmp/key
+        port: 22
+      groups:
+        metal-large-dc1:
+          labels:
+            - tfs-self-hosted
+            - tfs-type-metallarge
+            - tfs-in-dc1
+          hosts:
+            - 203.0.113.10
+"""
+
+
+@TestScenario
+def dedicated_static_type_label_honors_label_prefix(self):
+    """A prefixed type label (`<label_prefix>type-*`) must satisfy the
+    dedicated_static 'at least one type-*' validation — the same way
+    get_server_types resolves types at runtime (it prepends label_prefix).
+    Bare `startswith("type-")` in the validator wrongly rejects it.
+
+    Covers both the conventional trailing-dash form (`tfs-`) and the bare form
+    (`tfs`), which get_server_types normalizes identically to `tfs-type-`.
+    """
+    import tempfile
+
+    for prefix in ("tfs-", "tfs"):
+        with Given(f"a static config with label_prefix {prefix!r} and a prefixed type label"):
+            f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+            f.write(_LABEL_PREFIX_STATIC_CONFIG.format(prefix=prefix))
+            f.close()
+        try:
+            with When(f"I parse it (label_prefix={prefix!r})"):
+                raised = None
+                try:
+                    parse_config(f.name)
+                except (AssertionError, SystemExit) as e:
+                    raised = e
+            with Then("parse_config accepts it — the prefixed type label counts"):
+                assert raised is None, (
+                    f"label_prefix={prefix!r}: 'tfs-type-metallarge' wrongly rejected: {raised}"
+                )
+        finally:
+            os.unlink(f.name)
+
+
+# ---------------------------------------------------------------------------
 # 4. Schema regression: only hetzner and aws under providers
 # ---------------------------------------------------------------------------
 

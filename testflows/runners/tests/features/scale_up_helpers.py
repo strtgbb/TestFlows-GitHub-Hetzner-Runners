@@ -20,6 +20,7 @@ from testflows.runners.scale_up import (
     set_future_attributes,
 )
 from testflows.runners.constants import runner_name_prefix, server_ssh_key_label
+from testflows.runners.server import get_runner_server_name
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +100,42 @@ def get_runner_server_type_valid(self):
 @TestScenario
 def get_runner_server_type_aws_with_dot(self):
     assert get_runner_server_type(_runner_name("c8g.2xlarge")) == "c8g.2xlarge"
+
+
+@TestScenario
+def get_runner_server_name_default_strips_type_location(self):
+    """Default runner name <server>-<type>-<location>: keep the first 5 fields."""
+    assert (
+        get_runner_server_name(f"{RUNNER_PREFIX}123-456-cx23-cx23-nbg1")
+        == f"{RUNNER_PREFIX}123-456-cx23"
+    )
+
+
+@TestScenario
+def get_runner_server_name_aws_hyphenated_location(self):
+    """A hyphenated AWS location (us-east-1a) sits past field 5 and is dropped,
+    so it does not corrupt the server name."""
+    assert (
+        get_runner_server_name(
+            f"{RUNNER_PREFIX}123-456-t3.medium-t3.medium-us-east-1a"
+        )
+        == f"{RUNNER_PREFIX}123-456-t3.medium"
+    )
+
+
+@TestScenario
+def get_runner_server_name_static_single_segment_group(self):
+    """A static runner name is its own server name (no -type-location suffix)."""
+    name = f"{RUNNER_PREFIX}static-grp-abc123def456"
+    assert get_runner_server_name(name) == name
+
+
+@TestScenario
+def get_runner_server_name_static_hyphenated_group(self):
+    """A hyphenated group must not be truncated — the whole static name is the
+    server name."""
+    name = f"{RUNNER_PREFIX}static-my-multi-part-group-abc123def456"
+    assert get_runner_server_name(name) == name
 
 
 @TestScenario

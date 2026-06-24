@@ -123,6 +123,11 @@ def provider_factory(config: Config) -> list[CloudProvider]:
             DedicatedStaticCloudProvider(
                 groups=groups,
                 default_ssh_user=dedicated_cfg.ssh_defaults.user,
+                # A claim marker stays authoritative for the full setup budget
+                # (SSH-ready + runner-registration) before it is treated as a
+                # stale/abandoned claim and the host may be reclaimed.
+                claim_timeout=config.max_server_ready_time
+                + config.max_runner_registration_time,
             )
         )
 

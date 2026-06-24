@@ -218,6 +218,16 @@ class CloudProvider(ABC):
         """Optional hook for providers that derive occupancy from GitHub runner names."""
         del runner_names
 
+    def release_claim(self, server: "ProviderServer", *, succeeded: bool) -> None:
+        """Optional hook: release any provisional claim staked before setup.
+
+        Providers that durably claim a host before provisioning (e.g. the
+        dedicated_static claim marker) clear it here once setup finishes.
+        ``succeeded`` is False when setup raised, in which case the host should
+        also be freed for re-dispatch. Default is a no-op.
+        """
+        del server, succeeded
+
     def build_runner_name(self, server: ProviderServer) -> str:
         """Build GitHub runner registration name for a server.
 

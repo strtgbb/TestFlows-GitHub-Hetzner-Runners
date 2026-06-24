@@ -145,7 +145,24 @@ def get_runner_server_type(runner_name: str) -> str | None:
     return None
 
 
-def server_setup(
+def server_setup(provider: CloudProvider, server: ProviderServer, *args, **kwargs):
+    """Run server setup, then always release the provider's provisional claim.
+
+    This runs fire-and-forget in the setup worker pool, so its exceptions are
+    not observed by the caller. Releasing the claim here (in a finally)
+    guarantees a dedicated_static host's claim marker is cleared on success and
+    the host is freed for re-dispatch on failure. For providers without a claim
+    (Hetzner/AWS) release_claim is a no-op.
+    """
+    succeeded = False
+    try:
+        _run_server_setup(provider, server, *args, **kwargs)
+        succeeded = True
+    finally:
+        provider.release_claim(server, succeeded=succeeded)
+
+
+def _run_server_setup(
     provider: CloudProvider,
     server: ProviderServer,
     setup_script: str,

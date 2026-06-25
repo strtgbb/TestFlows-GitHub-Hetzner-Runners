@@ -1967,8 +1967,9 @@ def scale_up(
                                         volumes=volumes,
                                     )
                             except Exception as exc:
-                                # Conservative mode: on ambiguity/failure, skip host this cycle.
-                                logging.debug(
+                                # Surface real failures (misconfig/regression);
+                                # silently skipping would starve the static pool.
+                                logging.warning(
                                     f"Skipping dedicated static host {configured_host.name} this cycle: {exc}"
                                 )
                                 continue

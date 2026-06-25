@@ -50,11 +50,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
     _RUNNER_LABEL_PREFIX = "github-dedicated-runner-label"
 
-    # Durable per-host claim marker. Its presence-and-freshness (file mtime)
-    # is the source of truth for "a setup is in flight on this host"; it
-    # survives controller restarts and reconcile clearing the in-memory lease.
-    # Lives in a dedicated dir the runner scripts must not touch, writable by
-    # the SSH user without sudo, and persists across the host's reboot-on-exit.
+    # Durable per-host claim lock: a `mkdir`'d directory (atomic — one racer
+    # wins, others get EEXIST), so claiming is safe across controller processes
+    # and survives restarts. Its mtime dates the claim so a stale one can be
+    # reclaimed. In a dir the runner scripts don't touch, no sudo needed.
     _CLAIM_DIR = "~/.github-runner"
     _CLAIM_PATH = "~/.github-runner/claim"
 
@@ -200,33 +199,30 @@ class DedicatedStaticCloudProvider(CloudProvider):
         """Claim freshness window in whole minutes (for ``find -mmin``)."""
         return max(1, (int(self._claim_timeout) + 59) // 60)
 
-    def _claim_is_free(self, host: _StaticHost) -> bool:
-        """True iff the host carries no fresh claim marker.
+    def _try_claim(self, host: _StaticHost) -> bool:
+        """Atomically acquire the durable claim; True iff we now hold it.
 
-        Uses the marker file's mtime as the durable clock: a marker modified
-        within the claim window means a setup is (or may still be) in flight.
-        Exit codes are used because ssh() returns the remote exit status, not
-        output: 11 = free/stale/absent, 10 = fresh claim present, anything else
-        (e.g. 255 unreachable) is treated as not-claimable.
+        `mkdir` is the atomic check-and-claim — one racer wins, others get
+        EEXIST — so it's safe across controller processes. A claim older than
+        claim_timeout is reclaimed as stale (that reclaim has a small residual
+        race; the fresh-claim path does not). ssh() returns the remote exit
+        code: 0 = acquired, else held/unreachable = not acquired.
         """
         target = self._as_provider_server(host, include_idle=True)
         minutes = self._claim_minutes()
         cmd = (
-            f"'if find {self._CLAIM_PATH} -mmin -{minutes} 2>/dev/null "
-            f"| grep -q .; then exit 10; else exit 11; fi'"
+            f"'mkdir -p {self._CLAIM_DIR}; "
+            f"if mkdir {self._CLAIM_PATH} 2>/dev/null; then exit 0; fi; "
+            f"if find {self._CLAIM_PATH} -maxdepth 0 -mmin +{minutes} 2>/dev/null | grep -q .; then "
+            f"rmdir {self._CLAIM_PATH} 2>/dev/null && mkdir {self._CLAIM_PATH} 2>/dev/null && exit 0; fi; "
+            f"exit 1'"
         )
-        return ssh(target, cmd, check=False, stacklevel=4) == 11
-
-    def _write_claim(self, host: _StaticHost) -> bool:
-        """Stake the durable claim (create/refresh the marker). True on success."""
-        target = self._as_provider_server(host, include_idle=True)
-        cmd = f"'mkdir -p {self._CLAIM_DIR} && touch {self._CLAIM_PATH}'"
         return ssh(target, cmd, check=False, stacklevel=4) == 0
 
     def _clear_claim(self, host: _StaticHost) -> None:
-        """Best-effort removal of the claim marker."""
+        """Best-effort release of the claim lock."""
         target = self._as_provider_server(host, include_idle=True)
-        ssh(target, f"'rm -f {self._CLAIM_PATH}'", check=False, stacklevel=4)
+        ssh(target, f"'rm -rf {self._CLAIM_PATH}'", check=False, stacklevel=4)
 
     def _host_matches_request(
         self, host: _StaticHost, server_type_name: str, location_name: str | None
@@ -278,11 +274,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
             if host is None:
                 break
 
-            # Outside the lock (SSH must not block reconcile/list): confirm the
-            # durable claim on the host. A fresh marker means another setup —
-            # possibly one orphaned by a crash — already holds it; an
-            # unreachable host also fails to claim. Either way, skip and retry.
-            if self._claim_is_free(host) and self._write_claim(host):
+            # Outside the lock (SSH must not block reconcile/list): atomically
+            # claim the host. Failure = held (maybe cross-process) or
+            # unreachable — skip and try the next.
+            if self._try_claim(host):
                 return self._as_provider_server(host)
 
             with self._lock:

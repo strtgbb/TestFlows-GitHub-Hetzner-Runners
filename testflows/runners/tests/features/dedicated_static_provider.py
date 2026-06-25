@@ -216,6 +216,28 @@ def label_prefix_aware_type_and_location(self):
 
 
 @TestScenario
+def claim_command_includes_stale_reclaim(self):
+    """The atomic claim also reclaims a stale lock: atomic mkdir, then on EEXIST
+    a staleness check (find -mmin +N) followed by rmdir && mkdir. That branch
+    runs in the remote shell, so here we assert the command is constructed with
+    it and with the right staleness window (claim_timeout 360s -> 6 min)."""
+    prov = _provider(claim_timeout=360)
+    captured = {}
+
+    def _ssh(server, cmd, *a, **k):
+        captured["cmd"] = cmd
+        return 0
+
+    with patch.object(provider_mod, "ssh", _ssh):
+        prov._try_claim(prov._hosts[0])
+
+    cmd = captured["cmd"]
+    assert f"mkdir {prov._CLAIM_PATH}" in cmd, cmd
+    assert "-mmin +6" in cmd, cmd
+    assert f"rmdir {prov._CLAIM_PATH}" in cmd and "&& mkdir" in cmd, cmd
+
+
+@TestScenario
 def concurrent_claims_only_one_wins(self):
     """Two controllers (separate provider instances) racing for the same host:
     the atomic mkdir claim lets exactly one acquire it; the other gets None."""

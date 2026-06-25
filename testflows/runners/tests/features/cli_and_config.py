@@ -16,6 +16,7 @@ from testflows.core import *
 
 from testflows.runners.args import provider_type
 from testflows.runners.config.parse import parse_config
+from testflows.runners.config.factory import provider_factory
 
 # Repo root so the CLI subprocess can find the package without an install.
 _REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", ".."))
@@ -219,6 +220,27 @@ def dedicated_static_type_label_honors_label_prefix(self):
                 )
         finally:
             os.unlink(f.name)
+
+
+@TestScenario
+def dedicated_static_factory_wires_label_prefix_and_claim_timeout(self):
+    """parse_config + provider_factory pass label_prefix and the computed
+    claim_timeout (max_server_ready_time + max_runner_registration_time, default
+    180 + 180 = 360) into DedicatedStaticCloudProvider."""
+    import tempfile
+
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    f.write(_LABEL_PREFIX_STATIC_CONFIG.format(prefix="tfs-"))
+    f.close()
+    try:
+        with When("I build providers from the parsed config"):
+            providers = provider_factory(parse_config(f.name))
+        with Then("the dedicated_static provider received the wired knobs"):
+            static = next(p for p in providers if p.name == "dedicated_static")
+            assert static._claim_timeout == 360, static._claim_timeout
+            assert static._type_label_prefix == "tfs-type-", static._type_label_prefix
+    finally:
+        os.unlink(f.name)
 
 
 # ---------------------------------------------------------------------------

@@ -1,9 +1,10 @@
 """Tests for pure helper functions in scale_up.py."""
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from testflows.core import *
 
 from testflows.runners.cloud_provider import CloudProvider
+import testflows.runners.scale_up as scale_up_mod
 from testflows.runners.scale_up import (
     RunnerServer,
     check_max_servers_for_label_reached,
@@ -17,6 +18,7 @@ from testflows.runners.scale_up import (
     get_volume_name,
     job_matches_labels,
     recyclable_server_match,
+    server_setup,
     set_future_attributes,
 )
 from testflows.runners.constants import runner_name_prefix, server_ssh_key_label
@@ -651,6 +653,38 @@ def recyclable_ssh_key_mismatch(self):
         server_net_config=_net(),
         ssh_key=_ssh_key("newkey"),
     ) is False
+
+
+# ---------------------------------------------------------------------------
+# server_setup: always release the provider's provisional claim
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def server_setup_releases_claim_on_success(self):
+    """On a successful setup, server_setup releases the claim with succeeded=True."""
+    provider = MagicMock()
+    server = MagicMock()
+    with patch.object(scale_up_mod, "_run_server_setup"):
+        server_setup(provider=provider, server=server)
+    provider.release_claim.assert_called_once_with(server, succeeded=True)
+
+
+@TestScenario
+def server_setup_releases_claim_on_failure(self):
+    """On a failed setup, server_setup releases with succeeded=False and the
+    exception still propagates."""
+    provider = MagicMock()
+    server = MagicMock()
+    boom = RuntimeError("setup blew up")
+    with patch.object(scale_up_mod, "_run_server_setup", side_effect=boom):
+        raised = None
+        try:
+            server_setup(provider=provider, server=server)
+        except RuntimeError as e:
+            raised = e
+    assert raised is boom, "setup exception must propagate"
+    provider.release_claim.assert_called_once_with(server, succeeded=False)
 
 
 # ---------------------------------------------------------------------------

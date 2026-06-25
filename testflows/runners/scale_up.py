@@ -1283,8 +1283,13 @@ def scale_up(
         futures: list[Future],
         servers: list[RunnerServer],
         volumes: list[BoundVolume],
+        provider: CloudProvider = None,
     ):
-        """Create new server that would provide a runner with given labels."""
+        """Create new server that would provide a runner with given labels.
+
+        When ``provider`` is given, resolution is pinned to it;
+        otherwise each type resolves across all providers.
+        """
         recyclable_servers: list[BoundServer] = []
 
         # signal to stop creating a new server
@@ -1323,10 +1328,12 @@ def scale_up(
 
         # Resolve provider and validate type for each requested server type.
         # get_server_image is called per type since image specs are provider-specific.
+        # Keep-warm pins to one provider (resolve only against it); else all.
+        candidate_providers = [provider] if provider is not None else providers
         resolved = []
         for type_name in server_types:
             try:
-                rp, vt = _resolve_provider(type_name, providers)
+                rp, vt = _resolve_provider(type_name, candidate_providers)
             except ServerTypeError:
                 continue
             provider_default_image = (
@@ -1965,6 +1972,9 @@ def scale_up(
                                         futures=futures,
                                         servers=servers,
                                         volumes=volumes,
+                                        # Pin to this provider so cloud-type
+                                        # labels can't divert to a cloud VM.
+                                        provider=_p,
                                     )
                             except Exception as exc:
                                 # Surface real failures (misconfig/regression);

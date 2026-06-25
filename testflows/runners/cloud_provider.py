@@ -163,12 +163,17 @@ class CloudProvider(ABC):
         volumes: list = None,
         automount: bool = False,
         public_net: Any = None,
-    ) -> ProviderServer:
+    ) -> "ProviderServer | None":
         """Create a new server and return a ProviderServer descriptor.
 
         The call should block until the server object is created (though not
         necessarily until it is running). The caller is responsible for waiting
         for SSH availability.
+
+        Return None when no server can be provisioned right now for an expected,
+        transient reason (e.g. a fixed-capacity provider with all hosts in use);
+        the caller cancels the attempt quietly and retries. Invalid requests
+        (unknown type/location) must still raise.
         """
 
     @abstractmethod

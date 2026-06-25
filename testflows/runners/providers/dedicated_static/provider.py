@@ -248,7 +248,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
         volumes: list = None,
         automount: bool = False,
         public_net: object = None,
-    ) -> ProviderServer:
+    ) -> ProviderServer | None:
         del image, ssh_keys, labels, volumes, automount, public_net
         requested_type = server_type.name
         requested_location = location.name if hasattr(location, "name") else location
@@ -289,11 +289,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
                 self._clear_lease(host)
             skipped.add(host.host_id)
 
-        if requested_location:
-            raise LocationError(
-                f"no idle dedicated host for type '{requested_type}' in '{requested_location}'"
-            )
-        raise ServerTypeError(f"no idle dedicated host for type '{requested_type}'")
+        # No host claimable now (all leased/mid-setup/unreachable): an expected
+        # transient condition, not an error, so return None instead of raising.
+        # Unknown types are rejected earlier by get_server_type.
+        return None
 
     def release_claim(self, server: ProviderServer, *, succeeded: bool) -> None:
         """Release the durable claim after setup completes (success or failure).

@@ -89,29 +89,25 @@ def free_host_is_claimed_and_marker_written(self):
 
 
 @TestScenario
-def fresh_marker_host_is_skipped_then_raises(self):
+def fresh_marker_host_is_skipped_returns_none(self):
     """A host with a fresh marker (busy/orphaned) is not claimed; with no other
-    host available create_server raises and the optimistic lease is rolled back."""
+    host available, create_server returns None — an expected capacity/in-flight
+    outcome, not an error — and the optimistic lease is rolled back."""
     prov = _provider()
     with patch.object(provider_mod, "ssh", _ssh_by_code(find=10)):
-        try:
-            _claim(prov)
-            raise AssertionError("expected create_server to raise")
-        except Exception as e:
-            assert "no idle dedicated host" in str(e), e
+        result = _claim(prov)
+    assert result is None, f"expected None for a fully-claimed pool, got {result!r}"
     assert prov._hosts[0].lease_name is None, "optimistic lease must be rolled back"
 
 
 @TestScenario
-def unreachable_host_is_not_claimed(self):
-    """An unreachable host (ssh exit 255 on the probe) is never claimed."""
+def unreachable_host_returns_none(self):
+    """An unreachable host (ssh exit 255 on the probe) is never claimed;
+    create_server returns None rather than raising."""
     prov = _provider()
     with patch.object(provider_mod, "ssh", _ssh_by_code(find=255)):
-        try:
-            _claim(prov)
-            raise AssertionError("expected create_server to raise")
-        except Exception as e:
-            assert "no idle dedicated host" in str(e), e
+        result = _claim(prov)
+    assert result is None, f"expected None for an unreachable host, got {result!r}"
     assert prov._hosts[0].lease_name is None
 
 

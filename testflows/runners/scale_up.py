@@ -909,6 +909,16 @@ def create_server(
                             volume.server = None
                         raise
 
+                if provider_server is None:
+                    # Expected transient "no host available" (e.g. static pool
+                    # full); release volumes and cancel quietly. Raised outside
+                    # any Action so it is not logged as an error.
+                    for volume in server_bound_volumes:
+                        volume.server = None
+                    raise CanceledServerCreation(
+                        f"no server available to create {name} right now"
+                    )
+
                 metrics.record_server_creation(
                     server_type=server_type.name,
                     location=_loc_name(server_location),

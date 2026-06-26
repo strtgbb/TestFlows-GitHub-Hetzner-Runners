@@ -131,6 +131,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
     def supports_recycling(self) -> bool:
         return False
 
+    @property
+    def claim_release_requires_registration(self) -> bool:
+        return True
+
     def setup_script_name(self, labels: list[str], label_prefix: str = "") -> str:
         # Static hosts are provisioned out of band, so the setup-step is cleanup,
         # never provisioning: it defaults to recycle.sh and is selected by a

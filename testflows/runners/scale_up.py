@@ -145,21 +145,108 @@ def get_runner_server_type(runner_name: str) -> str | None:
     return None
 
 
-def server_setup(provider: CloudProvider, server: ProviderServer, *args, **kwargs):
-    """Run server setup, then always release the provider's provisional claim.
+def wait_runner_registered(
+    github_token: str,
+    github_repository: str,
+    runner_name: str,
+    timeout: float,
+    poll_interval: float = 5.0,
+) -> bool:
+    """Wait until *runner_name* appears in GitHub self-hosted runners."""
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {github_token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    deadline = time.time() + timeout
+    per_page = 100
+
+    while time.time() < deadline:
+        try:
+            page = 1
+            while True:
+                content, _ = request(
+                    f"https://api.github.com/repos/{github_repository}/actions/runners"
+                    f"?per_page={per_page}&page={page}",
+                    headers=headers,
+                    format="json",
+                )
+                runners = content.get("runners", [])
+                if any(runner.get("name") == runner_name for runner in runners):
+                    return True
+
+                total_count = int(content.get("total_count", 0) or 0)
+                # No more pages to scan this poll.
+                if not runners or page * per_page >= total_count:
+                    break
+                page += 1
+        except Exception as exc:
+            logging.debug(
+                f"Could not verify registration for runner {runner_name}: {exc}"
+            )
+
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(poll_interval, remaining))
+
+    return False
+
+
+def server_setup(
+    provider: CloudProvider,
+    server: ProviderServer,
+    setup_script: str,
+    startup_script: str,
+    github_token: str,
+    github_repository: str,
+    runner_labels: str,
+    timeout: float = 60,
+    max_runner_registration_time: float = 180,
+):
+    """Run server setup, then release provider claim when safe.
 
     This runs fire-and-forget in the setup worker pool, so its exceptions are
-    not observed by the caller. Releasing the claim here (in a finally)
-    guarantees a dedicated_static host's claim marker is cleared on success and
-    the host is freed for re-dispatch on failure. For providers without a claim
-    (Hetzner/AWS) release_claim is a no-op.
+    not observed by the caller. Providers that defer claim release until runner
+    registration keep successful claims until the runner is observed in GitHub
+    (bounded by ``max_runner_registration_time``) to avoid a dispatch window
+    where setup finished but the runner is not registered yet.
     """
     succeeded = False
+    release_claim = True
     try:
-        _run_server_setup(provider, server, *args, **kwargs)
+        runner_name = _run_server_setup(
+            provider=provider,
+            server=server,
+            setup_script=setup_script,
+            startup_script=startup_script,
+            github_token=github_token,
+            github_repository=github_repository,
+            runner_labels=runner_labels,
+            timeout=timeout,
+        )
         succeeded = True
+        if provider.claim_release_requires_registration:
+            with Action(
+                "Waiting for runner registration before releasing claim",
+                server_name=server.name,
+                ignore_fail=True,
+            ) as action:
+                if not wait_runner_registered(
+                    github_token=github_token,
+                    github_repository=github_repository,
+                    runner_name=runner_name,
+                    timeout=max_runner_registration_time,
+                ):
+                    # Fail closed: keep the host claim until timeout-based reclaim.
+                    release_claim = False
+                    action.note(
+                        f"WARNING: Runner {runner_name} was not observed in GitHub "
+                        f"within {max_runner_registration_time}s; keeping claim"
+                    )
     finally:
-        provider.release_claim(server, succeeded=succeeded)
+        if release_claim:
+            provider.release_claim(server, succeeded=succeeded)
 
 
 def _run_server_setup(
@@ -172,7 +259,7 @@ def _run_server_setup(
     runner_labels: str,
     timeout: float = 60,
 ):
-    """Setup new server instance."""
+    """Setup new server instance and return runner registration name."""
     cache_volume_name = "cache"
     runner_name = provider.build_runner_name(server)
 
@@ -295,6 +382,7 @@ def _run_server_setup(
             f"bash -s' < {startup_script}",
             stacklevel=5,
         )
+    return runner_name
 
 
 def get_server_types(labels: list[str], default, label_prefix: str = "") -> list[str]:
@@ -799,6 +887,7 @@ def create_server(
     ssh_keys: list,
     volumes: list,
     timeout: float = 60,
+    max_runner_registration_time: float = 180,
     canceled: threading.Event = None,
     semaphore: threading.Semaphore = None,
     active_attempt: list[int] = None,
@@ -925,6 +1014,7 @@ def create_server(
         github_repository=github_repository,
         runner_labels=",".join(labels),
         timeout=timeout,
+        max_runner_registration_time=max_runner_registration_time,
     )
 
 
@@ -942,6 +1032,7 @@ def recycle_server(
     github_repository: str,
     ssh_key: SSHKey,
     timeout=60,
+    max_runner_registration_time: float = 180,
     without_rebuild: bool = False,
     recycle_script: str = None,
 ):
@@ -999,6 +1090,7 @@ def recycle_server(
         github_repository=github_repository,
         runner_labels=",".join(labels),
         timeout=timeout,
+        max_runner_registration_time=max_runner_registration_time,
     )
 
 
@@ -1236,6 +1328,7 @@ def scale_up(
     max_servers_for_label: list[tuple[set[str], int]] = config.max_runners_for_label
     max_servers_in_workflow_run: int = config.max_runners_in_workflow_run
     max_server_ready_time: int = config.max_server_ready_time
+    max_runner_registration_time: int = config.max_runner_registration_time
     debug: bool = config.debug
     standby_runners: list[StandbyRunner] = config.standby_runners
     recycle: bool = config.recycle
@@ -1395,6 +1488,7 @@ def scale_up(
                                     github_repository=github_repository,
                                     ssh_key=provider_ssh_keys[0] if provider_ssh_keys else None,
                                     timeout=max_server_ready_time,
+                                    max_runner_registration_time=max_runner_registration_time,
                                     without_rebuild=recycle_without_rebuild,
                                     recycle_script=recycle_script,
                                 )
@@ -1576,6 +1670,7 @@ def scale_up(
                     ssh_keys=provider_ssh_keys,
                     volumes=volumes,
                     timeout=max_server_ready_time,
+                    max_runner_registration_time=max_runner_registration_time,
                     canceled=create_server_canceled,
                     semaphore=create_server_semaphore,
                     active_attempt=create_server_active_attempt,

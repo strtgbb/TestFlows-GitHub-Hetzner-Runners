@@ -241,6 +241,16 @@ class CloudProvider(ABC):
         """Optional hook for providers that derive occupancy from GitHub runner names."""
         del runner_names
 
+    @property
+    def claim_release_requires_registration(self) -> bool:
+        """Whether successful claim release should wait for runner registration.
+
+        Providers with durable pre-setup claims (e.g. dedicated_static) can
+        return True so orchestrator logic keeps claims until the runner is
+        observed in GitHub. Defaults to False.
+        """
+        return False
+
     def release_claim(self, server: "ProviderServer", *, succeeded: bool) -> None:
         """Optional hook: release any provisional claim staked before setup.
 

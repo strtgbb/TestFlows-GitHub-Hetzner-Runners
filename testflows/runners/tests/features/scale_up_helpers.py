@@ -664,9 +664,18 @@ def recyclable_ssh_key_mismatch(self):
 def server_setup_releases_claim_on_success(self):
     """On a successful setup, server_setup releases the claim with succeeded=True."""
     provider = MagicMock()
+    provider.claim_release_requires_registration = False
     server = MagicMock()
     with patch.object(scale_up_mod, "_run_server_setup"):
-        server_setup(provider=provider, server=server)
+        server_setup(
+            provider=provider,
+            server=server,
+            setup_script="setup.sh",
+            startup_script="startup.sh",
+            github_token="token",
+            github_repository="owner/repo",
+            runner_labels="self-hosted",
+        )
     provider.release_claim.assert_called_once_with(server, succeeded=True)
 
 
@@ -675,16 +684,77 @@ def server_setup_releases_claim_on_failure(self):
     """On a failed setup, server_setup releases with succeeded=False and the
     exception still propagates."""
     provider = MagicMock()
+    provider.claim_release_requires_registration = False
     server = MagicMock()
     boom = RuntimeError("setup blew up")
     with patch.object(scale_up_mod, "_run_server_setup", side_effect=boom):
         raised = None
         try:
-            server_setup(provider=provider, server=server)
+            server_setup(
+                provider=provider,
+                server=server,
+                setup_script="setup.sh",
+                startup_script="startup.sh",
+                github_token="token",
+                github_repository="owner/repo",
+                runner_labels="self-hosted",
+            )
         except RuntimeError as e:
             raised = e
     assert raised is boom, "setup exception must propagate"
     provider.release_claim.assert_called_once_with(server, succeeded=False)
+
+
+@TestScenario
+def server_setup_dedicated_static_keeps_claim_until_registered(self):
+    """For dedicated_static, if runner registration is not observed within the
+    wait window, the claim is intentionally kept (fail-closed)."""
+    provider = MagicMock()
+    provider.claim_release_requires_registration = True
+    server = MagicMock()
+
+    with patch.object(
+        scale_up_mod, "_run_server_setup", return_value="github-runner-static-host"
+    ):
+        with patch.object(scale_up_mod, "wait_runner_registered", return_value=False):
+            server_setup(
+                provider=provider,
+                server=server,
+                setup_script="setup.sh",
+                startup_script="startup.sh",
+                github_token="token",
+                github_repository="owner/repo",
+                runner_labels="self-hosted",
+                max_runner_registration_time=1,
+            )
+
+    provider.release_claim.assert_not_called()
+
+
+@TestScenario
+def server_setup_dedicated_static_releases_claim_after_registration(self):
+    """For dedicated_static, once runner registration is observed, the claim is
+    released with succeeded=True."""
+    provider = MagicMock()
+    provider.claim_release_requires_registration = True
+    server = MagicMock()
+
+    with patch.object(
+        scale_up_mod, "_run_server_setup", return_value="github-runner-static-host"
+    ):
+        with patch.object(scale_up_mod, "wait_runner_registered", return_value=True):
+            server_setup(
+                provider=provider,
+                server=server,
+                setup_script="setup.sh",
+                startup_script="startup.sh",
+                github_token="token",
+                github_repository="owner/repo",
+                runner_labels="self-hosted",
+                max_runner_registration_time=1,
+            )
+
+    provider.release_claim.assert_called_once_with(server, succeeded=True)
 
 
 # ---------------------------------------------------------------------------

@@ -441,30 +441,6 @@ def get_server_volumes(labels: list[str], default: int = 10, label_prefix: str =
     return list(volumes.values())
 
 
-def get_setup_script(
-    scripts: str, labels: list[str], default: str = "setup.sh", label_prefix: str = ""
-):
-    """Get setup script."""
-    script = None
-
-    if label_prefix and not label_prefix.endswith("-"):
-        label_prefix += "-"
-    label_prefix += "setup-"
-    label_prefix = label_prefix.lower()
-
-    for label in labels:
-        label = label.lower()
-        if label.startswith(label_prefix):
-            script = label.split(label_prefix, 1)[-1] + ".sh"
-
-    if script is None:
-        script = default
-
-    script = check_setup_script(os.path.join(scripts, script))
-
-    return script
-
-
 def get_recycle_script(
     scripts: str, labels: list[str], default: str = "recycle.sh", label_prefix: str = ""
 ):
@@ -1322,9 +1298,9 @@ def scale_up(
         )
 
         # Resolve provider and validate type for each requested server type.
-        # get_server_image and the setup script are resolved per type since both
-        # are provider-specific (image format; and the setup-step script defaults
-        # to the provider's default_setup_script).
+        # get_server_image and the setup-step script are resolved per type since
+        # both are provider-specific (image format; and setup_script_name picks
+        # the script from the provider's own label/default rules).
         # Keep-warm pins to one provider (resolve only against it); else all.
         candidate_providers = [provider] if provider is not None else providers
         resolved = []
@@ -1347,11 +1323,8 @@ def scale_up(
                         default=provider_default_image,
                         label_prefix=label_prefix,
                     ),
-                    get_setup_script(
-                        scripts=scripts,
-                        labels=labels,
-                        label_prefix=label_prefix,
-                        default=rp.default_setup_script,
+                    check_setup_script(
+                        os.path.join(scripts, rp.setup_script_name(labels, label_prefix))
                     ),
                 )
             )

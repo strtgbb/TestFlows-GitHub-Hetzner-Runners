@@ -1,13 +1,14 @@
 """Tests for DedicatedStaticCloudProvider's durable claim-marker lease system.
 
-The provider stakes a host-side claim marker (`~/.github-runner/claim`) before
-setup so an in-flight host is not double-dispatched, with the marker's mtime as
-the durable source of truth. All SSH is mocked at the provider's `ssh` boundary
-(it returns the remote *exit code*, not output), so no real hosts are touched:
+The provider stakes a host-side claim before setup so an in-flight host is not
+double-dispatched: an atomic `mkdir` of the lock dir (`~/.github-runner/claim`)
+wins the claim, a stale lock is detected via `find -mmin` and reclaimed, and the
+claim is released with `rm -rf`. All SSH is mocked at the provider's `ssh`
+boundary, which returns the remote *exit code* (not output), so no real hosts
+are touched:
 
-    find  -> 11 free/stale/absent, 10 fresh claim present, 255 unreachable
-    touch -> 0 claimed ok
-    rm -f -> 0 cleared ok
+    mkdir  -> 0 claim acquired, non-zero already held
+    rm -rf -> 0 released
 """
 from unittest.mock import patch
 
@@ -61,6 +62,23 @@ def _ssh_claim(acquired=True, per_host=None):
 # ---------------------------------------------------------------------------
 # Scenarios
 # ---------------------------------------------------------------------------
+
+
+@TestScenario
+def setup_step_is_recycle_driven(self):
+    """Static hosts are provisioned out of band, so the per-lease setup-step is
+    cleanup: it defaults to recycle.sh and is selected by a recycle-<name> label.
+    A setup-<name> label is the provisioning selector (cloud, in a mixed fleet)
+    and is ignored — so a job carrying both still cleans with recycle-."""
+    prov = _provider()
+    with Then("no override -> default recycle.sh"):
+        assert prov.setup_script_name([]) == "recycle.sh"
+    with And("a recycle-<name> label selects the cleanup script"):
+        assert prov.setup_script_name(["recycle-clean"]) == "clean.sh"
+    with And("a lone setup-<name> label is ignored (no provisioning on static)"):
+        assert prov.setup_script_name(["setup-provision"]) == "recycle.sh"
+    with And("a mixed-fleet job with both -> recycle- wins, no error"):
+        assert prov.setup_script_name(["setup-provision", "recycle-clean"]) == "clean.sh"
 
 
 @TestScenario

@@ -105,14 +105,23 @@ class CloudProvider(ABC):
         """
         return getattr(self, "_default_location", None)
 
-    @property
-    def default_setup_script(self) -> str:
-        """Setup-step script filename used when no ``setup-`` label is present.
+    def setup_script_name(self, labels: "list[str]", label_prefix: str = "") -> str:
+        """Filename of the setup-step script run before each runner registers.
 
-        Defaults to ``setup.sh``. Providers whose hosts are provisioned out of
-        band (e.g. dedicated_static) can override to run cleanup instead.
+        Base: a ``setup-<name>`` label override, else ``setup.sh``. Providers
+        whose setup-step is itself a cleanup script (dedicated_static) override
+        this to read a ``recycle-<name>`` label instead. The caller resolves the
+        path and checks existence.
         """
-        return "setup.sh"
+        if label_prefix and not label_prefix.endswith("-"):
+            label_prefix += "-"
+        prefix = (label_prefix + "setup-").lower()
+        name = None
+        for label in labels:
+            label = label.lower()
+            if label.startswith(prefix):
+                name = label.split(prefix, 1)[1]
+        return f"{name}.sh" if name is not None else "setup.sh"
 
     @property
     @abstractmethod

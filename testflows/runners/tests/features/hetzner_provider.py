@@ -382,11 +382,15 @@ def power_on_propagates_timeout(self):
 
 
 @TestScenario
-def default_setup_script_is_setup_sh(self):
+def setup_script_name_defaults_to_setup_sh(self):
     with Given("a Hetzner provider"):
         _, provider = hetzner_provider()
-    with Then("its default setup script is setup.sh"):
-        assert provider.default_setup_script == "setup.sh"
+    with Then("its setup-step script defaults to setup.sh"):
+        assert provider.setup_script_name([]) == "setup.sh"
+    with And("a setup-<name> label overrides it"):
+        assert provider.setup_script_name(["setup-custom"]) == "custom.sh"
+    with And("a recycle-<name> label does NOT affect the setup-step for cloud"):
+        assert provider.setup_script_name(["recycle-clean"]) == "setup.sh"
 
 
 # ---------------------------------------------------------------------------

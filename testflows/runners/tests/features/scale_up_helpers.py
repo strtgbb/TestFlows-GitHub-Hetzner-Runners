@@ -13,7 +13,6 @@ from testflows.runners.scale_up import (
     count_present,
     get_job_labels,
     get_runner_server_type,
-    get_setup_script,
     get_server_count_with_labels,
     get_total_server_count,
     get_volume_name,
@@ -654,34 +653,6 @@ def recyclable_ssh_key_mismatch(self):
         server_net_config=_net(),
         ssh_key=_ssh_key("newkey"),
     ) is False
-
-
-# ---------------------------------------------------------------------------
-# get_setup_script: default fallback + label override
-# ---------------------------------------------------------------------------
-
-
-@TestScenario
-def get_setup_script_uses_provided_default_and_label_override(self):
-    """With no setup- label, get_setup_script returns the given default (so a
-    provider can default to recycle.sh); a setup-<name> label overrides it."""
-    import os
-    import shutil
-    import tempfile
-
-    d = tempfile.mkdtemp()
-    for name in ("setup.sh", "recycle.sh", "custom.sh"):
-        open(os.path.join(d, name), "w").close()
-    try:
-        with Then("no label -> the provided default is used"):
-            assert os.path.basename(get_setup_script(d, [], default="setup.sh")) == "setup.sh"
-            assert os.path.basename(get_setup_script(d, [], default="recycle.sh")) == "recycle.sh"
-        with And("a setup-<name> label overrides the default"):
-            assert os.path.basename(
-                get_setup_script(d, ["setup-custom"], default="recycle.sh")
-            ) == "custom.sh"
-    finally:
-        shutil.rmtree(d)
 
 
 # ---------------------------------------------------------------------------

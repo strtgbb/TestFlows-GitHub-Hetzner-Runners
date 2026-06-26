@@ -131,6 +131,22 @@ class DedicatedStaticCloudProvider(CloudProvider):
     def supports_recycling(self) -> bool:
         return False
 
+    def setup_script_name(self, labels: list[str], label_prefix: str = "") -> str:
+        # Static hosts are provisioned out of band, so the setup-step is cleanup,
+        # never provisioning: it defaults to recycle.sh and is selected by a
+        # recycle-<name> label. A setup- label is the provisioning selector (e.g.
+        # for cloud providers in a mixed fleet) and does not apply here, so it is
+        # ignored.
+        if label_prefix and not label_prefix.endswith("-"):
+            label_prefix += "-"
+        prefix = (label_prefix + "recycle-").lower()
+        name = None
+        for label in labels:
+            label = label.lower()
+            if label.startswith(prefix):
+                name = label.split(prefix, 1)[1]
+        return f"{name}.sh" if name is not None else "recycle.sh"
+
     def build_runner_name(self, server: ProviderServer) -> str:
         host = getattr(server, "_native", None)
         if host is not None and hasattr(host, "static_name"):

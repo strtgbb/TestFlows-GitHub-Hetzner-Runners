@@ -381,6 +381,14 @@ def power_on_propagates_timeout(self):
         action.wait_until_finished.assert_called_once_with(max_retries=42)
 
 
+@TestScenario
+def default_setup_script_is_setup_sh(self):
+    with Given("a Hetzner provider"):
+        _, provider = hetzner_provider()
+    with Then("its default setup script is setup.sh"):
+        assert provider.default_setup_script == "setup.sh"
+
+
 # ---------------------------------------------------------------------------
 # expand_location_label (pure function — no fixtures needed)
 # ---------------------------------------------------------------------------

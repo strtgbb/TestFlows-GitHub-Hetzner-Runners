@@ -1317,17 +1317,14 @@ def scale_up(
                 server_locations = [
                     default_volume_location,
                 ]
-        setup_script = get_setup_script(
-            scripts=scripts,
-            labels=labels,
-            label_prefix=label_prefix,
-        )
         server_net_config = get_server_net_config(
             labels=labels, label_prefix=label_prefix
         )
 
         # Resolve provider and validate type for each requested server type.
-        # get_server_image is called per type since image specs are provider-specific.
+        # get_server_image and the setup script are resolved per type since both
+        # are provider-specific (image format; and the setup-step script defaults
+        # to the provider's default_setup_script).
         # Keep-warm pins to one provider (resolve only against it); else all.
         candidate_providers = [provider] if provider is not None else providers
         resolved = []
@@ -1350,11 +1347,17 @@ def scale_up(
                         default=provider_default_image,
                         label_prefix=label_prefix,
                     ),
+                    get_setup_script(
+                        scripts=scripts,
+                        labels=labels,
+                        label_prefix=label_prefix,
+                        default=rp.default_setup_script,
+                    ),
                 )
             )
 
         if recycle:
-            for type_name, resolved_provider, validated_type, server_image in resolved:
+            for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
                 if not resolved_provider.supports_recycling:
                     continue
                 provider_ssh_keys = ssh_keys.get(resolved_provider.name, [])
@@ -1443,7 +1446,7 @@ def scale_up(
                                 ):
                                     pass
 
-        for type_name, resolved_provider, validated_type, server_image in resolved:
+        for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
             if server_volumes and not resolved_provider.supports_volumes:
                 with Action(
                     f"Skipping provider {resolved_provider.name} for {name}: job requires volumes but provider does not support them",

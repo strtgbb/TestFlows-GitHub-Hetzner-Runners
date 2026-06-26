@@ -106,6 +106,15 @@ class CloudProvider(ABC):
         return getattr(self, "_default_location", None)
 
     @property
+    def default_setup_script(self) -> str:
+        """Setup-step script filename used when no ``setup-`` label is present.
+
+        Defaults to ``setup.sh``. Providers whose hosts are provisioned out of
+        band (e.g. dedicated_static) can override to run cleanup instead.
+        """
+        return "setup.sh"
+
+    @property
     @abstractmethod
     def name(self) -> str:
         """Human-readable provider name, e.g. 'hetzner' or 'aws'."""

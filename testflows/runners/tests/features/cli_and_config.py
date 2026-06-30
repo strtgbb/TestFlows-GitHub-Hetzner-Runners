@@ -2,9 +2,10 @@
 
 Covers:
 - CLI --help exits 0 and produces output (smoke test)
-- provider_type() accepts valid providers and rejects removed ones
-- Config parser rejects azure/gcp/scaleway with a clear message
-- schema.json only lists hetzner and aws under providers.properties
+- provider_type() accepts valid providers (hetzner/aws/scaleway) and rejects
+  not-yet-implemented ones (azure/gcp)
+- Config parser rejects azure/gcp with a clear message
+- schema.json lists hetzner, aws and scaleway under providers.properties
 """
 import json
 import os
@@ -51,19 +52,20 @@ def cli_help_exits_zero(self):
 def cli_help_mentions_known_providers(self):
     with When("I run `tfs-runners --help`"):
         result = _run_help()
-    with Then("the output mentions hetzner and aws"):
+    with Then("the output mentions hetzner, aws and scaleway"):
         output = result.stdout + result.stderr
         assert "hetzner" in output
         assert "aws" in output
+        assert "scaleway" in output
 
 
 @TestScenario
 def cli_help_does_not_mention_removed_providers(self):
     with When("I run `tfs-runners --help`"):
         result = _run_help()
-    with Then("the output does not mention azure / gcp / scaleway"):
+    with Then("the output does not mention azure / gcp"):
         output = result.stdout + result.stderr
-        for removed in ("azure", "gcp", "scaleway"):
+        for removed in ("azure", "gcp"):
             assert removed not in output, f"removed provider '{removed}' still appears in --help"
 
 
@@ -74,17 +76,19 @@ def cli_help_does_not_mention_removed_providers(self):
 
 @TestScenario
 def provider_type_accepts_valid(self):
-    for value in ("hetzner", "aws", "hetzner,aws", "aws,hetzner"):
+    for value in ("hetzner", "aws", "scaleway", "hetzner,aws", "aws,scaleway"):
         with When(f"I parse provider_type({value!r})"):
             result = provider_type(value)
         with Then("the result is a list of known providers"):
             assert isinstance(result, list)
-            assert all(p in {"hetzner", "aws"} for p in result), f"unexpected for {value}: {result}"
+            assert all(
+                p in {"hetzner", "aws", "scaleway"} for p in result
+            ), f"unexpected for {value}: {result}"
 
 
 @TestScenario
 def provider_type_rejects_removed_providers(self):
-    for removed in ("azure", "gcp", "scaleway"):
+    for removed in ("azure", "gcp"):
         with When(f"I parse provider_type({removed!r})"):
             try:
                 provider_type(removed)
@@ -141,7 +145,7 @@ def _write_minimal_with_provider(provider_name):
 
 @TestScenario
 def config_rejects_removed_providers(self):
-    for provider_name in ("azure", "gcp", "scaleway"):
+    for provider_name in ("azure", "gcp"):
         with Given(f"a config referencing the removed provider {provider_name!r}"):
             cfg_file = _write_minimal_with_provider(provider_name)
         try:
@@ -179,13 +183,13 @@ def _providers_properties(schema):
 
 
 @TestScenario
-def schema_only_hetzner_and_aws_defined(self):
+def schema_implemented_providers_defined(self):
     with Given("the schema.json file"):
         with open(_SCHEMA_PATH) as f:
             schema = json.load(f)
-    with Then("only hetzner and aws are defined under providers"):
+    with Then("hetzner, aws and scaleway are defined under providers"):
         props = _providers_properties(schema)
-        assert set(props.keys()) == {"hetzner", "aws"}, (
+        assert set(props.keys()) == {"hetzner", "aws", "scaleway"}, (
             f"Unexpected providers in schema: {set(props.keys())}"
         )
 
@@ -195,9 +199,9 @@ def schema_removed_provider_absent(self):
     with Given("the schema.json file"):
         with open(_SCHEMA_PATH) as f:
             schema = json.load(f)
-    with Then("azure / gcp / scaleway are absent from providers"):
+    with Then("azure / gcp are absent from providers"):
         props = _providers_properties(schema)
-        for removed in ("azure", "gcp", "scaleway"):
+        for removed in ("azure", "gcp"):
             assert removed not in props, f"removed provider '{removed}' still in schema"
 
 

@@ -71,6 +71,7 @@ setup(
     ],
     extras_require={
         "aws": ["boto3>=1.34"],
+        "scaleway": ["scaleway>=2.0"],
         "dev": [],
     },
 )

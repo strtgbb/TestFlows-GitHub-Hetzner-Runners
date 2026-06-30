@@ -13,6 +13,7 @@ from .config import (
     server_type,
     hetzner_provider,
     aws_provider,
+    scaleway_provider,
     provider_defaults,
     provider_list,
 )
@@ -557,13 +558,79 @@ def parse_config(filename: str):
                 )
             _aws = aws_provider(**_aws_kwargs)
 
-        _unimplemented = set(_p.keys()) - {"hetzner", "aws"}
+        _scaleway = None
+        if _p.get("scaleway") is not None:
+            s = _p["scaleway"]
+            assert isinstance(
+                s, dict
+            ), "config.providers.scaleway: is not a dictionary"
+            for _str_field in (
+                "access_key",
+                "secret_key",
+                "project_id",
+                "organization_id",
+            ):
+                if s.get(_str_field) is not None:
+                    assert isinstance(
+                        s[_str_field], str
+                    ), f"config.providers.scaleway.{_str_field}: is not a string"
+            _scaleway_kwargs = dict(
+                access_key=s.get("access_key"),
+                secret_key=s.get("secret_key"),
+                project_id=s.get("project_id"),
+                organization_id=s.get("organization_id"),
+                ssh_user=s.get("ssh_user", "root"),
+            )
+            if s.get("max_runners") is not None:
+                v = s["max_runners"]
+                assert isinstance(v, int) and v > 0, (
+                    "config.providers.scaleway.max_runners: must be an integer > 0"
+                )
+                _scaleway_kwargs["max_runners"] = v
+            if s.get("end_of_life") is not None:
+                v = s["end_of_life"]
+                assert isinstance(v, int) and v > 0, (
+                    "config.providers.scaleway.end_of_life: must be an integer > 0"
+                )
+                _scaleway_kwargs["end_of_life"] = v
+            _scaleway_defaults_raw = s.get("defaults")
+            if _scaleway_defaults_raw is not None:
+                assert isinstance(
+                    _scaleway_defaults_raw, dict
+                ), "config.providers.scaleway.defaults: is not a dictionary"
+                base = scaleway_provider().defaults
+                _scw_server_type = _scaleway_defaults_raw.get(
+                    "server_type", base.server_type
+                )
+                if _scw_server_type is not None:
+                    assert "-" not in _scw_server_type, (
+                        "config.providers.scaleway.defaults.server_type: use the "
+                        f"dot-form (e.g. '{str(_scw_server_type).replace('-', '.')}') "
+                        "not the dash-form; the runner label grammar reserves '-'"
+                    )
+                _scw_volume_size = _scaleway_defaults_raw.get(
+                    "volume_size", base.volume_size
+                )
+                assert isinstance(_scw_volume_size, int) and _scw_volume_size > 0, (
+                    "config.providers.scaleway.defaults.volume_size: must be an integer > 0 (in GB)"
+                )
+                _scaleway_kwargs["defaults"] = provider_defaults(
+                    image=_scaleway_defaults_raw.get("image", base.image),
+                    server_type=_scw_server_type,
+                    location=_scaleway_defaults_raw.get("location", base.location),
+                    volume_size=_scw_volume_size,
+                )
+            _scaleway = scaleway_provider(**_scaleway_kwargs)
+
+        _unimplemented = set(_p.keys()) - {"hetzner", "aws", "scaleway"}
         assert not _unimplemented, (
             f"config.providers: {', '.join(sorted(_unimplemented))} "
             f"{'is' if len(_unimplemented) == 1 else 'are'} not yet implemented"
         )
 
-        doc["providers"] = provider_list(hetzner=_hetzner, aws=_aws)
+        doc["providers"] = provider_list(
+            hetzner=_hetzner, aws=_aws, scaleway=_scaleway
+        )
 
     try:
         return Config(**doc)

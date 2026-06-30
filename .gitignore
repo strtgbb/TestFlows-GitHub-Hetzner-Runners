@@ -2,3 +2,6 @@
 wiki/
 dist/
 testflows.*.egg-info/
+
+# Python virtual environment (worktree-local, for live testing)
+.venv/

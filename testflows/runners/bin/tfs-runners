@@ -60,7 +60,7 @@ import testflows.runners.projects as projects
 import testflows.runners.volumes as volumes
 
 # Provider-specific argument validators
-from testflows.runners.providers import hetzner, aws
+from testflows.runners.providers import hetzner, aws, scaleway
 
 from requests_cache import DO_NOT_CACHE, EXPIRE_IMMEDIATELY, install_cache
 from requests_cache.backends.filesystem import FileCache
@@ -145,7 +145,7 @@ def argparser():
         metavar="name",
         type=args.provider_type,
         help="Enable specific providers using comma-separated list.\n"
-             "Example: --provider hetzner,aws, default: hetzner only or\n"
+             "Example: --provider hetzner,aws,scaleway, default: hetzner only or\n"
              "all providers specified in the configuration file"
     )
 
@@ -153,6 +153,8 @@ def argparser():
     hetzner.args.add_arguments(parser)
 
     aws.args.add_arguments(parser)
+
+    scaleway.args.add_arguments(parser)
 
     parser.add_argument(
         "--ssh-key",
@@ -1834,6 +1836,19 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
                     }
                 except Exception as e:
                     logger.error(f"Could not fetch EC2 prices: {e}")
+
+        scaleway_provider = next((p for p in providers if p.name == "scaleway"), None)
+        if scaleway_provider is not None:
+            with Action("Getting Scaleway instance prices"):
+                try:
+                    scw_prices = scaleway_provider.get_prices()
+                    config.server_prices = config.server_prices or {}
+                    config.server_prices["scaleway"] = {
+                        "prices": scw_prices,
+                        "currency": scaleway_provider.currency,
+                    }
+                except Exception as e:
+                    logger.error(f"Could not fetch Scaleway prices: {e}")
 
         for p in providers:
             with Action(f"Checking if SSH key exists ({p.name})"):

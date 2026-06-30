@@ -82,4 +82,28 @@ def provider_factory(config: Config) -> list[CloudProvider]:
             )
         )
 
+    scaleway_cfg = config.providers.scaleway
+    if (
+        scaleway_cfg
+        and scaleway_cfg.access_key
+        and scaleway_cfg.secret_key
+        and scaleway_cfg.project_id
+    ):
+        from ..providers.scaleway.provider import ScalewayCloudProvider
+
+        providers.append(
+            ScalewayCloudProvider(
+                access_key=scaleway_cfg.access_key,
+                secret_key=scaleway_cfg.secret_key,
+                project_id=scaleway_cfg.project_id,
+                organization_id=scaleway_cfg.organization_id,
+                zone=scaleway_cfg.defaults.location or "fr-par-1",
+                default_image_spec=scaleway_cfg.defaults.image,
+                default_location_spec=scaleway_cfg.defaults.location,
+                ssh_user=scaleway_cfg.ssh_user,
+                max_runners=scaleway_cfg.max_runners,
+                end_of_life=scaleway_cfg.end_of_life,
+            )
+        )
+
     return providers

@@ -129,11 +129,38 @@ class aws_provider:
 
 
 @dataclass
+class scaleway_provider:
+    """Scaleway provider configuration.
+
+    Instance types are configured in the canonical dot-form (e.g. ``dev1.s``),
+    not Scaleway's native dash-form (``DEV1-S``), because the runner label
+    grammar reserves ``-`` as a separator.
+    """
+
+    access_key: str = None
+    secret_key: str = None
+    project_id: str = None
+    organization_id: str = None
+    ssh_user: str = "root"
+    max_runners: int = None
+    end_of_life: int = None
+    defaults: provider_defaults = dataclasses.field(
+        default_factory=lambda: provider_defaults(
+            image="ubuntu_jammy",
+            server_type="dev1.m",
+            location="fr-par-1",
+            volume_size=20,
+        )
+    )
+
+
+@dataclass
 class provider_list:
     """Multi-provider configuration."""
 
     hetzner: hetzner_provider = None
     aws: aws_provider = None
+    scaleway: scaleway_provider = None
 
 
 @dataclass
@@ -298,10 +325,16 @@ class Config:
                 and bool(self.providers.aws.access_key_id)
                 and bool(self.providers.aws.secret_access_key)
             )
-            if not (has_hetzner or has_aws):
+            has_scaleway = (
+                self.providers.scaleway is not None
+                and bool(self.providers.scaleway.access_key)
+                and bool(self.providers.scaleway.secret_key)
+                and bool(self.providers.scaleway.project_id)
+            )
+            if not (has_hetzner or has_aws or has_scaleway):
                 print(
                     "argument error: no cloud provider configured; "
-                    "set --hetzner-token or add providers.hetzner.token / providers.aws credentials to config file",
+                    "set --hetzner-token or add providers.hetzner.token / providers.aws / providers.scaleway credentials to config file",
                     file=sys.stderr,
                 )
                 sys.exit(1)

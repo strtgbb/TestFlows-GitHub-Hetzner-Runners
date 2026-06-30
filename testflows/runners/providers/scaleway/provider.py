@@ -403,45 +403,95 @@ class ScalewayCloudProvider(CloudProvider):
     def get_image(self, image_spec):
         """Resolve a Scaleway image spec to an image identifier.
 
-        Accepts an image UUID (returned as-is) or a marketplace label such as
-        ``ubuntu_jammy``, which is resolved to the local image UUID for the
-        configured zone and the server type's architecture.
+        Resolves, in order:
+
+        1. an image **UUID** (custom or otherwise) -> returned as-is;
+        2. a **marketplace label** such as ``ubuntu_jammy`` -> the zone-local
+           image UUID (public base images);
+        3. a **custom/private image name** -> the private image UUID for this
+           project and zone (your own baked images, e.g. ``runner-base``).
+
+        Foreign image specs (Hetzner's ``arch:type:name`` colon form, AWS
+        ``ami-`` / ``resolve:ssm:`` specs) raise ``ImageSpecFormatError`` so a
+        multi-cloud job can fall through to the provider that owns them.
         """
         import uuid as _uuid
-        from scaleway.marketplace.v2 import MarketplaceV2API
 
         if image_spec is None:
             raise ImageError("Scaleway image spec is required")
 
         spec = str(image_spec).strip()
+
+        # 1. UUID -> use directly.
         try:
             _uuid.UUID(spec)
             return spec
         except (ValueError, AttributeError):
             pass
 
-        # Marketplace labels are lowercase alphanumerics + underscores.
-        if not spec.replace("_", "").isalnum():
+        # Reject specs that clearly belong to another provider so scale_up can
+        # try the next provider's get_image instead of hard-failing here.
+        if ":" in spec or spec.startswith("ami-"):
             raise ImageSpecFormatError(
-                f"unsupported Scaleway image spec '{spec}'; expected an image "
-                f"UUID or a marketplace label such as 'ubuntu_jammy'"
+                f"'{spec}' is not a Scaleway image spec (expected an image UUID, "
+                f"a marketplace label like 'ubuntu_jammy', or a custom image name)"
             )
+
+        # 2. Marketplace label (public base images).
+        marketplace_id = self._resolve_marketplace_image(spec)
+        if marketplace_id is not None:
+            return marketplace_id
+
+        # 3. Custom/private image by name (case-insensitive; names may contain
+        #    '-'/'.', which survive the label since get_server_image does not
+        #    split the image value).
+        custom_id = self._resolve_custom_image(spec)
+        if custom_id is not None:
+            return custom_id
+
+        raise ImageError(
+            f"Scaleway image '{spec}' not found in zone {self._zone}: no matching "
+            f"marketplace label or custom image name"
+        )
+
+    def _resolve_marketplace_image(self, label: str) -> str | None:
+        """Return the zone-local image UUID for a marketplace *label*, or None."""
+        from scaleway.marketplace.v2 import MarketplaceV2API
+
         try:
-            marketplace = MarketplaceV2API(self._client)
-            local_images = marketplace.list_local_images_all(
-                image_label=spec,
+            local_images = MarketplaceV2API(self._client).list_local_images_all(
+                image_label=label,
                 zone=self._zone,
                 type_="instance_local",
             )
         except Exception as exc:
             raise ImageError(
-                f"failed to resolve Scaleway marketplace image '{spec}': {exc}"
+                f"failed to query Scaleway marketplace for '{label}': {exc}"
             ) from exc
+        return self._pick_image_id(local_images)
 
-        if not local_images:
-            raise ImageError(
-                f"Scaleway marketplace image '{spec}' not found in zone {self._zone}"
+    def _resolve_custom_image(self, name: str) -> str | None:
+        """Return the private image UUID matching *name* in this project, or None."""
+        try:
+            images = self._instance.list_images_all(
+                zone=self._zone, name=name, public=False, project=self._project_id
             )
-        # A label maps to one local image per architecture; prefer x86_64.
-        x86 = [img for img in local_images if str(getattr(img, "arch", "")) == "x86_64"]
-        return (x86[0] if x86 else local_images[0]).id
+        except Exception as exc:
+            raise ImageError(
+                f"failed to query Scaleway custom images for '{name}': {exc}"
+            ) from exc
+        # The API name filter may match by prefix; require an exact (case-
+        # insensitive) name match.
+        matches = [
+            img for img in (images or [])
+            if (getattr(img, "name", "") or "").lower() == name.lower()
+        ]
+        return self._pick_image_id(matches)
+
+    @staticmethod
+    def _pick_image_id(images) -> str | None:
+        """Pick an image id from *images*, preferring x86_64. None if empty."""
+        if not images:
+            return None
+        x86 = [img for img in images if str(getattr(img, "arch", "")) == "x86_64"]
+        return (x86[0] if x86 else images[0]).id

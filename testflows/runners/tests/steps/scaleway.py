@@ -64,3 +64,26 @@ def mock_scaleway_sdk(self):
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = mod
+
+
+@TestStep(Given)
+def scaleway_provider(self):
+    """Yield a ScalewayCloudProvider built against the faked SDK.
+
+    Construction uses the faked ``scaleway`` modules, so ``provider._instance``
+    is a MagicMock whose methods callers can stub per-test.
+    """
+    with Given("a faked scaleway SDK"):
+        mock_scaleway_sdk()
+
+    from testflows.runners.providers.scaleway.provider import ScalewayCloudProvider
+
+    provider = ScalewayCloudProvider(
+        access_key="SCWTESTKEY",
+        secret_key="11111111-1111-1111-1111-111111111111",
+        project_id="22222222-2222-2222-2222-222222222222",
+        zone="fr-par-1",
+        default_image_spec="ubuntu_jammy",
+        ssh_user="root",
+    )
+    yield provider

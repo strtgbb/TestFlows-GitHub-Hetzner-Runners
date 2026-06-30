@@ -57,6 +57,27 @@ config:
 SSH keys are registered at the project/IAM level and injected into Instances at
 boot, so there is no per-server key parameter.
 
+## Images
+
+The `image` default (or a job's `image-<spec>` label) is resolved in this order:
+
+1. **Image UUID** — used directly, e.g.
+   `image-33333333-3333-3333-3333-333333333333`.
+2. **Marketplace label** — a public base image such as `ubuntu_jammy`
+   (resolved to the zone-local image, preferring `x86_64`).
+3. **Custom image name** — a private image you have created in the project, e.g.
+   `image-runner-base`. Matched **by exact name** (case-insensitive) in the
+   configured zone, preferring `x86_64`.
+
+This differs from Hetzner, where a custom image is a *snapshot matched by
+description* (`image-x86-snapshot-my-image`). On Scaleway a custom image is a
+private Instance image; reference it by **name** or **UUID**. Custom image names
+may contain `-`/`.` — unlike server types, the image value is not split on `-`.
+
+To bake a custom image: snapshot a prepared instance's volume, create an image
+from it (`scw instance image create ...`), then reference that image's name.
+Phase-2 recycling will create and reference custom images this way.
+
 ## Zones and location fallback
 
 A Scaleway **zone** (`fr-par-1`, `nl-ams-2`, `pl-waw-3`, …) behaves like an

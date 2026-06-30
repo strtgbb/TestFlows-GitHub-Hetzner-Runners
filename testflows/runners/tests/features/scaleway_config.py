@@ -11,12 +11,22 @@ from testflows.core import *
 
 from testflows.runners.config.parse import parse_config
 from testflows.runners.config.factory import provider_factory
+from testflows.runners.errors import ImageError, ImageSpecFormatError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
 from testflows.runners.server import get_runner_server_name
 from testflows.runners.constants import runner_name_prefix
 from testflows.runners.tests.steps.config import write_config
-from testflows.runners.tests.steps.scaleway import mock_scaleway_sdk
+from testflows.runners.tests.steps.scaleway import mock_scaleway_sdk, scaleway_provider
+
+
+class _FakeImage:
+    """Minimal stand-in for a Scaleway Image (private or local marketplace)."""
+
+    def __init__(self, id, name="", arch="x86_64"):
+        self.id = id
+        self.name = name
+        self.arch = arch
 
 
 # Native Scaleway types (dash-form) <-> canonical (dot-form) used across tests.
@@ -225,6 +235,84 @@ def factory_builds_scaleway_provider(self):
         assert provider._zone == "nl-ams-1"
         assert provider._default_image == "ubuntu_jammy"
         assert provider.supports_recycling is False
+
+
+# ---------------------------------------------------------------------------
+# get_image: UUID / marketplace label / custom image by name
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def get_image_uuid_passthrough(self):
+    """An image UUID is returned as-is without any API lookup."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with Then("a UUID resolves to itself"):
+        uid = "33333333-3333-3333-3333-333333333333"
+        assert provider.get_image(uid) == uid
+
+
+@TestScenario
+def get_image_rejects_foreign_specs(self):
+    """Hetzner colon-form and AWS ami- specs raise ImageSpecFormatError."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with Then("foreign specs are flagged so scale_up can try another provider"):
+        for foreign in ("x86:system:ubuntu-22.04", "ami-0abc123def", "resolve:ssm:/x"):
+            try:
+                provider.get_image(foreign)
+                assert False, f"expected ImageSpecFormatError for {foreign!r}"
+            except ImageSpecFormatError:
+                pass
+
+
+@TestScenario
+def get_image_marketplace_label(self):
+    """A marketplace label resolves before custom images are consulted."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("marketplace resolution returns an id and custom lookup would fail"):
+        provider._resolve_marketplace_image = lambda label: "mkt-" + label
+
+        def _boom(**kwargs):
+            raise AssertionError("custom lookup must not run when marketplace matches")
+
+        provider._instance.list_images_all = _boom
+    with Then("the marketplace id is returned"):
+        assert provider.get_image("ubuntu_jammy") == "mkt-ubuntu_jammy"
+
+
+@TestScenario
+def get_image_custom_by_name(self):
+    """A custom image name resolves to its private-image UUID, preferring x86_64."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("no marketplace match, and a private image exists in two arches"):
+        provider._resolve_marketplace_image = lambda label: None
+        provider._instance.list_images_all = lambda **kwargs: [
+            _FakeImage(id="img-arm", name="runner-base", arch="arm64"),
+            _FakeImage(id="img-x86", name="runner-base", arch="x86_64"),
+        ]
+    with Then("the x86_64 custom image id is returned"):
+        assert provider.get_image("runner-base") == "img-x86"
+
+
+@TestScenario
+def get_image_custom_name_requires_exact_match(self):
+    """A prefix-only name match is rejected (the API name filter is a prefix)."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("marketplace misses and only a prefix-match private image exists"):
+        provider._resolve_marketplace_image = lambda label: None
+        provider._instance.list_images_all = lambda **kwargs: [
+            _FakeImage(id="img-1", name="runner-base-2024", arch="x86_64"),
+        ]
+    with Then("get_image raises ImageError (no exact name match)"):
+        try:
+            provider.get_image("runner-base")
+            assert False, "expected ImageError for prefix-only match"
+        except ImageError:
+            pass
 
 
 # ---------------------------------------------------------------------------

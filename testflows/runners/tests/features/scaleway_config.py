@@ -11,6 +11,11 @@ from testflows.core import *
 
 from testflows.runners.config.parse import parse_config
 from testflows.runners.config.factory import provider_factory
+from testflows.runners.config.config import (
+    Config,
+    provider_list,
+    scaleway_provider as scaleway_provider_config,
+)
 from testflows.runners.errors import ImageError, ImageSpecFormatError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
@@ -235,6 +240,30 @@ def factory_builds_scaleway_provider(self):
         assert provider._zone == "nl-ams-1"
         assert provider._default_image == "ubuntu_jammy"
         assert provider.supports_recycling is False
+
+
+@TestScenario
+def ambient_hetzner_token_does_not_override_scaleway(self):
+    """An ambient hetzner_token must not auto-wire Hetzner when scaleway is set.
+
+    Reproduces the case where HETZNER_TOKEN is present in the environment but the
+    user has explicitly configured providers.scaleway: the factory must build
+    only the scaleway provider, not a surprise Hetzner one.
+    """
+    with Given("a faked scaleway SDK"):
+        mock_scaleway_sdk()
+    with And("a config with explicit scaleway and an ambient hetzner_token"):
+        cfg = Config(github_token="t", github_repository="o/r")
+        cfg.hetzner_token = "ambient-hetzner-token"
+        cfg.providers = provider_list(
+            scaleway=scaleway_provider_config(
+                access_key="AK", secret_key="SK", project_id="pid"
+            )
+        )
+    with When("I build providers"):
+        providers = provider_factory(cfg)
+    with Then("only the scaleway provider is constructed"):
+        assert [p.name for p in providers] == ["scaleway"], [p.name for p in providers]
 
 
 # ---------------------------------------------------------------------------

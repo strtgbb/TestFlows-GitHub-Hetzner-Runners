@@ -25,14 +25,19 @@ def provider_factory(config: Config) -> list[CloudProvider]:
     from ..providers.hetzner.provider import HetznerCloudProvider
 
     # Backwards compat: hetzner_token → providers.hetzner.token
-    # Only auto-wire if the user has not configured any provider via the new
-    # providers block. If they have (e.g. providers.aws), the env var
-    # HETZNER_TOKEN is ambient noise and should not silently create a provider.
+    # Only auto-wire if the user has not configured another provider via the new
+    # providers block. If they have (e.g. providers.aws or providers.scaleway),
+    # the env var HETZNER_TOKEN is ambient noise and should not silently create
+    # a Hetzner provider.
     if config.hetzner_token:
         if config.providers.hetzner is None or not config.providers.hetzner.token:
-            has_explicit_provider = config.providers.aws is not None and bool(
+            has_explicit_aws = config.providers.aws is not None and bool(
                 config.providers.aws.access_key_id
             )
+            has_explicit_scaleway = config.providers.scaleway is not None and bool(
+                config.providers.scaleway.access_key
+            )
+            has_explicit_provider = has_explicit_aws or has_explicit_scaleway
             if not has_explicit_provider:
                 logger.warning(
                     "hetzner_token is deprecated; use providers.hetzner.token instead"

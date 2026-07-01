@@ -636,7 +636,19 @@ def scale_down(
                             current_interval - powered_off_server.time
                             > max_powered_off_time
                         ):
+                            age_intervals = current_interval - powered_off_server.time
                             _sp = server_providers.get(powered_off_server.server.name)
+                            with Action(
+                                "Scale-down decision for powered off server",
+                                level=logging.DEBUG,
+                                server_name=server_name,
+                                interval=interval,
+                            ) as action:
+                                action.note(
+                                    f"age_intervals={age_intervals}, threshold={max_powered_off_time}, "
+                                    f"provider={(getattr(_sp, 'name', 'unknown') if _sp is not None else 'none')}, "
+                                    f"recycle={recycle and _sp is not None and _sp.supports_recycling}"
+                                )
                             if recycle and _sp is not None and _sp.supports_recycling:
                                 recycle_server(
                                     reason="powered_off",
@@ -685,7 +697,19 @@ def scale_down(
                             current_interval - zombie_server.time
                             > max_runner_registration_time
                         ):
+                            age_intervals = current_interval - zombie_server.time
                             _sp = server_providers.get(zombie_server.server.name)
+                            with Action(
+                                "Scale-down decision for zombie server",
+                                level=logging.DEBUG,
+                                server_name=server_name,
+                                interval=interval,
+                            ) as action:
+                                action.note(
+                                    f"age_intervals={age_intervals}, threshold={max_runner_registration_time}, "
+                                    f"provider={(getattr(_sp, 'name', 'unknown') if _sp is not None else 'none')}, "
+                                    f"recycle={recycle and _sp is not None and _sp.supports_recycling}"
+                                )
                             if recycle and _sp is not None and _sp.supports_recycling:
                                 recycle_server(
                                     reason="zombie",
@@ -732,8 +756,19 @@ def scale_down(
                             current_interval - unused_runner.time
                             > max_unused_runner_time
                         ):
+                            age_intervals = current_interval - unused_runner.time
                             runner_server: ProviderServer | None = None
                             runner_server_provider: CloudProvider | None = None
+                            with Action(
+                                "Scale-down decision for unused runner",
+                                level=logging.DEBUG,
+                                server_name=get_runner_server_name(runner_name),
+                                interval=interval,
+                            ) as action:
+                                action.note(
+                                    f"runner={runner_name}, age_intervals={age_intervals}, "
+                                    f"threshold={max_unused_runner_time}"
+                                )
 
                             with Action(
                                 f"Try to find server for the runner {runner_name}",
@@ -749,6 +784,17 @@ def scale_down(
                                         runner_server = _ps
                                         runner_server_provider = _p
                                         break
+
+                            with Action(
+                                "Unused runner resolution result",
+                                level=logging.DEBUG,
+                                server_name=get_runner_server_name(runner_name),
+                                interval=interval,
+                            ) as action:
+                                action.note(
+                                    f"runner_server_found={runner_server is not None}, "
+                                    f"provider={(runner_server_provider.name if runner_server_provider is not None else 'none')}"
+                                )
 
                             if runner_server is not None:
                                 if recycle and runner_server_provider.supports_recycling:

@@ -52,10 +52,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
     # Durable per-host claim lock: a `mkdir`'d directory (atomic — one racer
     # wins, others get EEXIST), so claiming is safe across controller processes.
-    # Kept under /tmp so host reboot clears it naturally; stale markers are also
+    # Kept under /run so host reboot clears it naturally; stale markers are also
     # reclaimed by TTL to cover abandoned setup attempts.
-    _CLAIM_DIR = "/tmp/testflows-github-runners"
-    _CLAIM_PATH = "/tmp/testflows-github-runners/claim"
+    _CLAIM_DIR = "/run/user/$(id -u)/testflows-github-runners"
+    _CLAIM_PATH = "/run/user/$(id -u)/testflows-github-runners/claim"
 
     def __init__(
         self,

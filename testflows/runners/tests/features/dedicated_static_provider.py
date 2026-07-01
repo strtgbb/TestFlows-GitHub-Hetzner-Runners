@@ -2,7 +2,7 @@
 
 The provider stakes a host-side claim before setup so an in-flight host is not
 double-dispatched: an atomic `mkdir` of the lock dir
-(`/tmp/testflows-github-runners/claim`) wins the claim, stale locks are
+(`/run/user/$UID/testflows-github-runners/claim`) wins the claim, stale locks are
 reclaimed via `find -mmin`, and failure-path cleanup uses `rm -rf`. All SSH is
 mocked at the provider's `ssh`
 boundary, which returns the remote *exit code* (not output), so no real hosts

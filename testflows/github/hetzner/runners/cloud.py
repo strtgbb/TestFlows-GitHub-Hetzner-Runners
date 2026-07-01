@@ -131,22 +131,24 @@ def deploy(args, config: Config, redeploy=False):
 
         with Action("Checking if default server type exists"):
             config.default_server_type = check_server_type(
-                client, config.default_server_type
-            )
-
-        with Action("Checking if cloud service server type exists"):
-            config.cloud.deploy.server_type = check_server_type(
-                client=client, server_type=config.cloud.deploy.server_type
-            )
-
-        with Action("Checking if cloud service server image exists"):
-            config.cloud.deploy.image = check_image(
-                client=client, image=config.cloud.deploy.image
+                client, config.default_server_type, location=config.default_location
             )
 
         with Action("Checking if cloud service server location exists"):
             config.cloud.deploy.location = check_location(
                 client=client, location=config.cloud.deploy.location
+            )
+
+        with Action("Checking if cloud service server type exists"):
+            config.cloud.deploy.server_type = check_server_type(
+                client=client,
+                server_type=config.cloud.deploy.server_type,
+                location=config.cloud.deploy.location,
+            )
+
+        with Action("Checking if cloud service server image exists"):
+            config.cloud.deploy.image = check_image(
+                client=client, image=config.cloud.deploy.image
             )
 
         with Action(f"Creating new server"):

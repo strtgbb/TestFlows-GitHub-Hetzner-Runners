@@ -20,6 +20,7 @@ import testflows.github.hetzner.runners.args as args
 from ..hclient import HClient as Client
 from ..actions import Action
 from ..logger import default_format as logger_format
+from ..logger import logger
 from ..ordered_set import OrderedSet as set
 
 current_dir = os.path.dirname(__file__)
@@ -777,11 +778,46 @@ def check_location(client: Client, location: Location, required=False):
     return _location
 
 
-def check_server_type(client: Client, server_type: ServerType):
-    """Check if server type exists."""
+def check_server_type(
+    client: Client, server_type: ServerType, location: Location = None
+):
+    """Check if server type exists.
+
+    If a location is provided, also check that the server type is available
+    in that location using the per-location information exposed by the Hetzner
+    Cloud API (server_type.locations). A deprecated (but still available)
+    server type in the location produces a warning, while a server type that
+    is not offered in the location raises a ServerTypeError.
+    """
     _type: ServerType = client.server_types.get_by_name(server_type.name)
     if not _type:
         raise ServerTypeError(f"server type '{server_type.name}' not found")
+
+    if location is not None and _type.locations:
+        server_type_location = None
+        for entry in _type.locations:
+            if entry.location is not None and entry.location.name == location.name:
+                server_type_location = entry
+                break
+
+        if server_type_location is None:
+            raise ServerTypeError(
+                f"server type '{server_type.name}' is not available "
+                f"in location '{location.name}'"
+            )
+
+        if server_type_location.deprecation is not None:
+            unavailable_after = server_type_location.deprecation.unavailable_after
+            logger.warning(
+                f"server type '{server_type.name}' is deprecated in location "
+                f"'{location.name}'"
+                + (
+                    f" and will be unavailable after {unavailable_after}"
+                    if unavailable_after is not None
+                    else ""
+                )
+            )
+
     return _type
 
 

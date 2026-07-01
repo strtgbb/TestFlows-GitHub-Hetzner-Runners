@@ -189,6 +189,29 @@ config:
             - 203.0.113.10
 """
 
+_LABEL_PREFIX_STATIC_CONFIG_WITH_TTL = """
+config:
+  github_token: token
+  github_repository: owner/repo
+  ssh_key: /tmp/key
+  label_prefix: "tfs-"
+  providers:
+    dedicated_static:
+      claim_ttl_minutes: 720
+      ssh_defaults:
+        user: runner
+        key: /tmp/key
+        port: 22
+      groups:
+        metal-large-dc1:
+          labels:
+            - tfs-self-hosted
+            - tfs-type-metallarge
+            - tfs-in-dc1
+          hosts:
+            - 203.0.113.10
+"""
+
 
 @TestScenario
 def dedicated_static_type_label_honors_label_prefix(self):
@@ -223,10 +246,9 @@ def dedicated_static_type_label_honors_label_prefix(self):
 
 
 @TestScenario
-def dedicated_static_factory_wires_label_prefix_and_claim_timeout(self):
-    """parse_config + provider_factory pass label_prefix and the computed
-    claim_timeout (max_server_ready_time + max_runner_registration_time, default
-    180 + 180 = 360) into DedicatedStaticCloudProvider."""
+def dedicated_static_factory_wires_label_prefix_and_claim_ttl(self):
+    """parse_config + provider_factory pass label_prefix and claim_ttl_minutes
+    into DedicatedStaticCloudProvider."""
     import tempfile
 
     f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
@@ -237,8 +259,26 @@ def dedicated_static_factory_wires_label_prefix_and_claim_timeout(self):
             providers = provider_factory(parse_config(f.name))
         with Then("the dedicated_static provider received the wired knobs"):
             static = next(p for p in providers if p.name == "dedicated_static")
-            assert static._claim_timeout == 360, static._claim_timeout
+            assert static._claim_ttl_minutes == 360, static._claim_ttl_minutes
             assert static._type_label_prefix == "tfs-type-", static._type_label_prefix
+    finally:
+        os.unlink(f.name)
+
+
+@TestScenario
+def dedicated_static_factory_wires_non_default_claim_ttl(self):
+    """A configured claim_ttl_minutes value is preserved and wired to provider."""
+    import tempfile
+
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    f.write(_LABEL_PREFIX_STATIC_CONFIG_WITH_TTL)
+    f.close()
+    try:
+        with When("I build providers from parsed config with claim_ttl_minutes=720"):
+            providers = provider_factory(parse_config(f.name))
+        with Then("dedicated_static provider gets claim_ttl_minutes=720"):
+            static = next(p for p in providers if p.name == "dedicated_static")
+            assert static._claim_ttl_minutes == 720, static._claim_ttl_minutes
     finally:
         os.unlink(f.name)
 

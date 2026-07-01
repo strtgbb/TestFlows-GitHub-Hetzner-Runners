@@ -182,6 +182,12 @@
                             "description": "Static dedicated-host provider configuration",
                             "type": "object",
                             "properties": {
+                                "claim_ttl_minutes": {
+                                    "description": "Minutes before an abandoned dedicated_static claim can be reclaimed, default: 360.",
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "examples": [360, 720]
+                                },
                                 "ssh_defaults": {
                                     "description": "Default SSH settings for all dedicated host groups.",
                                     "type": "object",

@@ -149,6 +149,7 @@ class dedicated_static_provider:
     ssh_defaults: dedicated_static_ssh = dataclasses.field(
         default_factory=dedicated_static_ssh
     )
+    claim_ttl_minutes: int = 360
     groups: dict[str, dedicated_static_group] = dataclasses.field(default_factory=dict)
 
 

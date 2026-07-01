@@ -569,6 +569,11 @@ def parse_config(filename: str):
                 d, dict
             ), "config.providers.dedicated_static: is not a dictionary"
 
+            claim_ttl_minutes = d.get("claim_ttl_minutes", 360)
+            assert (
+                isinstance(claim_ttl_minutes, int) and claim_ttl_minutes > 0
+            ), "config.providers.dedicated_static.claim_ttl_minutes: must be an integer > 0"
+
             ssh_defaults_raw = d.get("ssh_defaults") or {}
             assert isinstance(
                 ssh_defaults_raw, dict
@@ -722,7 +727,9 @@ def parse_config(filename: str):
                 )
 
             _dedicated_static = dedicated_static_provider(
-                ssh_defaults=ssh_defaults, groups=groups
+                ssh_defaults=ssh_defaults,
+                claim_ttl_minutes=claim_ttl_minutes,
+                groups=groups,
             )
 
         _unimplemented = set(_p.keys()) - {"hetzner", "aws", "dedicated_static"}

@@ -51,24 +51,24 @@ class DedicatedStaticCloudProvider(CloudProvider):
     _RUNNER_LABEL_PREFIX = "github-dedicated-runner-label"
 
     # Durable per-host claim lock: a `mkdir`'d directory (atomic — one racer
-    # wins, others get EEXIST), so claiming is safe across controller processes
-    # and survives restarts. Its mtime dates the claim so a stale one can be
-    # reclaimed. In a dir the runner scripts don't touch, no sudo needed.
-    _CLAIM_DIR = "~/.github-runner"
-    _CLAIM_PATH = "~/.github-runner/claim"
+    # wins, others get EEXIST), so claiming is safe across controller processes.
+    # Kept under /tmp so host reboot clears it naturally; stale markers are also
+    # reclaimed by TTL to cover abandoned setup attempts.
+    _CLAIM_DIR = "/tmp/testflows-github-runners"
+    _CLAIM_PATH = "/tmp/testflows-github-runners/claim"
 
     def __init__(
         self,
         groups: dict[str, dict],
         default_ssh_user: str = "root",
-        claim_timeout: float = 360,
+        claim_ttl_minutes: int = 360,
         label_prefix: str = "",
     ):
         self._default_image = None
         self._default_location = None
-        # Seconds a claim marker stays authoritative before it is treated as
+        # Minutes a claim marker stays authoritative before it is treated as
         # stale (a crashed/abandoned setup) and the host may be reclaimed.
-        self._claim_timeout = claim_timeout
+        self._claim_ttl_minutes = claim_ttl_minutes
         # Routing labels carry the configured label_prefix (e.g. labels look
         # like "<prefix>type-x" / "<prefix>in-y"), so type/location extraction
         # and matching must use the prefixed form — same normalization as
@@ -130,10 +130,6 @@ class DedicatedStaticCloudProvider(CloudProvider):
     @property
     def supports_recycling(self) -> bool:
         return False
-
-    @property
-    def claim_release_requires_registration(self) -> bool:
-        return True
 
     def setup_script_name(self, labels: list[str], label_prefix: str = "") -> str:
         # Static hosts are provisioned out of band, so the setup-step is cleanup,
@@ -217,14 +213,14 @@ class DedicatedStaticCloudProvider(CloudProvider):
     # ---------------------------------------------------------------------------
     def _claim_minutes(self) -> int:
         """Claim freshness window in whole minutes (for ``find -mmin``)."""
-        return max(1, (int(self._claim_timeout) + 59) // 60)
+        return max(1, int(self._claim_ttl_minutes))
 
     def _try_claim(self, host: _StaticHost) -> bool:
         """Atomically acquire the durable claim; True iff we now hold it.
 
         `mkdir` is the atomic check-and-claim — one racer wins, others get
         EEXIST — so it's safe across controller processes. A claim older than
-        claim_timeout is reclaimed as stale (that reclaim has a small residual
+        claim_ttl_minutes is reclaimed as stale (that reclaim has a small residual
         race; the fresh-claim path does not). ssh() returns the remote exit
         code: 0 = acquired, else held/unreachable = not acquired.
         """
@@ -233,7 +229,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
         cmd = (
             f"'mkdir -p {self._CLAIM_DIR}; "
             f"if mkdir {self._CLAIM_PATH} 2>/dev/null; then exit 0; fi; "
-            f"if find {self._CLAIM_PATH} -maxdepth 0 -mmin +{minutes} 2>/dev/null | grep -q .; then "
+            f'if [ -n "$(find {self._CLAIM_PATH} -maxdepth 0 -mmin +{minutes} 2>/dev/null)" ]; then '
             f"rmdir {self._CLAIM_PATH} 2>/dev/null && mkdir {self._CLAIM_PATH} 2>/dev/null && exit 0; fi; "
             f"exit 1'"
         )
@@ -310,24 +306,25 @@ class DedicatedStaticCloudProvider(CloudProvider):
         return None
 
     def release_claim(self, server: ProviderServer, *, succeeded: bool) -> None:
-        """Release the durable claim after setup completes (success or failure).
+        """Handle post-setup claim lifecycle.
 
-        On success the marker is cleared (the registered runner is now the
-        lease signal via reconcile). On failure the marker is cleared *and* the
-        in-memory lease is freed so the host can be re-dispatched immediately;
-        if the host is unreachable the marker clear is best-effort and the
-        staleness timeout reclaims it.
+        Success keeps the durable claim in place; normal runner teardown (reboot)
+        clears the boot-scoped claim path. Failure clears the claim marker and
+        frees the in-memory lease so the host can be re-dispatched immediately;
+        if the host is unreachable the marker clear is best-effort and TTL-based
+        staleness reclaim applies.
         """
         host = getattr(server, "_native", None)
         if host is None or not isinstance(host, _StaticHost):
+            return
+        if succeeded:
             return
         try:
             self._clear_claim(host)
         except Exception:
             pass  # unreachable; the claim staleness timeout will reclaim it.
-        if not succeeded:
-            with self._lock:
-                self._clear_lease(host)
+        with self._lock:
+            self._clear_lease(host)
 
     def delete_server(self, server: ProviderServer) -> None:
         with self._lock:

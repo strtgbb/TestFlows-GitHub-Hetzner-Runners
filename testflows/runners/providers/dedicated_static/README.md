@@ -68,13 +68,13 @@ answer it:
    GitHub runner list by `reconcile_runner_leases`: a host whose `static_name` is a registered
    runner is leased; everything else is cleared. This is a **cache, not the source of truth** —
    it does not survive a restart and is rebuilt from GitHub each cycle.
-2. **Durable claim marker** (`~/.github-runner/claim`) — covers the gap the cache can't: the
+2. **Durable claim marker** (`/tmp/testflows-github-runners/claim`) — covers the gap the cache can't: the
    *in-flight setup window* before a runner has registered. `create_server` takes an optimistic
    in-memory lease, then (outside the lock) **atomically `mkdir`s** the marker — one racer wins,
    others get `EEXIST`, so it's safe across controller processes and restarts. A marker older
-   than `claim_timeout` (= `max_server_ready_time + max_runner_registration_time`) is treated as
-   a crashed/abandoned setup and reclaimed. `release_claim` clears it when setup finishes; on
-   failure it also frees the in-memory lease.
+   than `claim_ttl_minutes` (default 360 minutes) is treated as a crashed/abandoned setup and
+   reclaimed. On successful setup the claim is kept (reboot-scoped behavior); on setup failure
+   `release_claim` clears it and also frees the in-memory lease.
 
    This is how a freshly-leased host still in setup isn't double-dispatched to a second queued
    job before its runner has registered.

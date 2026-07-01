@@ -1,9 +1,10 @@
 """Tests for DedicatedStaticCloudProvider's durable claim-marker lease system.
 
 The provider stakes a host-side claim before setup so an in-flight host is not
-double-dispatched: an atomic `mkdir` of the lock dir (`~/.github-runner/claim`)
-wins the claim, a stale lock is detected via `find -mmin` and reclaimed, and the
-claim is released with `rm -rf`. All SSH is mocked at the provider's `ssh`
+double-dispatched: an atomic `mkdir` of the lock dir
+(`/tmp/testflows-github-runners/claim`) wins the claim, stale locks are
+reclaimed via `find -mmin`, and failure-path cleanup uses `rm -rf`. All SSH is
+mocked at the provider's `ssh`
 boundary, which returns the remote *exit code* (not output), so no real hosts
 are touched:
 
@@ -28,9 +29,9 @@ from testflows.runners.providers.dedicated_static.provider import (
 _TYPE = ProviderServerType(name="x")
 
 
-def _provider(hosts=("1.2.3.4",), claim_timeout=360):
+def _provider(hosts=("1.2.3.4",), claim_ttl_minutes=360):
     groups = {"g1": {"labels": ["type-x", "in-y"], "hosts": list(hosts)}}
-    return DedicatedStaticCloudProvider(groups, claim_timeout=claim_timeout)
+    return DedicatedStaticCloudProvider(groups, claim_ttl_minutes=claim_ttl_minutes)
 
 
 def _claim(provider, name="github-runner-abc"):
@@ -83,10 +84,10 @@ def setup_step_is_recycle_driven(self):
 
 @TestScenario
 def claim_window_minutes_from_timeout(self):
-    """The find -mmin window is ceil(claim_timeout / 60), at least 1 minute."""
-    assert _provider(claim_timeout=360)._claim_minutes() == 6
-    assert _provider(claim_timeout=61)._claim_minutes() == 2
-    assert _provider(claim_timeout=1)._claim_minutes() == 1
+    """The find -mmin window is claim_ttl_minutes (minimum 1)."""
+    assert _provider(claim_ttl_minutes=360)._claim_minutes() == 360
+    assert _provider(claim_ttl_minutes=2)._claim_minutes() == 2
+    assert _provider(claim_ttl_minutes=1)._claim_minutes() == 1
 
 
 @TestScenario
@@ -148,8 +149,11 @@ def busy_host_skipped_next_free_claimed(self):
 
 @TestScenario
 def release_on_success_clears_marker_keeps_lease(self):
-    """release_claim(succeeded=True) releases the claim lock but keeps the
-    in-memory lease (the registered runner becomes the lease signal)."""
+    """release_claim(succeeded=True) keeps claim and lease untouched.
+
+    The durable claim is reboot-scoped and remains on success; only failure
+    clears claim/lease.
+    """
     prov = _provider()
     with patch.object(provider_mod, "ssh", _ssh_claim()):
         srv = _claim(prov)
@@ -163,7 +167,7 @@ def release_on_success_clears_marker_keeps_lease(self):
     with patch.object(provider_mod, "ssh", _ssh):
         prov.release_claim(srv, succeeded=True)
 
-    assert any("rm -rf" in c for c in cmds), "claim must be released on success"
+    assert cmds == [], "success path must not clear the durable claim"
     assert prov._hosts[0].lease_name == "github-runner-abc", "lease kept on success"
 
 
@@ -219,7 +223,7 @@ def label_prefix_aware_type_and_location(self):
         }
     }
     prov = DedicatedStaticCloudProvider(
-        groups, claim_timeout=360, label_prefix="altinity-"
+        groups, claim_ttl_minutes=360, label_prefix="altinity-"
     )
     with Then("the prefixed type is recognized as supported"):
         assert prov.get_server_type("x").name == "x"
@@ -238,8 +242,8 @@ def claim_command_includes_stale_reclaim(self):
     """The atomic claim also reclaims a stale lock: atomic mkdir, then on EEXIST
     a staleness check (find -mmin +N) followed by rmdir && mkdir. That branch
     runs in the remote shell, so here we assert the command is constructed with
-    it and with the right staleness window (claim_timeout 360s -> 6 min)."""
-    prov = _provider(claim_timeout=360)
+    it and with the configured staleness window (claim_ttl_minutes)."""
+    prov = _provider(claim_ttl_minutes=360)
     captured = {}
 
     def _ssh(server, cmd, *a, **k):
@@ -251,7 +255,7 @@ def claim_command_includes_stale_reclaim(self):
 
     cmd = captured["cmd"]
     assert f"mkdir {prov._CLAIM_PATH}" in cmd, cmd
-    assert "-mmin +6" in cmd, cmd
+    assert "-mmin +360" in cmd, cmd
     assert f"rmdir {prov._CLAIM_PATH}" in cmd and "&& mkdir" in cmd, cmd
 
 
@@ -275,8 +279,8 @@ def concurrent_claims_only_one_wins(self):
         return 0  # acquired
 
     groups = {"g1": {"labels": ["type-x", "in-y"], "hosts": ["1.2.3.4"]}}
-    prov_a = DedicatedStaticCloudProvider(groups, claim_timeout=360)
-    prov_b = DedicatedStaticCloudProvider(groups, claim_timeout=360)
+    prov_a = DedicatedStaticCloudProvider(groups, claim_ttl_minutes=360)
+    prov_b = DedicatedStaticCloudProvider(groups, claim_ttl_minutes=360)
 
     with patch.object(provider_mod, "ssh", _ssh):
         srv_a = prov_a.create_server(

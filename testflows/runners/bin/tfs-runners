@@ -77,7 +77,7 @@ description = f"""Auto-scaling GitHub Actions runners service using Hetzner Clou
 
     * Command line arguments (highest precedence)
     * Project configuration (if --project is specified or project is set)
-    * Environment variables ($GITHUB_TOKEN, $GITHUB_REPOSITORY, $HETZNER_TOKEN, $RUNNERS_CONFIG)
+    * Environment variables ($GITHUB_TOKEN, $GITHUB_REPOSITORY, $RUNNERS_CONFIG)
     * Configuration file (specified via --config or the default user config '{default_user_config}')
     * Default values (lowest precedence)
 """
@@ -1791,64 +1791,75 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
 
         with Action("Constructing cloud providers"):
             providers = provider_factory(config)
-            hetzner_provider = next(
-                (p for p in providers if p.name == "hetzner"), None
-            )
 
-        if hetzner_provider is not None:
-            with Action("Checking if default image exists"):
-                config.default_image = hetzner_provider.get_image(config.default_image)
+        # Per-provider default server type. Providers that carry their own
+        # defaults block (aws, scaleway) supply it there; Hetzner has no
+        # per-provider default and uses the global config.default_server_type.
+        _provider_defaults = {
+            "hetzner": config.providers.hetzner,
+            "aws": config.providers.aws,
+            "scaleway": config.providers.scaleway,
+        }
 
-            with Action("Checking if default location exists"):
-                config.default_location = hetzner_provider.get_location(
-                    config.default_location
+        def _default_server_type_for(p):
+            pcfg = _provider_defaults.get(p.name)
+            pdef = getattr(pcfg, "defaults", None) if pcfg else None
+            return getattr(pdef, "server_type", None) or config.default_server_type
+
+        # Validate each configured provider's defaults up front (fail fast) and
+        # resolve/store them so scale_up and create use validated, provider-
+        # native values. Hetzner uniquely relies on the global config.default_*,
+        # so its resolved values are also written back there.
+        for p in providers:
+            with Action(f"Checking if default image exists ({p.name})"):
+                image_spec = (
+                    p.default_image if p.default_image is not None
+                    else config.default_image
                 )
+                if image_spec is not None:
+                    resolved_image = p.get_image(image_spec)
+                    p._default_image = resolved_image
+                    if p.name == "hetzner":
+                        config.default_image = resolved_image
 
-            with Action("Checking if default volume location exists"):
-                config.default_volume_location = hetzner_provider.get_location(
-                    config.default_volume_location, required=True
+            with Action(f"Checking if default location exists ({p.name})"):
+                loc_spec = (
+                    p.default_location if p.default_location is not None
+                    else config.default_location
                 )
+                resolved_loc = p.get_location(loc_spec)
+                p._default_location = resolved_loc
+                if p.name == "hetzner":
+                    config.default_location = resolved_loc
 
-            with Action("Checking if default server type exists"):
-                config.default_server_type = hetzner_provider.get_server_type(
-                    config.default_server_type
-                )
+            if p.supports_volumes:
+                with Action(f"Checking if default volume location exists ({p.name})"):
+                    config.default_volume_location = p.get_location(
+                        config.default_volume_location, required=True
+                    )
+
+            with Action(f"Checking if default server type exists ({p.name})"):
+                resolved_type = p.get_server_type(_default_server_type_for(p))
+                if p.name == "hetzner":
+                    config.default_server_type = resolved_type
 
             if not config.delete_random:
-                with Action("Getting server prices"):
-                    hetzner_prices = hetzner_provider.get_prices()
-                    config.server_prices = config.server_prices or {}
-                    config.server_prices["hetzner"] = {
-                        "prices": hetzner_prices,
-                        "currency": hetzner_provider.currency,
-                    }
-
-        aws_provider = next((p for p in providers if p.name == "aws"), None)
-        if aws_provider is not None:
-            with Action("Getting EC2 on-demand prices"):
-                from testflows.runners.providers.aws.estimate import check_prices as aws_check_prices
-                try:
-                    aws_prices = aws_check_prices(aws_provider._region, session=aws_provider._session)
-                    config.server_prices = config.server_prices or {}
-                    config.server_prices["aws"] = {
-                        "prices": aws_prices,
-                        "currency": aws_provider.currency,
-                    }
-                except Exception as e:
-                    logger.error(f"Could not fetch EC2 prices: {e}")
-
-        scaleway_provider = next((p for p in providers if p.name == "scaleway"), None)
-        if scaleway_provider is not None:
-            with Action("Getting Scaleway instance prices"):
-                try:
-                    scw_prices = scaleway_provider.get_prices()
-                    config.server_prices = config.server_prices or {}
-                    config.server_prices["scaleway"] = {
-                        "prices": scw_prices,
-                        "currency": scaleway_provider.currency,
-                    }
-                except Exception as e:
-                    logger.error(f"Could not fetch Scaleway prices: {e}")
+                with Action(f"Getting server prices ({p.name})"):
+                    try:
+                        if p.name == "aws":
+                            from testflows.runners.providers.aws.estimate import (
+                                check_prices as aws_check_prices,
+                            )
+                            prices = aws_check_prices(p._region, session=p._session)
+                        else:
+                            prices = p.get_prices()
+                        config.server_prices = config.server_prices or {}
+                        config.server_prices[p.name] = {
+                            "prices": prices,
+                            "currency": p.currency,
+                        }
+                    except Exception as e:
+                        logger.error(f"Could not fetch prices for {p.name}: {e}")
 
         for p in providers:
             with Action(f"Checking if SSH key exists ({p.name})"):

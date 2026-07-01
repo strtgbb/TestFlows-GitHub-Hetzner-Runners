@@ -185,7 +185,11 @@ class Config:
 
     github_token: str = os.getenv("GITHUB_TOKEN")
     github_repository: str = os.getenv("GITHUB_REPOSITORY")
-    hetzner_token: str = os.getenv("HETZNER_TOKEN")
+    # Not read from the environment: an ambient HETZNER_TOKEN must not silently
+    # configure Hetzner. Set it explicitly via --hetzner-token, the config file
+    # (hetzner_token or providers.hetzner.token). Backfilled from
+    # providers.hetzner.token below for legacy internal readers.
+    hetzner_token: str = None
 
     # Multi-provider configuration
     providers: provider_list = dataclasses.field(default_factory=provider_list)

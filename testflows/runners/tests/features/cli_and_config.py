@@ -123,7 +123,36 @@ def provider_type_deduplicates(self):
 
 
 # ---------------------------------------------------------------------------
-# 3. Config parser rejects removed providers
+# 3. hetzner_token is not auto-discovered from the environment
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def hetzner_token_not_read_from_env(self):
+    """An ambient HETZNER_TOKEN must not populate config.hetzner_token.
+
+    Hetzner must be configured explicitly (--hetzner-token, config file
+    hetzner_token, or providers.hetzner.token); a stray env var must not
+    silently create a Hetzner provider.
+    """
+    from testflows.runners.config.config import Config
+
+    saved = os.environ.get("HETZNER_TOKEN")
+    os.environ["HETZNER_TOKEN"] = "ambient-should-be-ignored"
+    try:
+        with When("I build a Config with HETZNER_TOKEN set in the environment"):
+            cfg = Config(github_token="t", github_repository="o/r")
+        with Then("config.hetzner_token is not populated from the env"):
+            assert cfg.hetzner_token is None, cfg.hetzner_token
+    finally:
+        if saved is None:
+            os.environ.pop("HETZNER_TOKEN", None)
+        else:
+            os.environ["HETZNER_TOKEN"] = saved
+
+
+# ---------------------------------------------------------------------------
+# 4. Config parser rejects removed providers
 # ---------------------------------------------------------------------------
 
 

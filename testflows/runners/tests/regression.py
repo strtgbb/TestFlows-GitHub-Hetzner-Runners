@@ -27,6 +27,7 @@ def regression(self):
     Feature(run=load("testflows.runners.tests.features.cli_and_config", "feature"))
     Feature(run=load("testflows.runners.tests.features.scale_up_helpers", "feature"))
     Feature(run=load("testflows.runners.tests.features.scale_up_labels", "feature"))
+    Feature(run=load("testflows.runners.tests.features.scale_down_recycle", "feature"))
 
 
 if main():

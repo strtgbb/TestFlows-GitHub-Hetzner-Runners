@@ -1,9 +1,10 @@
 """Tests that scale_down's recycle path dispatches through the CloudProvider
 abstraction (provider-agnostic), rather than calling native cloud SDK methods.
 
-These lock in the Phase 1 refactor: recycle_server and delete_recyclable_server
-operate on ProviderServer objects and route mark/delete/power-off/tag operations
-through the resolved provider.
+These lock in the Phase 1 refactor (provider-abstracted recycle path) and the
+provider-aware SSH-key ownership check: a server is only recycled/deleted after
+verifying its stored SSH-key name (read via the provider's own tag) matches one
+of this controller's keys for that provider.
 """
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
@@ -13,43 +14,53 @@ from testflows.core import *
 from testflows.runners.cloud_provider import ProviderServer
 from testflows.runners.scale_down import recycle_server, delete_recyclable_server
 from testflows.runners.constants import (
-    server_ssh_key_label,
     recycle_timestamp_label,
     recycle_server_name_prefix,
 )
 
 
-def _server(name, labels=None, server_type="cx22", location="nbg1"):
+def _server(name, server_type="cx22", location="nbg1"):
     return ProviderServer(
         id="id-" + name,
         name=name,
         status="off",
         public_ipv4="1.2.3.4",
         private_ipv4=None,
-        labels=labels if labels is not None else {},
+        labels={},
         server_type=server_type,
         location=location,
         created=datetime.now(timezone.utc),  # fresh -> age minutes ~0
     )
 
 
-def _ssh_key(name="mykey"):
-    key = MagicMock()
-    key.name = name
-    return key
+def _provider(stored_ssh_key_name, name="hetzner"):
+    """A mock provider whose stored SSH-key name is controllable per test."""
+    provider = MagicMock()
+    provider.name = name
+    provider.get_server_ssh_key_name.return_value = stored_ssh_key_name
+    return provider
+
+
+def _ssh_keys(*names, provider_name="hetzner"):
+    keys = []
+    for n in names:
+        k = MagicMock()
+        k.name = n
+        keys.append(k)
+    return {provider_name: keys}
 
 
 @TestScenario
-def mark_fresh_server_for_recycle_via_provider(self):
-    """A fresh owned server is parked via provider.power_off_server + update_server."""
-    provider = MagicMock()
-    server = _server("github-runner-1-0-cx22", labels={server_ssh_key_label: "mykey"})
+def mark_fresh_owned_server_for_recycle_via_provider(self):
+    """A fresh, owned server is parked via provider.power_off_server + update_server."""
+    provider = _provider(stored_ssh_key_name="mykey")
+    server = _server("github-runner-1-0-cx22")
     with When("recycle_server runs on a fresh, owned, non-recycle server"):
         recycle_server(
             reason="powered_off",
             server=server,
             provider=provider,
-            ssh_key=_ssh_key("mykey"),
+            ssh_keys=_ssh_keys("mykey"),
             end_of_life=60,
             recycle_grace_period=0,
         )
@@ -63,16 +74,16 @@ def mark_fresh_server_for_recycle_via_provider(self):
 
 
 @TestScenario
-def delete_when_no_ssh_key_label_via_provider(self):
-    """A server missing the SSH-key label is deleted through the provider."""
-    provider = MagicMock()
-    server = _server("github-runner-1-0-cx22", labels={})
-    with When("recycle_server runs on a server with no ssh-key label"):
+def delete_when_not_owned_via_provider(self):
+    """A server whose stored SSH key isn't ours is deleted through the provider."""
+    with When("the server has no stored SSH-key name"):
+        provider = _provider(stored_ssh_key_name=None)
+        server = _server("github-runner-1-0-cx22")
         recycle_server(
             reason="zombie",
             server=server,
             provider=provider,
-            ssh_key=_ssh_key("mykey"),
+            ssh_keys=_ssh_keys("mykey"),
             end_of_life=60,
             recycle_grace_period=0,
         )
@@ -80,19 +91,34 @@ def delete_when_no_ssh_key_label_via_provider(self):
         provider.delete_server.assert_called_once_with(server)
         provider.power_off_server.assert_not_called()
 
+    with When("the server's stored SSH key belongs to a different controller"):
+        provider2 = _provider(stored_ssh_key_name="someone-elses-key")
+        server2 = _server("github-runner-2-0-cx22")
+        recycle_server(
+            reason="zombie",
+            server=server2,
+            provider=provider2,
+            ssh_keys=_ssh_keys("mykey"),
+            end_of_life=60,
+            recycle_grace_period=0,
+        )
+    with Then("it is also deleted as not owned"):
+        provider2.delete_server.assert_called_once_with(server2)
+        provider2.power_off_server.assert_not_called()
+
 
 @TestScenario
 def set_recycle_timestamp_via_provider(self):
-    """A recycle-prefixed server past end-of-life with no timestamp gets tagged."""
-    provider = MagicMock()
+    """A recycle-prefixed owned server past end-of-life with no timestamp gets tagged."""
+    provider = _provider(stored_ssh_key_name="mykey")
     name = f"{recycle_server_name_prefix}abc"
-    server = _server(name, labels={server_ssh_key_label: "mykey"})
+    server = _server(name)
     with When("recycle_server runs on a recycle server missing its timestamp"):
         recycle_server(
             reason="unused_recyclable",
             server=server,
             provider=provider,
-            ssh_key=_ssh_key("mykey"),
+            ssh_keys=_ssh_keys("mykey"),
             end_of_life=0,  # already past end-of-life
             recycle_grace_period=60,
         )
@@ -127,6 +153,6 @@ def delete_recyclable_resolves_provider_per_server(self):
 @TestFeature
 @Name("scale_down recycle")
 def feature(self):
-    """scale_down recycle path is provider-agnostic."""
+    """scale_down recycle path is provider-agnostic with provider-aware key checks."""
     for scenario in loads(current_module(), Scenario):
         scenario()

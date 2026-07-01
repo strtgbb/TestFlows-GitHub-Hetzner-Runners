@@ -1883,7 +1883,7 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
             with Action("Creating scale down service"):
                 scale_down_service: Future = worker_pool.submit(
                     scale_down,
-                    ssh_key=ssh_keys["hetzner"][0] if ssh_keys.get("hetzner") else None,
+                    ssh_keys=ssh_keys,
                     terminate=terminate,
                     mailbox=mailbox,
                     config=config,

@@ -18,7 +18,7 @@ from testflows.runners.config.config import (
 )
 from types import SimpleNamespace
 
-from testflows.runners.cloud_provider import ProviderServerType
+from testflows.runners.cloud_provider import ProviderServer, ProviderServerType
 from testflows.runners.errors import ImageError, ImageSpecFormatError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
@@ -301,6 +301,26 @@ def get_server_arch_defaults_x64_without_sdk_type(self):
     with Then("arch defaults to x64 when there is no SDK ServerType"):
         assert provider.get_server_arch(ProviderServerType(name="dev1.s")) == "x64"
         assert provider.get_server_arch(ProviderServerType(name="basic2.a8c.16g")) == "x64"
+
+
+@TestScenario
+def get_server_ssh_key_name_round_trips(self):
+    """get_server_ssh_key_name reads back the key name build_server_labels stored.
+
+    Scaleway inherits the base 'github-runner-ssh-key' tag; this guards the label
+    divergence that broke the scale_down ownership check for non-Hetzner servers.
+    """
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with When("build_server_labels records an ssh key name"):
+        labels = provider.build_server_labels(["self-hosted"], ssh_key_name="abc123")
+        server = ProviderServer(
+            id="i", name="github-runner-1-0-dev1.s", status="off",
+            public_ipv4=None, private_ipv4=None, labels=labels,
+            server_type="dev1.s", location="fr-par-1", created=None,
+        )
+    with Then("get_server_ssh_key_name returns that name"):
+        assert provider.get_server_ssh_key_name(server) == "abc123"
 
 
 # ---------------------------------------------------------------------------

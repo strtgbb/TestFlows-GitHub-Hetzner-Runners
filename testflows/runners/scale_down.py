@@ -29,7 +29,6 @@ from .constants import (
     runner_name_prefix,
     standby_runner_name_prefix,
     recycle_server_name_prefix,
-    server_ssh_key_label,
     github_runner_label,
     recycle_timestamp_label,
 )
@@ -48,11 +47,6 @@ from .ordered_set import OrderedSet as set
 from github import Auth, Github
 from github.Repository import Repository
 from github.SelfHostedActionsRunner import SelfHostedActionsRunner
-
-# NOTE: ssh_key is still sourced from the Hetzner provider in bin/tfs-runners
-# (ssh_keys["hetzner"][0]); making the recycle SSH-key ownership check
-# provider-aware is deferred to the Scaleway recycling phase.
-from hcloud.ssh_keys.domain import SSHKey
 
 
 @dataclass
@@ -243,7 +237,7 @@ def recycle_server(
     reason: str,
     server: ProviderServer,
     provider: CloudProvider,
-    ssh_key: SSHKey,
+    ssh_keys: dict,
     end_of_life: int,
     recycle_grace_period: int,
 ):
@@ -258,31 +252,30 @@ def recycle_server(
     Args:
         reason: The reason for recycling (e.g., "powered_off", "zombie", "unused_runner")
         server: The server to recycle
-        ssh_key: The SSH key to verify ownership
+        provider: The CloudProvider that owns the server
+        ssh_keys: Mapping of provider name -> list of this controller's SSH keys,
+            used to verify the server was created by us before touching it
         end_of_life: Minutes after which server reaches end-of-life
         recycle_grace_period: Minimum seconds server must be in recycled state before deletion
     """
+    if provider is None:
+        return
+
     days, hours, minutes, _ = age(server=server)
 
-    if not server_ssh_key_label in server.labels:
+    # Verify the server was created by this controller: its stored SSH-key name
+    # (read via the provider's own tag convention) must match one of the keys we
+    # registered for that provider. Otherwise it is not ours to recycle.
+    stored_ssh_key_name = provider.get_server_ssh_key_name(server)
+    expected_ssh_key_names = {
+        getattr(k, "name", None)
+        for k in ((ssh_keys or {}).get(provider.name) or [])
+    }
+    if not stored_ssh_key_name or stored_ssh_key_name not in expected_ssh_key_names:
         with Action(
             f"Try deleting {reason} server {server.name} "
             f"used {days}d{hours}h{minutes}m "
-            "as it has no SSH key label",
-            stacklevel=3,
-            ignore_fail=True,
-            server_name=server.name,
-        ):
-            try:
-                provider.delete_server(server)
-            finally:
-                return
-
-    if ssh_key is None or server.labels[server_ssh_key_label] != ssh_key.name:
-        with Action(
-            f"Try deleting {reason} server {server.name} "
-            f"used {days}d{hours}h{minutes}m "
-            "as it has a different SSH key",
+            "as it is not owned by this controller (SSH key mismatch)",
             stacklevel=3,
             ignore_fail=True,
             server_name=server.name,
@@ -365,7 +358,7 @@ def recycle_server(
 def scale_down(
     terminate: threading.Event,
     mailbox: queue.Queue,
-    ssh_key: SSHKey,
+    ssh_keys: dict[str, list],
     config: Config,
     providers: list[CloudProvider] = None,
 ):
@@ -638,7 +631,7 @@ def scale_down(
                                     reason="powered_off",
                                     server=powered_off_server.server,
                                     provider=_sp,
-                                    ssh_key=ssh_key,
+                                    ssh_keys=ssh_keys,
                                     end_of_life=_effective_end_of_life(_sp),
                                     recycle_grace_period=recycle_grace_period,
                                 )
@@ -688,7 +681,7 @@ def scale_down(
                                     reason="zombie",
                                     server=zombie_server.server,
                                     provider=_sp,
-                                    ssh_key=ssh_key,
+                                    ssh_keys=ssh_keys,
                                     end_of_life=_effective_end_of_life(_sp),
                                     recycle_grace_period=recycle_grace_period,
                                 )
@@ -754,7 +747,7 @@ def scale_down(
                                         reason="unused_runner",
                                         server=runner_server,
                                         provider=runner_server_provider,
-                                        ssh_key=ssh_key,
+                                        ssh_keys=ssh_keys,
                                         end_of_life=_effective_end_of_life(runner_server_provider),
                                         recycle_grace_period=recycle_grace_period,
                                     )
@@ -800,7 +793,7 @@ def scale_down(
                         reason="unused_recyclable",
                         server=recyclable_server,
                         provider=server_providers.get(server_name),
-                        ssh_key=ssh_key,
+                        ssh_keys=ssh_keys,
                         end_of_life=_effective_end_of_life(server_providers.get(server_name)),
                         recycle_grace_period=recycle_grace_period,
                     )

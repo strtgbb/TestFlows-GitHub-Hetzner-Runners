@@ -220,6 +220,17 @@ class CloudProvider(ABC):
         value strings (e.g. ``{"self-hosted", "linux", "arm64"}``).
         """
 
+    def get_server_ssh_key_name(self, server: ProviderServer) -> str | None:
+        """Return the SSH-key name stored on the server when it was created, or None.
+
+        Used to verify a server was created by this controller (with one of its
+        SSH keys) before recycling or deleting it. Each provider stores the key
+        name under its own tag; the default reads the shared
+        ``github-runner-ssh-key`` tag (used by AWS and Scaleway). Hetzner
+        overrides this to read its ``github-hetzner-runner-ssh-key`` label.
+        """
+        return server.labels.get("github-runner-ssh-key")
+
     # ---------------------------------------------------------------------------
     # Tag / label operations
     # ---------------------------------------------------------------------------

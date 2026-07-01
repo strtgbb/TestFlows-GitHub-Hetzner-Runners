@@ -437,10 +437,15 @@ class ScalewayCloudProvider(CloudProvider):
                 f"a marketplace label like 'ubuntu_jammy', or a custom image name)"
             )
 
-        # 2. Marketplace label (public base images).
-        marketplace_id = self._resolve_marketplace_image(spec)
-        if marketplace_id is not None:
-            return marketplace_id
+        # 2. Marketplace label (public base images). Only attempt this for
+        #    marketplace-label-shaped specs (lowercase alphanumerics + '_', e.g.
+        #    'ubuntu_jammy'); custom image names contain '-'/'.' and are handled
+        #    below. The marketplace endpoint 404s on an unknown label, which we
+        #    treat as "not a marketplace image" so resolution falls through.
+        if spec.replace("_", "").isalnum():
+            marketplace_id = self._resolve_marketplace_image(spec)
+            if marketplace_id is not None:
+                return marketplace_id
 
         # 3. Custom/private image by name (case-insensitive; names may contain
         #    '-'/'.', which survive the label since get_server_image does not
@@ -455,8 +460,13 @@ class ScalewayCloudProvider(CloudProvider):
         )
 
     def _resolve_marketplace_image(self, label: str) -> str | None:
-        """Return the zone-local image UUID for a marketplace *label*, or None."""
+        """Return the zone-local image UUID for a marketplace *label*, or None.
+
+        Returns None (rather than raising) when the label is not a known
+        marketplace image, so ``get_image`` can fall through to custom images.
+        """
         from scaleway.marketplace.v2 import MarketplaceV2API
+        from scaleway_core.api import ScalewayException
 
         try:
             local_images = MarketplaceV2API(self._client).list_local_images_all(
@@ -464,7 +474,9 @@ class ScalewayCloudProvider(CloudProvider):
                 zone=self._zone,
                 type_="instance_local",
             )
-        except Exception as exc:
+        except ScalewayException as exc:
+            if getattr(exc, "status_code", None) == 404:
+                return None  # not a marketplace label; try custom images
             raise ImageError(
                 f"failed to query Scaleway marketplace for '{label}': {exc}"
             ) from exc

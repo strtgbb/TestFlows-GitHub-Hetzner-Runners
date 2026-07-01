@@ -312,6 +312,42 @@ def get_image_marketplace_label(self):
 
 
 @TestScenario
+def get_image_custom_dashed_name_skips_marketplace(self):
+    """A custom name with '-'/'.' skips the marketplace lookup entirely.
+
+    Reproduces the reported bug: a baked image name like
+    'arm-ubuntu-24.04-regression-tester' must not be sent to the marketplace
+    endpoint (which 404s), but resolved directly as a custom image.
+    """
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("marketplace resolution would fail if called, and a private image exists"):
+        def _must_not_call(label):
+            raise AssertionError("marketplace must not be queried for a dashed name")
+
+        provider._resolve_marketplace_image = _must_not_call
+        provider._instance.list_images_all = lambda **kwargs: [
+            _FakeImage(id="img-arm", name="arm-ubuntu-24.04-regression-tester", arch="arm64"),
+        ]
+    with Then("the custom image id is returned without touching the marketplace"):
+        assert provider.get_image("arm-ubuntu-24.04-regression-tester") == "img-arm"
+
+
+@TestScenario
+def get_image_marketplace_shaped_miss_falls_through_to_custom(self):
+    """A marketplace-shaped spec that misses (None) falls through to custom images."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("marketplace returns None (unknown label) and a custom image matches"):
+        provider._resolve_marketplace_image = lambda label: None
+        provider._instance.list_images_all = lambda **kwargs: [
+            _FakeImage(id="img-x86", name="ubuntucustom", arch="x86_64"),
+        ]
+    with Then("the custom image id is returned"):
+        assert provider.get_image("ubuntucustom") == "img-x86"
+
+
+@TestScenario
 def get_image_custom_by_name(self):
     """A custom image name resolves to its private-image UUID, preferring x86_64."""
     with Given("a scaleway provider"):

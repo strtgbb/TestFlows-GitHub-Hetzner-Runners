@@ -26,7 +26,6 @@ from .utils import (
     _RUNNER_LABEL_TAG_PREFIX,
     _SSH_KEY_TAG,
     _ACTIVE_STATES,
-    _ARM64_RE,
     canonical_type,
     native_type,
     tags_to_dict,
@@ -379,13 +378,20 @@ class ScalewayCloudProvider(CloudProvider):
                 f"Scaleway server type '{canonical}' (native '{native}') not "
                 f"available in zone {self._zone}"
             )
-        return ProviderServerType(name=canonical, _native=native)
+        # Store the SDK ServerType (it carries the authoritative ``arch``) so
+        # get_server_arch does not have to guess from the name.
+        return ProviderServerType(name=canonical, _native=available[native])
 
     def get_server_arch(self, server_type: ProviderServerType) -> str:
-        """Return CPU architecture for *server_type* (canonical form)."""
-        if _ARM64_RE.match(server_type.name):
-            return "arm64"
-        return "x64"
+        """Return CPU architecture ('arm64' or 'x64') for *server_type*.
+
+        Uses the authoritative ``arch`` from the SDK ServerType stored in
+        ``_native`` (Scaleway reports 'arm'/'arm64'/'x86_64'). Types resolved via
+        ``get_server_type`` always carry it; a bare ProviderServerType with no
+        SDK object defaults to x64.
+        """
+        native_arch = str(getattr(server_type._native, "arch", "") or "").lower()
+        return "arm64" if native_arch.startswith("arm") else "x64"
 
     def get_location(self, name, required: bool = False):
         """Validate and return the Scaleway zone string for *name*."""

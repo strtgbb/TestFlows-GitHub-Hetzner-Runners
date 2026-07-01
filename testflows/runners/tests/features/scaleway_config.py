@@ -16,6 +16,9 @@ from testflows.runners.config.config import (
     provider_list,
     scaleway_provider as scaleway_provider_config,
 )
+from types import SimpleNamespace
+
+from testflows.runners.cloud_provider import ProviderServerType
 from testflows.runners.errors import ImageError, ImageSpecFormatError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
@@ -40,7 +43,7 @@ _TYPES = [
     ("GP1-XS", "gp1.xs"),
     ("PRO2-XXS", "pro2.xxs"),
     ("POP2-2C-8G", "pop2.2c.8g"),  # multi-dash
-    ("COPARM1-2C-8G", "coparm1.2c.8g"),  # ARM
+    ("BASIC2-A8C-16G", "basic2.a8c.16g"),  # multi-dash
 ]
 
 
@@ -264,6 +267,40 @@ def ambient_hetzner_token_does_not_override_scaleway(self):
         providers = provider_factory(cfg)
     with Then("only the scaleway provider is constructed"):
         assert [p.name for p in providers] == ["scaleway"], [p.name for p in providers]
+
+
+# ---------------------------------------------------------------------------
+# get_server_arch: authoritative SDK arch, with a name fallback
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def get_server_arch_uses_sdk_arch(self):
+    """Arch comes from the SDK ServerType.arch, not a name guess.
+
+    Reproduces the ARM instance whose name ('basic2.a8c.16g') does not look ARM
+    but whose SDK arch is arm64 — it must resolve to arm64, not x64.
+    """
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with Then("arm/arm64 SDK arch -> arm64 and x86_64 -> x64, regardless of name"):
+        for sdk_arch, expected in [("arm64", "arm64"), ("arm", "arm64"), ("x86_64", "x64")]:
+            st = ProviderServerType(name="basic2.a8c.16g", _native=SimpleNamespace(arch=sdk_arch))
+            assert provider.get_server_arch(st) == expected, (sdk_arch, expected)
+
+
+@TestScenario
+def get_server_arch_defaults_x64_without_sdk_type(self):
+    """A bare ProviderServerType (no SDK object) defaults to x64.
+
+    Arch is authoritative from the SDK ServerType; the name is never parsed for
+    architecture (Scaleway type names do not reliably encode it).
+    """
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with Then("arch defaults to x64 when there is no SDK ServerType"):
+        assert provider.get_server_arch(ProviderServerType(name="dev1.s")) == "x64"
+        assert provider.get_server_arch(ProviderServerType(name="basic2.a8c.16g")) == "x64"
 
 
 # ---------------------------------------------------------------------------

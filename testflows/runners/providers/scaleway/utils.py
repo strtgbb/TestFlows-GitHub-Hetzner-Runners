@@ -19,7 +19,6 @@ contains ``-``, the ``.`` <-> ``-`` swap is a clean bijection that also handles
 multi-dash types (``POP2-2C-8G`` <-> ``pop2.2c.8g``).
 """
 
-import re
 from datetime import datetime, timezone
 
 from ...cloud_provider import CloudProvider, ProviderServer
@@ -47,10 +46,6 @@ _STATE_MAP = {
 # Server states considered "active" (still allocated / billable as compute or
 # pending), included in server listings.
 _ACTIVE_STATES = ["running", "starting", "stopping", "stopped", "stopped_in_place"]
-
-# ARM64 instance families. Scaleway ARM offers use the ``COPARM`` prefix
-# (e.g. COPARM1-2C-8G); everything else is x86_64.
-_ARM64_RE = re.compile(r"^coparm", re.IGNORECASE)
 
 
 def canonical_type(native: str) -> str:

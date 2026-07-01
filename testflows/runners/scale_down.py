@@ -621,12 +621,17 @@ def scale_down(
                             powered_off_servers.pop(server_name)
 
                     else:
-                        if (
-                            current_interval - powered_off_server.time
-                            > max_powered_off_time
-                        ):
-                            _sp = server_providers.get(powered_off_server.server.name)
-                            if recycle and _sp is not None and _sp.supports_recycling:
+                        _sp = server_providers.get(powered_off_server.server.name)
+                        recycles = (
+                            recycle and _sp is not None and _sp.supports_recycling
+                        )
+                        if recycles:
+                            # Recycling providers park the server; wait out the
+                            # grace before converting it into a recyclable.
+                            if (
+                                current_interval - powered_off_server.time
+                                > max_powered_off_time
+                            ):
                                 recycle_server(
                                     reason="powered_off",
                                     server=powered_off_server.server,
@@ -635,23 +640,29 @@ def scale_down(
                                     end_of_life=_effective_end_of_life(_sp),
                                     recycle_grace_period=recycle_grace_period,
                                 )
-                            else:
-                                with Action(
-                                    f"Deleting powered off server {server_name}",
-                                    ignore_fail=True,
-                                    server_name=server_name,
-                                    interval=interval,
-                                ) as action:
-                                    metrics.record_server_deletion(
-                                        server_type=powered_off_server.server.server_type,
-                                        location=powered_off_server.server.location,
-                                        reason="powered_off",
-                                    )
-                                    delete_server(
-                                        powered_off_server.server,
-                                        _sp,
-                                        action="delete_powered_off",
-                                    )
+                                powered_off_servers.pop(server_name)
+                        elif _sp is not None:
+                            # No recycling for this provider: a powered-off runner
+                            # is finished work, and a stopped instance still counts
+                            # against quota (e.g. Scaleway leaves it "stopped in
+                            # place"). Terminate it immediately — the grace only
+                            # exists to time the recycle/park decision above.
+                            with Action(
+                                f"Deleting powered off server {server_name}",
+                                ignore_fail=True,
+                                server_name=server_name,
+                                interval=interval,
+                            ) as action:
+                                metrics.record_server_deletion(
+                                    server_type=powered_off_server.server.server_type,
+                                    location=powered_off_server.server.location,
+                                    reason="powered_off",
+                                )
+                                delete_server(
+                                    powered_off_server.server,
+                                    _sp,
+                                    action="delete_powered_off",
+                                )
                             powered_off_servers.pop(server_name)
 
             with Action(

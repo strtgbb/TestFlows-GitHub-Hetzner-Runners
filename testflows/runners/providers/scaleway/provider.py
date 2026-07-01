@@ -30,6 +30,7 @@ from .utils import (
     native_type,
     tags_to_dict,
     dict_to_tags,
+    state_key,
     _server_to_provider,
 )
 from .args import _ZONE_RE
@@ -121,7 +122,7 @@ class ScalewayCloudProvider(CloudProvider):
         server = None
         while time.time() < deadline:
             server = self._instance.get_server(server_id=server_id, zone=zone).server
-            if (server.state or "").lower() in states:
+            if state_key(server.state) in states:
                 return server
             time.sleep(3)
         raise TimeoutError(
@@ -193,7 +194,7 @@ class ScalewayCloudProvider(CloudProvider):
     def get_server(self, name: str) -> ProviderServer | None:
         servers = self._instance.list_servers_all(zone=self._zone, name=name)
         for server in servers or []:
-            if server.name == name and (server.state or "").lower() in _ACTIVE_STATES:
+            if server.name == name and state_key(server.state) in _ACTIVE_STATES:
                 return _server_to_provider(server, ssh_user=self._ssh_user)
         return None
 
@@ -204,7 +205,7 @@ class ScalewayCloudProvider(CloudProvider):
         return [
             _server_to_provider(s, ssh_user=self._ssh_user)
             for s in (servers or [])
-            if (s.state or "").lower() in _ACTIVE_STATES
+            if state_key(s.state) in _ACTIVE_STATES
         ]
 
     def power_off_server(self, server: ProviderServer) -> None:

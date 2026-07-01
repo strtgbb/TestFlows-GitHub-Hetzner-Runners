@@ -48,6 +48,20 @@ _STATE_MAP = {
 _ACTIVE_STATES = ["running", "starting", "stopping", "stopped", "stopped_in_place"]
 
 
+def state_key(raw) -> str:
+    """Normalize a Scaleway server state for lookup.
+
+    The API returns multi-word states with spaces (e.g. ``"stopped in place"``)
+    even though the SDK enum's declared value uses underscores
+    (``"stopped_in_place"``), and the SDK enum is lenient — ``ServerState(...)``
+    passes unknown values through as raw strings rather than raising. Normalize
+    to the underscore form so ``_STATE_MAP``/``_ACTIVE_STATES`` match regardless
+    of which representation we receive. Without this, ``"stopped in place"``
+    maps to STATUS_UNKNOWN and the instance is never reaped (quota leak).
+    """
+    return str(raw or "").strip().lower().replace(" ", "_")
+
+
 def canonical_type(native: str) -> str:
     """Translate a native Scaleway type to the canonical orchestrator form.
 
@@ -116,7 +130,7 @@ def _server_to_provider(server, ssh_user: str = "root") -> ProviderServer:
 
     private_ipv4 = getattr(server, "private_ip", None)
 
-    state = (getattr(server, "state", "") or "").lower()
+    state = state_key(getattr(server, "state", ""))
     zone = str(getattr(server, "zone", "") or "")
 
     return ProviderServer(

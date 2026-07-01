@@ -304,6 +304,33 @@ def get_server_arch_defaults_x64_without_sdk_type(self):
 
 
 @TestScenario
+def stopped_in_place_space_form_maps_to_off(self):
+    """The API's space-form 'stopped in place' must map to OFF, not UNKNOWN.
+
+    Scaleway returns the state with spaces; the SDK enum's declared value uses
+    underscores and passes unknown values through as raw strings. If we don't
+    normalize, the instance maps to STATUS_UNKNOWN, is excluded from listings,
+    and is never reaped (quota leak).
+    """
+    from types import SimpleNamespace
+    from testflows.runners.providers.scaleway import utils
+    from testflows.runners.cloud_provider import CloudProvider
+
+    with Then("state_key normalizes spaces to underscores"):
+        assert utils.state_key("stopped in place") == "stopped_in_place"
+        assert utils.state_key("STOPPED IN PLACE") == "stopped_in_place"
+    with And("a server in the space-form state maps to OFF and is listable"):
+        srv = SimpleNamespace(
+            id="i", name="github-runner-1-0-dev1.s", state="stopped in place",
+            zone="fr-par-1", commercial_type="DEV1-S",
+            public_ips=[], public_ip=None, private_ip=None, tags=[], creation_date=None,
+        )
+        ps = utils._server_to_provider(srv)
+        assert ps.status == CloudProvider.STATUS_OFF, ps.status
+        assert utils.state_key(srv.state) in utils._ACTIVE_STATES
+
+
+@TestScenario
 def get_server_ssh_key_name_round_trips(self):
     """get_server_ssh_key_name reads back the key name build_server_labels stored.
 

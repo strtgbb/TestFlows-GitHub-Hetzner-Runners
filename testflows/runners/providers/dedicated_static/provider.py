@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import threading
 
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
 from ...constants import github_runner_label, server_ssh_key_label, runner_name_prefix
 from ...errors import ServerTypeError, LocationError, ImageSpecFormatError
 from ...server import ssh
+
+logger = logging.getLogger("testflows.runners")
 
 
 @dataclass
@@ -335,9 +338,17 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
     def get_server(self, name: str) -> ProviderServer | None:
         with self._lock:
+            static_name_exists = False
             for host in self._hosts:
                 if host.lease_name == name:
                     return self._as_provider_server(host)
+                if host.static_name == name:
+                    static_name_exists = True
+        if static_name_exists:
+            logger.debug(
+                "Dedicated static get_server miss for %s: host exists but lease is not set",
+                name,
+            )
         return None
 
     def list_servers(self, label_selector: str = None) -> list[ProviderServer]:
@@ -383,11 +394,35 @@ class DedicatedStaticCloudProvider(CloudProvider):
         by the durable claim marker checked in ``create_server``, not here.
         """
         with self._lock:
+            static_runner_names = {
+                name
+                for name in runner_names
+                if name.startswith(f"{runner_name_prefix}static-")
+            }
+            known_static_names = {host.static_name for host in self._hosts}
+            orphan_static_runner_names = sorted(static_runner_names - known_static_names)
+            matched = 0
+            cleared = 0
             for host in self._hosts:
                 if host.static_name in runner_names:
                     self._set_lease(host, runner_name=host.static_name)
+                    matched += 1
                 else:
                     self._clear_lease(host)
+                    cleared += 1
+            logger.debug(
+                "Dedicated static reconcile summary: hosts=%d matched=%d cleared=%d static_runners_seen=%d orphan_static_names=%d",
+                len(self._hosts),
+                matched,
+                cleared,
+                len(static_runner_names),
+                len(orphan_static_runner_names),
+            )
+            if orphan_static_runner_names:
+                logger.debug(
+                    "Dedicated static reconcile orphan static runner names: %s",
+                    ", ".join(orphan_static_runner_names),
+                )
 
     # ---------------------------------------------------------------------------
     # Runner label helpers

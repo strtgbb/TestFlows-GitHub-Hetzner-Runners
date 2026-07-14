@@ -791,9 +791,25 @@ def scale_down(
                                 server_name=get_runner_server_name(runner_name),
                                 interval=interval,
                             ) as action:
+                                provider_lookup_summary = []
+                                for _p in providers:
+                                    lookup_name = get_runner_server_name(runner_name)
+                                    matched = _p.get_server(lookup_name) is not None
+                                    provider_lookup_summary.append(
+                                        f"{_p.name}:{'hit' if matched else 'miss'}"
+                                    )
                                 action.note(
                                     f"runner_server_found={runner_server is not None}, "
                                     f"provider={(runner_server_provider.name if runner_server_provider is not None else 'none')}"
+                                )
+                                action.note(
+                                    "provider_lookups="
+                                    + ", ".join(provider_lookup_summary)
+                                )
+                                action.note(
+                                    f"runner_state=status:{unused_runner.runner.status}, "
+                                    f"busy:{unused_runner.runner.busy}, "
+                                    f"labels:{','.join(label['name'].lower() for label in unused_runner.runner.labels)}"
                                 )
 
                             if runner_server is not None:

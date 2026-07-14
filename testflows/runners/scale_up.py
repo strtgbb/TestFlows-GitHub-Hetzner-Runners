@@ -1723,14 +1723,11 @@ def scale_up(
                     level=logging.DEBUG,
                     interval=interval,
                 ):
-                    filtered_runners = []
                     for runner in runners:
                         for server in servers:
                             if runner.name.startswith(server.name):
                                 if runner.status == "online":
                                     server.runner_status = "busy" if runner.busy else "ready"
-                                filtered_runners.append(runner)
-                    runners = filtered_runners
 
                 # Lazily fetch prices for any provider that is missing them
                 for _p in providers:

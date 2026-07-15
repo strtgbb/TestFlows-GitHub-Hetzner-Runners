@@ -17,7 +17,6 @@ import os
 import sys
 import time
 import queue
-import tempfile
 import logging
 import threading
 import logging.config
@@ -63,7 +62,6 @@ import testflows.runners.volumes as volumes
 from testflows.runners.providers import hetzner, aws, scaleway
 
 from requests_cache import DO_NOT_CACHE, EXPIRE_IMMEDIATELY, install_cache
-from requests_cache.backends.filesystem import FileCache
 
 description = f"""Auto-scaling GitHub Actions runners service using Hetzner Cloud.
 
@@ -1741,25 +1739,30 @@ def argparser():
 
 @contextmanager
 def http_cache():
-    """Enable caching of HTTP requests to GitHub api."""
-    with tempfile.TemporaryDirectory() as tempdir:
-        name = os.path.join(tempdir, "http_cache")
+    """Enable caching of HTTP requests to the GitHub/Hetzner APIs.
 
-        with Action(f"Enabling HTTP cache at {name}"):
-            pass
+    Uses the in-memory backend deliberately. The service runs scale_up,
+    scale_down and api_watch concurrently in a thread pool, and requests-cache's
+    SQLite-backed stores (used even by the filesystem backend for its redirects
+    index) share one connection across threads and segfault under that
+    concurrency (requests-cache issue #1008). The memory backend keeps the same
+    revalidation policy without any SQLite; per-run (non-persistent) caching is
+    all this needs, since the policy is EXPIRE_IMMEDIATELY / DO_NOT_CACHE anyway.
+    """
+    with Action("Enabling in-memory HTTP cache"):
+        pass
 
-        install_cache(
-            name=name,
-            backend=FileCache(name),
-            cache_control=True,
-            urls_expire_after={
-                "*.github.com": EXPIRE_IMMEDIATELY,
-                "*.hetzner.cloud": EXPIRE_IMMEDIATELY,
-                "*": DO_NOT_CACHE,
-            },
-        )
+    install_cache(
+        backend="memory",
+        cache_control=True,
+        urls_expire_after={
+            "*.github.com": EXPIRE_IMMEDIATELY,
+            "*.hetzner.cloud": EXPIRE_IMMEDIATELY,
+            "*": DO_NOT_CACHE,
+        },
+    )
 
-        yield
+    yield
 
 
 def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):

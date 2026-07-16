@@ -53,11 +53,12 @@ def cli_help_exits_zero(self):
 def cli_help_mentions_known_providers(self):
     with When("I run `tfs-runners --help`"):
         result = _run_help()
-    with Then("the output mentions hetzner, aws and scaleway"):
+    with Then("the output mentions hetzner, aws, scaleway and dedicated_static"):
         output = result.stdout + result.stderr
         assert "hetzner" in output
         assert "aws" in output
         assert "scaleway" in output
+        assert "dedicated_static" in output
 
 
 @TestScenario
@@ -77,13 +78,22 @@ def cli_help_does_not_mention_removed_providers(self):
 
 @TestScenario
 def provider_type_accepts_valid(self):
-    for value in ("hetzner", "aws", "scaleway", "hetzner,aws", "aws,scaleway"):
+    for value in (
+        "hetzner",
+        "aws",
+        "scaleway",
+        "dedicated_static",
+        "hetzner,aws",
+        "aws,scaleway",
+        "scaleway,dedicated_static",
+    ):
         with When(f"I parse provider_type({value!r})"):
             result = provider_type(value)
         with Then("the result is a list of known providers"):
             assert isinstance(result, list)
             assert all(
-                p in {"hetzner", "aws", "scaleway"} for p in result
+                p in {"hetzner", "aws", "scaleway", "dedicated_static"}
+                for p in result
             ), f"unexpected for {value}: {result}"
 
 

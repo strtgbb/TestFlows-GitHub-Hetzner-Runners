@@ -143,8 +143,8 @@ def argparser():
         metavar="name",
         type=args.provider_type,
         help="Enable specific providers using comma-separated list.\n"
-             "Example: --provider hetzner,aws,scaleway, default: hetzner only or\n"
-             "all providers specified in the configuration file"
+             "Example: --provider hetzner,aws,scaleway,dedicated_static, default:\n"
+             "hetzner only or all providers specified in the configuration file"
     )
 
     # Add provider-specific arguments

@@ -3,7 +3,11 @@
 import dataclasses
 import logging
 
-from .config import Config, hetzner_provider as HetznerProviderConfig, aws_provider as AWSProviderConfig
+from .config import (
+    Config,
+    hetzner_provider as HetznerProviderConfig,
+    aws_provider as AWSProviderConfig,
+)
 from ..cloud_provider import CloudProvider
 
 logger = logging.getLogger("testflows.runners")
@@ -30,8 +34,12 @@ def provider_factory(config: Config) -> list[CloudProvider]:
     # HETZNER_TOKEN is ambient noise and should not silently create a provider.
     if config.hetzner_token:
         if config.providers.hetzner is None or not config.providers.hetzner.token:
-            has_explicit_provider = config.providers.aws is not None and bool(
-                config.providers.aws.access_key_id
+            has_explicit_provider = (
+                (config.providers.aws is not None and bool(config.providers.aws.access_key_id))
+                or (
+                    config.providers.dedicated_static is not None
+                    and bool(config.providers.dedicated_static.groups)
+                )
             )
             if not has_explicit_provider:
                 logger.warning(
@@ -79,6 +87,45 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 root_volume_type=aws_cfg.defaults.volume_type,
                 max_runners=aws_cfg.max_runners,
                 end_of_life=aws_cfg.end_of_life,
+            )
+        )
+
+    dedicated_cfg = config.providers.dedicated_static
+    if dedicated_cfg and dedicated_cfg.groups:
+        from ..providers.dedicated_static.provider import DedicatedStaticCloudProvider
+
+        groups = {}
+        for group_name, group in dedicated_cfg.groups.items():
+            ssh_user = (
+                group.ssh.user
+                if group.ssh is not None
+                else dedicated_cfg.ssh_defaults.user
+            )
+            ssh_port = (
+                group.ssh.port
+                if group.ssh is not None
+                else dedicated_cfg.ssh_defaults.port
+            )
+            ssh_key_path = (
+                group.ssh.key
+                if group.ssh is not None and group.ssh.key
+                else dedicated_cfg.ssh_defaults.key
+            )
+            groups[group_name] = {
+                "labels": group.labels,
+                "hosts": group.hosts,
+                "ssh_user": ssh_user,
+                "ssh_port": ssh_port,
+                "ssh_key_path": ssh_key_path,
+            }
+
+        providers.append(
+            DedicatedStaticCloudProvider(
+                groups=groups,
+                default_ssh_user=dedicated_cfg.ssh_defaults.user,
+                claim_ttl_minutes=dedicated_cfg.claim_ttl_minutes,
+                # Routing labels (type-/in-) carry the global label_prefix.
+                label_prefix=config.label_prefix,
             )
         )
 

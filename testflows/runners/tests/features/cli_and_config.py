@@ -16,6 +16,7 @@ from testflows.core import *
 
 from testflows.runners.args import provider_type
 from testflows.runners.config.parse import parse_config
+from testflows.runners.config.factory import provider_factory
 
 # Repo root so the CLI subprocess can find the package without an install.
 _REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", ".."))
@@ -162,6 +163,127 @@ def config_rejects_removed_providers(self):
 
 
 # ---------------------------------------------------------------------------
+# 3b. dedicated_static type validation must honor label_prefix
+# ---------------------------------------------------------------------------
+
+
+_LABEL_PREFIX_STATIC_CONFIG = """
+config:
+  github_token: token
+  github_repository: owner/repo
+  ssh_key: /tmp/key
+  label_prefix: "{prefix}"
+  providers:
+    dedicated_static:
+      ssh_defaults:
+        user: runner
+        key: /tmp/key
+        port: 22
+      groups:
+        metal-large-dc1:
+          labels:
+            - tfs-self-hosted
+            - tfs-type-metallarge
+            - tfs-in-dc1
+          hosts:
+            - 203.0.113.10
+"""
+
+_LABEL_PREFIX_STATIC_CONFIG_WITH_TTL = """
+config:
+  github_token: token
+  github_repository: owner/repo
+  ssh_key: /tmp/key
+  label_prefix: "tfs-"
+  providers:
+    dedicated_static:
+      claim_ttl_minutes: 720
+      ssh_defaults:
+        user: runner
+        key: /tmp/key
+        port: 22
+      groups:
+        metal-large-dc1:
+          labels:
+            - tfs-self-hosted
+            - tfs-type-metallarge
+            - tfs-in-dc1
+          hosts:
+            - 203.0.113.10
+"""
+
+
+@TestScenario
+def dedicated_static_type_label_honors_label_prefix(self):
+    """A prefixed type label (`<label_prefix>type-*`) must satisfy the
+    dedicated_static 'at least one type-*' validation — the same way
+    get_server_types resolves types at runtime (it prepends label_prefix).
+    Bare `startswith("type-")` in the validator wrongly rejects it.
+
+    Covers both the conventional trailing-dash form (`tfs-`) and the bare form
+    (`tfs`), which get_server_types normalizes identically to `tfs-type-`.
+    """
+    import tempfile
+
+    for prefix in ("tfs-", "tfs"):
+        with Given(f"a static config with label_prefix {prefix!r} and a prefixed type label"):
+            f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+            f.write(_LABEL_PREFIX_STATIC_CONFIG.format(prefix=prefix))
+            f.close()
+        try:
+            with When(f"I parse it (label_prefix={prefix!r})"):
+                raised = None
+                try:
+                    parse_config(f.name)
+                except (AssertionError, SystemExit) as e:
+                    raised = e
+            with Then("parse_config accepts it — the prefixed type label counts"):
+                assert raised is None, (
+                    f"label_prefix={prefix!r}: 'tfs-type-metallarge' wrongly rejected: {raised}"
+                )
+        finally:
+            os.unlink(f.name)
+
+
+@TestScenario
+def dedicated_static_factory_wires_label_prefix_and_claim_ttl(self):
+    """parse_config + provider_factory pass label_prefix and claim_ttl_minutes
+    into DedicatedStaticCloudProvider."""
+    import tempfile
+
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    f.write(_LABEL_PREFIX_STATIC_CONFIG.format(prefix="tfs-"))
+    f.close()
+    try:
+        with When("I build providers from the parsed config"):
+            providers = provider_factory(parse_config(f.name))
+        with Then("the dedicated_static provider received the wired knobs"):
+            static = next(p for p in providers if p.name == "dedicated_static")
+            assert static._claim_ttl_minutes == 360, static._claim_ttl_minutes
+            assert static._type_label_prefix == "tfs-type-", static._type_label_prefix
+    finally:
+        os.unlink(f.name)
+
+
+@TestScenario
+def dedicated_static_factory_wires_non_default_claim_ttl(self):
+    """A configured claim_ttl_minutes value is preserved and wired to provider."""
+    import tempfile
+
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+    f.write(_LABEL_PREFIX_STATIC_CONFIG_WITH_TTL)
+    f.close()
+    try:
+        with When("I build providers from parsed config with claim_ttl_minutes=720"):
+            providers = provider_factory(parse_config(f.name))
+        with Then("dedicated_static provider gets claim_ttl_minutes=720"):
+            static = next(p for p in providers if p.name == "dedicated_static")
+            assert static._claim_ttl_minutes == 720, static._claim_ttl_minutes
+    finally:
+        os.unlink(f.name)
+
+
+# ---------------------------------------------------------------------------
 # 4. Schema regression: only hetzner and aws under providers
 # ---------------------------------------------------------------------------
 
@@ -183,9 +305,9 @@ def schema_only_hetzner_and_aws_defined(self):
     with Given("the schema.json file"):
         with open(_SCHEMA_PATH) as f:
             schema = json.load(f)
-    with Then("only hetzner and aws are defined under providers"):
+    with Then("only supported providers are defined under providers"):
         props = _providers_properties(schema)
-        assert set(props.keys()) == {"hetzner", "aws"}, (
+        assert set(props.keys()) == {"hetzner", "aws", "dedicated_static"}, (
             f"Unexpected providers in schema: {set(props.keys())}"
         )
 

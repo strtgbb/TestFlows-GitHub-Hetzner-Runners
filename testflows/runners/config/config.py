@@ -129,11 +129,37 @@ class aws_provider:
 
 
 @dataclass
+class dedicated_static_ssh:
+    user: str = "root"
+    port: int = 22
+    key: str = None
+
+
+@dataclass
+class dedicated_static_group:
+    labels: list[str]
+    hosts: list[str]
+    ssh: dedicated_static_ssh = None
+
+
+@dataclass
+class dedicated_static_provider:
+    """Static dedicated-host provider configuration."""
+
+    ssh_defaults: dedicated_static_ssh = dataclasses.field(
+        default_factory=dedicated_static_ssh
+    )
+    claim_ttl_minutes: int = 360
+    groups: dict[str, dedicated_static_group] = dataclasses.field(default_factory=dict)
+
+
+@dataclass
 class provider_list:
     """Multi-provider configuration."""
 
     hetzner: hetzner_provider = None
     aws: aws_provider = None
+    dedicated_static: dedicated_static_provider = None
 
 
 @dataclass
@@ -298,10 +324,14 @@ class Config:
                 and bool(self.providers.aws.access_key_id)
                 and bool(self.providers.aws.secret_access_key)
             )
-            if not (has_hetzner or has_aws):
+            has_dedicated_static = (
+                self.providers.dedicated_static is not None
+                and bool(self.providers.dedicated_static.groups)
+            )
+            if not (has_hetzner or has_aws or has_dedicated_static):
                 print(
                     "argument error: no cloud provider configured; "
-                    "set --hetzner-token or add providers.hetzner.token / providers.aws credentials to config file",
+                    "set --hetzner-token or add providers.hetzner.token / providers.aws credentials / providers.dedicated_static.groups to config file",
                     file=sys.stderr,
                 )
                 sys.exit(1)

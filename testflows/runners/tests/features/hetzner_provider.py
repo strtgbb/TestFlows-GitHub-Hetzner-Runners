@@ -368,6 +368,31 @@ def power_on_calls_native(self):
         action.wait_until_finished.assert_called_once_with(max_retries=300)
 
 
+@TestScenario
+def power_on_propagates_timeout(self):
+    with Given("a Hetzner provider and a server"):
+        _, provider = hetzner_provider()
+        native = MagicMock()
+        action = MagicMock()
+        native.power_on.return_value = action
+    with When("I call power_on_server with timeout=42"):
+        provider.power_on_server(_provider_server(native=native), timeout=42)
+    with Then("the timeout is propagated as max_retries"):
+        action.wait_until_finished.assert_called_once_with(max_retries=42)
+
+
+@TestScenario
+def setup_script_name_defaults_to_setup_sh(self):
+    with Given("a Hetzner provider"):
+        _, provider = hetzner_provider()
+    with Then("its setup-step script defaults to setup.sh"):
+        assert provider.setup_script_name([]) == "setup.sh"
+    with And("a setup-<name> label overrides it"):
+        assert provider.setup_script_name(["setup-custom"]) == "custom.sh"
+    with And("a recycle-<name> label does NOT affect the setup-step for cloud"):
+        assert provider.setup_script_name(["recycle-clean"]) == "setup.sh"
+
+
 # ---------------------------------------------------------------------------
 # expand_location_label (pure function — no fixtures needed)
 # ---------------------------------------------------------------------------

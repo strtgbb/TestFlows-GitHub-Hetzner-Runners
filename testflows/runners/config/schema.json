@@ -177,6 +177,67 @@
                                 "access_key_id",
                                 "secret_access_key"
                             ]
+                        },
+                        "dedicated_static": {
+                            "description": "Static dedicated-host provider configuration",
+                            "type": "object",
+                            "properties": {
+                                "claim_ttl_minutes": {
+                                    "description": "Minutes before an abandoned dedicated_static claim can be reclaimed, default: 360.",
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "examples": [360, 720]
+                                },
+                                "ssh_defaults": {
+                                    "description": "Default SSH settings for all dedicated host groups.",
+                                    "type": "object",
+                                    "properties": {
+                                        "user": {"type": "string"},
+                                        "port": {"type": "integer"},
+                                        "key": {"type": "string"}
+                                    },
+                                    "additionalProperties": false
+                                },
+                                "groups": {
+                                    "description": "Named host groups keyed by group name.",
+                                    "type": "object",
+                                    "minProperties": 1,
+                                    "patternProperties": {
+                                        "^[a-z0-9][a-z0-9-]*$": {
+                                        "type": "object",
+                                        "properties": {
+                                            "labels": {
+                                                "description": "Existing runner labels or meta labels applied to all hosts in the group.",
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "minItems": 1
+                                            },
+                                            "hosts": {
+                                                "description": "Host endpoints (IPv4, IPv6, or DNS names).",
+                                                "type": "array",
+                                                "items": {"type": "string"},
+                                                "minItems": 1
+                                            },
+                                            "ssh": {
+                                                "description": "Optional SSH overrides for this group.",
+                                                "type": "object",
+                                                "properties": {
+                                                    "user": {"type": "string"},
+                                                    "port": {"type": "integer"},
+                                                    "key": {"type": "string"}
+                                                },
+                                                "additionalProperties": false
+                                            }
+                                        },
+                                        "required": ["labels", "hosts"],
+                                        "additionalProperties": false
+                                    }
+                                    },
+                                    "additionalProperties": false
+                                }
+                            },
+                            "required": ["groups"],
+                            "additionalProperties": false
                         }
                     },
                     "additionalProperties": false

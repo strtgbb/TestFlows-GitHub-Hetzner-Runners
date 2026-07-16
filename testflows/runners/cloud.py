@@ -188,6 +188,7 @@ def deploy(args, config: Config, redeploy=False):
                 scp(
                     source=os.path.join(config.scripts, "*.sh"),
                     destination=f"root@{ip}:{deploy_scripts_folder}.",
+                    server=server,
                 )
                 config.scripts = deploy_scripts_folder
 
@@ -222,6 +223,7 @@ def deploy(args, config: Config, redeploy=False):
             scp(
                 source=file.name,
                 destination=f"root@{ip}:{deploy_configs_folder}config.yaml",
+                server=server,
             )
             config.config_file = os.path.join(
                 deploy_configs_folder,
@@ -336,6 +338,7 @@ def download_log(args, config: Config, server: BoundServer = None):
         scp(
             source=f"root@{ip}:{os.path.join(tempfile.gettempdir(), 'tfs-runners.log')}",
             destination=args.output,
+            server=server,
         )
 
 

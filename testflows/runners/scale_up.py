@@ -146,6 +146,7 @@ def get_runner_server_type(runner_name: str) -> str | None:
 
 
 def server_setup(
+    provider: CloudProvider,
     server: ProviderServer,
     setup_script: str,
     startup_script: str,
@@ -154,8 +155,37 @@ def server_setup(
     runner_labels: str,
     timeout: float = 60,
 ):
-    """Setup new server instance."""
+    """Run server setup, then let the provider handle claim cleanup."""
+    succeeded = False
+    try:
+        _run_server_setup(
+            provider=provider,
+            server=server,
+            setup_script=setup_script,
+            startup_script=startup_script,
+            github_token=github_token,
+            github_repository=github_repository,
+            runner_labels=runner_labels,
+            timeout=timeout,
+        )
+        succeeded = True
+    finally:
+        provider.release_claim(server, succeeded=succeeded)
+
+
+def _run_server_setup(
+    provider: CloudProvider,
+    server: ProviderServer,
+    setup_script: str,
+    startup_script: str,
+    github_token: str,
+    github_repository: str,
+    runner_labels: str,
+    timeout: float = 60,
+):
+    """Setup new server instance and return runner registration name."""
     cache_volume_name = "cache"
+    runner_name = provider.build_runner_name(server)
 
     with Action("Wait for SSH connection to be ready", server_name=server.name):
         wait_ssh(server=server, timeout=timeout)
@@ -267,14 +297,16 @@ def server_setup(
             f'GITHUB_RUNNER_TOKEN="{GITHUB_RUNNER_TOKEN}" '
             f"GITHUB_RUNNER_GROUP=Default "
             f'GITHUB_RUNNER_LABELS="{runner_labels}" '
-            f'GITHUB_RUNNER_NAME="{server.name}" '
+            f'GITHUB_RUNNER_NAME="{runner_name}" '
             f'SERVER_NAME="{server.name}" '
+            f'RUNNER_ON_EXIT="{server.runner_on_exit}" '
             f'SERVER_ID="{server.id}" '
             f'SERVER_TYPE_NAME="{server.server_type}" '
             f'SERVER_LOCATION_NAME="{server.location}" '
             f"bash -s' < {startup_script}",
             stacklevel=5,
         )
+    return runner_name
 
 
 def get_server_types(labels: list[str], default, label_prefix: str = "") -> list[str]:
@@ -419,30 +451,6 @@ def get_server_volumes(labels: list[str], default: int = 10, label_prefix: str =
             volumes[name] = Volume(name=name, size=size)
 
     return list(volumes.values())
-
-
-def get_setup_script(
-    scripts: str, labels: list[str], default: str = "setup.sh", label_prefix: str = ""
-):
-    """Get setup script."""
-    script = None
-
-    if label_prefix and not label_prefix.endswith("-"):
-        label_prefix += "-"
-    label_prefix += "setup-"
-    label_prefix = label_prefix.lower()
-
-    for label in labels:
-        label = label.lower()
-        if label.startswith(label_prefix):
-            script = label.split(label_prefix, 1)[-1] + ".sh"
-
-    if script is None:
-        script = default
-
-    script = check_setup_script(os.path.join(scripts, script))
-
-    return script
 
 
 def get_recycle_script(
@@ -889,6 +897,16 @@ def create_server(
                             volume.server = None
                         raise
 
+                if provider_server is None:
+                    # Expected transient "no host available" (e.g. static pool
+                    # full); release volumes and cancel quietly. Raised outside
+                    # any Action so it is not logged as an error.
+                    for volume in server_bound_volumes:
+                        volume.server = None
+                    raise CanceledServerCreation(
+                        f"no server available to create {name} right now"
+                    )
+
                 metrics.record_server_creation(
                     server_type=server_type.name,
                     location=_loc_name(server_location),
@@ -911,6 +929,7 @@ def create_server(
 
     setup_worker_pool.submit(
         server_setup,
+        provider=provider,
         server=provider_server,
         setup_script=setup_script,
         startup_script=startup_script,
@@ -984,6 +1003,7 @@ def recycle_server(
 
     setup_worker_pool.submit(
         server_setup,
+        provider=provider,
         server=provider_server,
         setup_script=setup_script,
         startup_script=startup_script,
@@ -1195,7 +1215,8 @@ def get_server_count_with_labels(servers, label_set, futures=None):
         count += sum(
             1
             for future in futures
-            if hasattr(future, "server_labels")
+            if getattr(future, "counts_toward_capacity", True)
+            and hasattr(future, "server_labels")
             and label_set.issubset(future.server_labels)
         )
 
@@ -1250,8 +1271,13 @@ def scale_up(
         futures: list[Future],
         servers: list[RunnerServer],
         volumes: list[BoundVolume],
+        provider: CloudProvider = None,
     ):
-        """Create new server that would provide a runner with given labels."""
+        """Create new server that would provide a runner with given labels.
+
+        When ``provider`` is given, resolution is pinned to it;
+        otherwise each type resolves across all providers.
+        """
         recyclable_servers: list[BoundServer] = []
 
         # signal to stop creating a new server
@@ -1279,21 +1305,20 @@ def scale_up(
                 server_locations = [
                     default_volume_location,
                 ]
-        setup_script = get_setup_script(
-            scripts=scripts,
-            labels=labels,
-            label_prefix=label_prefix,
-        )
         server_net_config = get_server_net_config(
             labels=labels, label_prefix=label_prefix
         )
 
         # Resolve provider and validate type for each requested server type.
-        # get_server_image is called per type since image specs are provider-specific.
+        # get_server_image and the setup-step script are resolved per type since
+        # both are provider-specific (image format; and setup_script_name picks
+        # the script from the provider's own label/default rules).
+        # Keep-warm pins to one provider (resolve only against it); else all.
+        candidate_providers = [provider] if provider is not None else providers
         resolved = []
         for type_name in server_types:
             try:
-                rp, vt = _resolve_provider(type_name, providers)
+                rp, vt = _resolve_provider(type_name, candidate_providers)
             except ServerTypeError:
                 continue
             provider_default_image = (
@@ -1310,11 +1335,14 @@ def scale_up(
                         default=provider_default_image,
                         label_prefix=label_prefix,
                     ),
+                    check_setup_script(
+                        os.path.join(scripts, rp.setup_script_name(labels, label_prefix))
+                    ),
                 )
             )
 
         if recycle:
-            for type_name, resolved_provider, validated_type, server_image in resolved:
+            for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
                 if not resolved_provider.supports_recycling:
                     continue
                 provider_ssh_keys = ssh_keys.get(resolved_provider.name, [])
@@ -1403,7 +1431,7 @@ def scale_up(
                                 ):
                                     pass
 
-        for type_name, resolved_provider, validated_type, server_image in resolved:
+        for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
             if server_volumes and not resolved_provider.supports_volumes:
                 with Action(
                     f"Skipping provider {resolved_provider.name} for {name}: job requires volumes but provider does not support them",
@@ -1618,33 +1646,6 @@ def scale_up(
                     workflow_runs = queued_runs + in_progress_runs
 
                 with Action(
-                    "Getting list of servers", level=logging.DEBUG, interval=interval
-                ):
-                    servers = filtered_servers(
-                        [
-                            RunnerServer(
-                                name=ps.name,
-                                server_status=ps.status,
-                                labels=p.get_runner_labels(ps),
-                                server_type=ps.server_type,
-                                server_location=ps.location,
-                                server_volumes=[
-                                    Volume(
-                                        name=get_volume_name(v.name),
-                                        size=v.size,
-                                    )
-                                    for v in ps.volumes
-                                ],
-                                server=ps,
-                                provider_name=p.name,
-                            )
-                            for p in providers
-                            for ps in p.list_runner_servers()
-                        ],
-                        with_label,
-                    )
-
-                with Action(
                     "Getting list of available volumes",
                     level=logging.DEBUG,
                     interval=interval,
@@ -1676,20 +1677,57 @@ def scale_up(
                         for runner in repo.get_self_hosted_runners()
                         if runner.name.startswith(runner_name_prefix)
                     ]
+                registered_runner_names = {runner.name for runner in runners}
+
+                with Action(
+                    "Reconciling dedicated static leases from GitHub runner list",
+                    level=logging.DEBUG,
+                    interval=interval,
+                ):
+                    for _p in providers:
+                        _p.reconcile_runner_leases(registered_runner_names)
+
+                with Action(
+                    "Getting list of servers", level=logging.DEBUG, interval=interval
+                ):
+                    servers = filtered_servers(
+                        [
+                            RunnerServer(
+                                name=ps.name,
+                                server_status=ps.status,
+                                labels=(
+                                    p.get_runner_labels(ps) | set(with_label or [])
+                                    if p.name == "dedicated_static"
+                                    else p.get_runner_labels(ps)
+                                ),
+                                server_type=ps.server_type,
+                                server_location=ps.location,
+                                server_volumes=[
+                                    Volume(
+                                        name=get_volume_name(v.name),
+                                        size=v.size,
+                                    )
+                                    for v in ps.volumes
+                                ],
+                                server=ps,
+                                provider_name=p.name,
+                            )
+                            for p in providers
+                            for ps in p.list_runner_servers()
+                        ],
+                        with_label,
+                    )
 
                 with Action(
                     "Setting status of servers based on the runner status",
                     level=logging.DEBUG,
                     interval=interval,
                 ):
-                    filtered_runners = []
                     for runner in runners:
                         for server in servers:
                             if runner.name.startswith(server.name):
                                 if runner.status == "online":
                                     server.runner_status = "busy" if runner.busy else "ready"
-                                filtered_runners.append(runner)
-                    runners = filtered_runners
 
                 # Lazily fetch prices for any provider that is missing them
                 for _p in providers:
@@ -1876,6 +1914,61 @@ def scale_up(
                     except Exception:
                         pass
 
+                with Action(
+                    "Maintaining dedicated static runners",
+                    level=logging.DEBUG,
+                    interval=interval,
+                ):
+                    for _p in providers:
+                        if _p.name != "dedicated_static":
+                            continue
+
+                        configured_hosts: list[ProviderServer] = _p.list_servers()
+                        pending_host_names = {
+                            f.server_name
+                            for f in futures
+                            if getattr(f, "provider_name", None) == _p.name
+                            and hasattr(f, "server_name")
+                            and getattr(f, "counts_toward_capacity", True)
+                        }
+                        active_runner_names = registered_runner_names
+
+                        for configured_host in configured_hosts:
+                            if configured_host.name in pending_host_names:
+                                continue
+                            if configured_host.name in active_runner_names:
+                                continue
+                            labels = list(
+                                dict.fromkeys(
+                                    list(_p.get_runner_labels(configured_host))
+                                    + (with_label or [])
+                                )
+                            )
+                            try:
+                                with Action(
+                                    f"Setting up dedicated static runner {configured_host.name} with labels {labels}",
+                                    server_name=configured_host.name,
+                                    interval=interval,
+                                ):
+                                    create_runner_server(
+                                        name=configured_host.name,
+                                        labels=labels,
+                                        setup_worker_pool=setup_worker_pool,
+                                        futures=futures,
+                                        servers=servers,
+                                        volumes=volumes,
+                                        # Pin to this provider so cloud-type
+                                        # labels can't divert to a cloud VM.
+                                        provider=_p,
+                                    )
+                            except Exception as exc:
+                                # Surface real failures (misconfig/regression);
+                                # silently skipping would starve the static pool.
+                                logging.warning(
+                                    f"Skipping dedicated static host {configured_host.name} this cycle: {exc}"
+                                )
+                                continue
+
                 if standby_runners:
                     try:
                         with Action("Checking standby runner pool", interval=interval):
@@ -1888,12 +1981,16 @@ def scale_up(
                                 replenish_immediately = (
                                     standby_runner.replenish_immediately
                                 )
+                                # Include pending creates so this cycle does not over-replenish.
+                                available = get_server_count_with_labels(
+                                    servers=[], label_set=set(labels), futures=futures
+                                )
                                 if replenish_immediately:
-                                    available = count_available(
+                                    available += count_available(
                                         servers=servers, labels=labels
                                     )
                                 else:
-                                    available = count_present(
+                                    available += count_present(
                                         servers=servers, labels=labels
                                     )
 

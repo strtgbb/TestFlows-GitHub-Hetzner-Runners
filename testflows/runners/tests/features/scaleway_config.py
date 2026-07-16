@@ -304,6 +304,40 @@ def get_server_arch_defaults_x64_without_sdk_type(self):
 
 
 @TestScenario
+def delete_server_deletes_sbs_boot_volume(self):
+    """delete_server terminates the instance AND deletes its SBS boot volume.
+
+    terminate only detaches SBS volumes; without an explicit delete they leak
+    and exhaust the SbsVolumeSizeGb quota. Local (l_ssd) volumes are removed by
+    terminate and must not be touched.
+    """
+    from types import SimpleNamespace
+
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("a server with an SBS boot volume and a local volume"):
+        native = SimpleNamespace(volumes={
+            "0": SimpleNamespace(id="vol-sbs", volume_type="sbs_volume", boot=True),
+            "1": SimpleNamespace(id="vol-local", volume_type="l_ssd", boot=False),
+        })
+        server = ProviderServer(
+            id="srv-1", name="github-runner-1-0-dev1.s", status="off",
+            public_ipv4=None, private_ipv4=None, labels={},
+            server_type="dev1.s", location="fr-par-1", created=None, _native=native,
+        )
+        provider._block.delete_volume.return_value = None  # detaches cleanly
+    with When("delete_server is called"):
+        provider.delete_server(server)
+    with Then("the instance is terminated"):
+        _, kwargs = provider._instance.server_action.call_args
+        assert str(kwargs["action"]) == "terminate", kwargs["action"]
+    with And("only the SBS volume is deleted (not the local one)"):
+        assert provider._block.delete_volume.call_count == 1, provider._block.delete_volume.call_count
+        _, vkwargs = provider._block.delete_volume.call_args
+        assert vkwargs["volume_id"] == "vol-sbs", vkwargs
+
+
+@TestScenario
 def stopped_in_place_space_form_maps_to_off(self):
     """The API's space-form 'stopped in place' must map to OFF, not UNKNOWN.
 

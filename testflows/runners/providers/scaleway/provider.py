@@ -66,6 +66,7 @@ class ScalewayCloudProvider(CloudProvider):
     ):
         from scaleway import Client
         from scaleway.instance.v1 import InstanceV1API
+        from scaleway.block.v1 import BlockV1API
 
         self._client = Client(
             access_key=access_key,
@@ -75,6 +76,7 @@ class ScalewayCloudProvider(CloudProvider):
             default_zone=zone,
         )
         self._instance = InstanceV1API(self._client)
+        self._block = BlockV1API(self._client)
         self._project_id = project_id
         self._organization_id = organization_id
         self._zone = zone
@@ -180,16 +182,59 @@ class ScalewayCloudProvider(CloudProvider):
         return _server_to_provider(server, ssh_user=self._ssh_user)
 
     def delete_server(self, server: ProviderServer) -> None:
-        """Terminate the Instance, freeing its compute, local volume, and IP.
+        """Terminate the Instance and delete its SBS boot volume.
 
-        ``terminate`` is used (rather than ``delete``) so the attached volume
-        and dynamic IP are released too — otherwise they keep billing.
+        ``terminate`` deletes the instance, its local volume, and the dynamic IP,
+        but it only *detaches* Block Storage (SBS) volumes — it does not delete
+        them. A boot-on-block instance would therefore leak its ~120 GiB SBS boot
+        volume on every teardown, exhausting the SbsVolumeSizeGb quota. So we
+        capture the SBS volume ids first, terminate, then delete those volumes
+        once they detach.
         """
         from scaleway.instance.v1 import ServerAction
+
+        sbs_volume_ids = []
+        native = getattr(server, "_native", None)
+        for vol in (getattr(native, "volumes", None) or {}).values():
+            vtype = str(getattr(vol, "volume_type", "")).lower()
+            if "sbs" in vtype or "b_ssd" in vtype:
+                vid = getattr(vol, "id", None)
+                if vid:
+                    sbs_volume_ids.append(vid)
 
         self._instance.server_action(
             server_id=server.id, zone=server.location, action=ServerAction.TERMINATE
         )
+
+        for vid in sbs_volume_ids:
+            self._delete_sbs_volume(vid, server.location)
+
+    def _delete_sbs_volume(self, volume_id: str, zone, timeout: int = 60) -> None:
+        """Best-effort delete of a detached SBS volume.
+
+        terminate detaches the volume asynchronously; deleting it while still
+        ``in_use`` fails, so retry until it detaches (or is already gone). This
+        is best-effort: on timeout we log rather than block teardown forever —
+        a rare straggler is preferable to stalling scale_down.
+        """
+        deadline = time.time() + timeout
+        while True:
+            try:
+                self._block.delete_volume(volume_id=volume_id, zone=zone)
+                return
+            except Exception as exc:
+                if getattr(exc, "status_code", None) == 404:
+                    return  # already deleted
+                if time.time() >= deadline:
+                    with Action(
+                        f"Could not delete SBS volume {volume_id} within {timeout}s "
+                        f"(still attached?): {exc}",
+                        stacklevel=3,
+                        ignore_fail=True,
+                    ):
+                        pass
+                    return
+                time.sleep(3)
 
     def get_server(self, name: str) -> ProviderServer | None:
         servers = self._instance.list_servers_all(zone=self._zone, name=name)

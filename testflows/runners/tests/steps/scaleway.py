@@ -23,6 +23,8 @@ def mock_scaleway_sdk(self):
         "scaleway",
         "scaleway.instance",
         "scaleway.instance.v1",
+        "scaleway.block",
+        "scaleway.block.v1",
         "scaleway.iam",
         "scaleway.iam.v1alpha1",
         "scaleway.marketplace",
@@ -43,6 +45,9 @@ def mock_scaleway_sdk(self):
 
         instance_mod.ServerAction = ServerAction
 
+        block_mod = types.ModuleType("scaleway.block.v1")
+        block_mod.BlockV1API = MagicMock(name="BlockV1API")
+
         iam_mod = types.ModuleType("scaleway.iam.v1alpha1")
         iam_mod.IamV1Alpha1API = MagicMock(name="IamV1Alpha1API")
 
@@ -52,6 +57,8 @@ def mock_scaleway_sdk(self):
         sys.modules["scaleway"] = scaleway_mod
         sys.modules["scaleway.instance"] = types.ModuleType("scaleway.instance")
         sys.modules["scaleway.instance.v1"] = instance_mod
+        sys.modules["scaleway.block"] = types.ModuleType("scaleway.block")
+        sys.modules["scaleway.block.v1"] = block_mod
         sys.modules["scaleway.iam"] = types.ModuleType("scaleway.iam")
         sys.modules["scaleway.iam.v1alpha1"] = iam_mod
         sys.modules["scaleway.marketplace"] = types.ModuleType("scaleway.marketplace")

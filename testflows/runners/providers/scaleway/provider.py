@@ -239,7 +239,7 @@ class ScalewayCloudProvider(CloudProvider):
         """
         try:
             volumes = self._block.list_volumes_all(
-                zone=self._zone, tags=[_RUNNER_VOLUME_TAG]
+                zone=self._zone, tags=[_RUNNER_VOLUME_TAG], include_deleted=False
             )
         except Exception as exc:
             with Action(

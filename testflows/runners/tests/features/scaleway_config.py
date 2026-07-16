@@ -367,7 +367,11 @@ def reap_orphaned_volumes_deletes_detached_aged_only(self):
         ]
     with When("reap_orphaned_volumes runs"):
         provider.reap_orphaned_volumes()
-    with Then("only the detached, aged orphan is deleted"):
+    with Then("it lists tagged, non-deleted volumes"):
+        _, lkwargs = provider._block.list_volumes_all.call_args
+        assert lkwargs.get("include_deleted") is False, lkwargs
+        assert "github-runner-volume=active" in (lkwargs.get("tags") or []), lkwargs
+    with And("only the detached, aged orphan is deleted"):
         assert provider._block.delete_volume.call_count == 1, provider._block.delete_volume.call_count
         _, vkwargs = provider._block.delete_volume.call_args
         assert vkwargs["volume_id"] == "orphan", vkwargs
@@ -532,6 +536,49 @@ def get_image_custom_name_requires_exact_match(self):
             assert False, "expected ImageError for prefix-only match"
         except ImageError:
             pass
+
+
+@TestScenario
+def provider_sdk_calls_match_real_signatures(self):
+    """Every provider SDK call binds against the real scaleway SDK signatures.
+
+    The other tests mock the SDK with MagicMocks, which do NOT enforce argument
+    signatures — so a missing required kwarg (e.g. list_volumes_all's
+    include_deleted) passes the mocks but fails at runtime. This binds the exact
+    kwargs the provider passes to the real signatures. Skips when the optional
+    scaleway SDK is not installed.
+    """
+    import inspect
+
+    try:
+        from scaleway.instance.v1 import InstanceV1API
+        from scaleway.block.v1 import BlockV1API
+        from scaleway.marketplace.v2 import MarketplaceV2API
+        from scaleway.iam.v1alpha1 import IamV1Alpha1API
+    except ImportError:
+        with Action("scaleway SDK not installed; skipping signature audit"):
+            return
+
+    calls = [
+        (InstanceV1API, "_create_server", dict(zone="z", name="n", commercial_type="t", image="i", dynamic_ip_required=True, protected=False, tags=[], project="p")),
+        (InstanceV1API, "server_action", dict(server_id="s", zone="z", action="terminate")),
+        (InstanceV1API, "_update_server", dict(server_id="s", zone="z", name="n", tags=[])),
+        (InstanceV1API, "get_server", dict(server_id="s", zone="z")),
+        (InstanceV1API, "list_servers_all", dict(zone="z", tags=["x"])),
+        (InstanceV1API, "list_servers_types", dict(zone="z")),
+        (InstanceV1API, "list_images_all", dict(zone="z", name="n", public=False, project="p")),
+        (BlockV1API, "update_volume", dict(volume_id="v", zone="z", tags=[])),
+        (BlockV1API, "delete_volume", dict(volume_id="v", zone="z")),
+        (BlockV1API, "list_volumes_all", dict(zone="z", tags=["x"], include_deleted=False)),
+        (MarketplaceV2API, "list_local_images_all", dict(image_label="l", zone="z", type_="instance_local")),
+        (IamV1Alpha1API, "list_ssh_keys_all", dict(project_id="p")),
+        (IamV1Alpha1API, "create_ssh_key", dict(name="n", public_key="k", project_id="p")),
+    ]
+    with Then("every provider SDK call binds to the real signature"):
+        for api, meth, kw in calls:
+            sig = inspect.signature(getattr(api, meth))
+            # None stands in for self; raises TypeError if a required arg is missing
+            sig.bind(None, **kw)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,25 @@
+config:
+  github_token: ${GITHUB_TOKEN}
+  github_repository: ${GITHUB_REPOSITORY}
+  with_label:
+    - self-hosted
+
+  providers:
+    scaleway:
+      access_key: ${SCW_ACCESS_KEY}
+      secret_key: ${SCW_SECRET_KEY}
+      project_id: ${SCW_DEFAULT_PROJECT_ID}
+      organization_id: ${SCW_DEFAULT_ORGANIZATION_ID}  # optional
+      ssh_user: root
+      defaults:
+        # Marketplace label (e.g. ubuntu_jammy) or a private image UUID/name.
+        image: ubuntu_jammy
+        # Instance type in the canonical dot-form (NOT Scaleway's dash-form
+        # DEV1-M) — the runner label grammar reserves '-' as a separator.
+        server_type: dev1.m
+        location: fr-par-1
+        volume_size: 20
+
+# Per-job overrides use labels, e.g.:
+#   runs-on: [self-hosted, type-gp1.xs, in-fr-par-2, image-my-custom-image]
+# List multiple in-<zone> labels to let scale-up fall back across zones.

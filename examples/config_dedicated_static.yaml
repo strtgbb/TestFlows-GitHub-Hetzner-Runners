@@ -1,0 +1,39 @@
+config:
+  github_token: ${GITHUB_TOKEN}
+  github_repository: ${GITHUB_REPOSITORY}
+  with_label:
+    - self-hosted
+  recycle: true
+  # No-rebuild recycle mode is used by recyclable providers (e.g. Hetzner/AWS).
+  # Dedicated static hosts are long-lived inventory and are always reused.
+  recycle_without_rebuild: true
+
+  providers:
+    dedicated_static:
+      ssh_defaults:
+        user: runner
+        # Private key used by controller SSH/SCP connections.
+        key: ~/.ssh/id_ed25519
+        port: 22
+      groups:
+        metal-large-dc1:
+          labels:
+            - self-hosted
+            - linux
+            - x64
+            - type-metallarge
+            - in-dc1
+          hosts:
+            - 203.0.113.10
+            - 203.0.113.11
+        metal-arm-dc2:
+          labels:
+            - self-hosted
+            - linux
+            - arm64
+            - type-metalarm
+            - in-dc2
+          ssh:
+            user: ubuntu
+          hosts:
+            - 203.0.113.20

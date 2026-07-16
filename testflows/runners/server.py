@@ -18,6 +18,7 @@ import socket
 import ipaddress
 import subprocess
 import signal
+import shlex
 
 from datetime import datetime, timezone
 from collections import namedtuple
@@ -28,6 +29,7 @@ from hcloud.primary_ips.domain import PrimaryIP
 
 from .actions import Action
 from .shell import shell
+from .constants import runner_name_prefix
 
 ServerAge = namedtuple("ServerAge", "days hours minutes seconds")
 
@@ -144,7 +146,16 @@ def ssh_command(server, options: str = ""):
 
     ip = ip_address(server=server)
     user = server.ssh_user if isinstance(server, ProviderServer) else "root"
-    return f'ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" {options}{" " if options else ""}{user}@{ip}'
+    port_option = ""
+    if isinstance(server, ProviderServer) and getattr(server, "ssh_port", None):
+        port_option = f'-p {server.ssh_port} '
+    identity_option = ""
+    if isinstance(server, ProviderServer) and getattr(server, "ssh_key_path", None):
+        identity_option = f'-i {shlex.quote(server.ssh_key_path)} '
+    return (
+        f'ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
+        f"{port_option}{identity_option}{options}{' ' if options else ''}{user}@{ip}"
+    )
 
 
 def ssh(server, cmd: str, *args, stacklevel=3, **kwargs):
@@ -158,9 +169,19 @@ def ssh(server, cmd: str, *args, stacklevel=3, **kwargs):
     )
 
 
-def scp(source: str, destination: str, *args, **kwargs):
+def scp(source: str, destination: str, *args, server=None, **kwargs):
     """Execute copy over SSH."""
-    scp_command = f'scp -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" {source} {destination}'
+    port_option = ""
+    identity_option = ""
+    if server is not None:
+        if getattr(server, "ssh_port", None):
+            port_option = f"-P {server.ssh_port} "
+        if getattr(server, "ssh_key_path", None):
+            identity_option = f"-i {shlex.quote(server.ssh_key_path)} "
+    scp_command = (
+        'scp -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
+        f"{port_option}{identity_option}{source} {destination}"
+    )
     return shell(f"{scp_command}", *args, **kwargs)
 
 
@@ -276,5 +297,19 @@ class ssh_tunnel:
 
 
 def get_runner_server_name(runner_name: str) -> str:
-    """Determine runner's server name."""
+    """Determine runner's server name.
+
+    Default runners are named ``<server-name>-<type>-<location>``; the server
+    name is the first five dash fields (the trailing ``-<type>-<location>`` is
+    dropped, which also tolerates hyphenated AWS locations like ``us-east-1a``
+    that sit past field five).
+
+    Dedicated-static runners register under their bare, stable name with no
+    ``-<type>-<location>`` suffix, and that name may contain hyphens in the
+    group (e.g. ``github-runner-static-my-group-<hash>``). For them the runner
+    name *is* the server name, so return it unchanged — mirroring the prefix
+    guard used by get_runner_server_type for the same class of issue.
+    """
+    if runner_name.startswith(f"{runner_name_prefix}static-"):
+        return runner_name
     return "-".join(runner_name.split("-")[:5])

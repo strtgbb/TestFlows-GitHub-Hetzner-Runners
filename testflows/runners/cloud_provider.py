@@ -52,6 +52,13 @@ class ProviderServer:
     # SSH login user for this server. Defaults to 'root' (Hetzner); override
     # for providers whose AMIs use a different default user (e.g. 'ubuntu' on AWS).
     ssh_user: str = "root"
+    # SSH TCP port.
+    ssh_port: int = 22
+    # Optional SSH private key path to use when connecting to this host.
+    ssh_key_path: str | None = None
+    # Action performed when the ephemeral runner process exits.
+    # Supported values: "poweroff" (default) and "reboot".
+    runner_on_exit: str = "poweroff"
     # Underlying provider object (e.g. hcloud BoundServer). Internal use only.
     _native: Any = field(default=None, repr=False)
 
@@ -97,6 +104,24 @@ class CloudProvider(ABC):
         availability-zone string for AWS).
         """
         return getattr(self, "_default_location", None)
+
+    def setup_script_name(self, labels: "list[str]", label_prefix: str = "") -> str:
+        """Filename of the setup-step script run before each runner registers.
+
+        Base: a ``setup-<name>`` label override, else ``setup.sh``. Providers
+        whose setup-step is itself a cleanup script (dedicated_static) override
+        this to read a ``recycle-<name>`` label instead. The caller resolves the
+        path and checks existence.
+        """
+        if label_prefix and not label_prefix.endswith("-"):
+            label_prefix += "-"
+        prefix = (label_prefix + "setup-").lower()
+        name = None
+        for label in labels:
+            label = label.lower()
+            if label.startswith(prefix):
+                name = label.split(prefix, 1)[1]
+        return f"{name}.sh" if name is not None else "setup.sh"
 
     @property
     @abstractmethod
@@ -156,12 +181,17 @@ class CloudProvider(ABC):
         volumes: list = None,
         automount: bool = False,
         public_net: Any = None,
-    ) -> ProviderServer:
+    ) -> "ProviderServer | None":
         """Create a new server and return a ProviderServer descriptor.
 
         The call should block until the server object is created (though not
         necessarily until it is running). The caller is responsible for waiting
         for SSH availability.
+
+        Return None when no server can be provisioned right now for an expected,
+        transient reason (e.g. a fixed-capacity provider with all hosts in use);
+        the caller cancels the attempt quietly and retries. Invalid requests
+        (unknown type/location) must still raise.
         """
 
     @abstractmethod
@@ -206,6 +236,28 @@ class CloudProvider(ABC):
         The provider is responsible for filtering by its own internal tag/label
         convention (e.g. Hetzner uses ``github-hetzner-runner=active``).
         """
+
+    def reconcile_runner_leases(self, runner_names: set[str]) -> None:
+        """Optional hook for providers that derive occupancy from GitHub runner names."""
+        del runner_names
+
+    def release_claim(self, server: "ProviderServer", *, succeeded: bool) -> None:
+        """Optional hook: release any provisional claim staked before setup.
+
+        Providers that durably claim a host before provisioning (e.g. the
+        dedicated_static claim marker) can clear it here once setup finishes.
+        ``succeeded`` is False when setup raised, in which case the host should
+        also be freed for re-dispatch. Default is a no-op.
+        """
+        del server, succeeded
+
+    def build_runner_name(self, server: ProviderServer) -> str:
+        """Build GitHub runner registration name for a server.
+
+        Default naming preserves legacy behavior: <server-name>-<type>-<location>.
+        Providers can override to enforce provider-specific stable identities.
+        """
+        return f"{server.name}-{server.server_type}-{server.location}"
 
     # ---------------------------------------------------------------------------
     # Runner label helpers

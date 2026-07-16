@@ -17,6 +17,8 @@ native dash-form (``DEV1-S``) via :func:`utils.native_type` / :func:`utils.canon
 
 import time
 import hashlib
+import logging
+from datetime import datetime, timezone
 
 from ...actions import Action
 from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
@@ -25,6 +27,7 @@ from .utils import (
     _RUNNER_TAG,
     _RUNNER_LABEL_TAG_PREFIX,
     _SSH_KEY_TAG,
+    _RUNNER_VOLUME_TAG,
     _ACTIVE_STATES,
     canonical_type,
     native_type,
@@ -34,6 +37,10 @@ from .utils import (
     _server_to_provider,
 )
 from .args import _ZONE_RE
+
+# A detached SBS volume younger than this is left alone, so the reaper never
+# races an in-flight create between volume creation and instance attachment.
+_ORPHAN_VOLUME_GRACE_SECONDS = 120
 
 
 class ScalewaySSHKey:
@@ -171,6 +178,11 @@ class ScalewayCloudProvider(CloudProvider):
         )
         server = created.server
 
+        # Tag the boot-on-block (SBS) volume so it can be reaped after teardown
+        # (terminate only detaches SBS volumes; reap_orphaned_volumes deletes
+        # the tagged, detached ones out of band).
+        self._tag_boot_volumes(server, zone)
+
         self._instance.server_action(
             server_id=server.id, zone=zone, action=ServerAction.POWERON
         )
@@ -182,59 +194,91 @@ class ScalewayCloudProvider(CloudProvider):
         return _server_to_provider(server, ssh_user=self._ssh_user)
 
     def delete_server(self, server: ProviderServer) -> None:
-        """Terminate the Instance and delete its SBS boot volume.
+        """Terminate the Instance (a single call).
 
         ``terminate`` deletes the instance, its local volume, and the dynamic IP,
-        but it only *detaches* Block Storage (SBS) volumes — it does not delete
-        them. A boot-on-block instance would therefore leak its ~120 GiB SBS boot
-        volume on every teardown, exhausting the SbsVolumeSizeGb quota. So we
-        capture the SBS volume ids first, terminate, then delete those volumes
-        once they detach.
+        and only *detaches* any Block Storage (SBS) volume — it does not delete
+        it. The detached boot volume still counts against the SbsVolumeSizeGb
+        quota, so it is reclaimed out of band by ``reap_orphaned_volumes`` (the
+        volume is tagged at create time). Keeping teardown one non-blocking call
+        is also crash-safe: an orphan is reaped on a later cycle no matter how it
+        was stranded.
         """
         from scaleway.instance.v1 import ServerAction
-
-        sbs_volume_ids = []
-        native = getattr(server, "_native", None)
-        for vol in (getattr(native, "volumes", None) or {}).values():
-            vtype = str(getattr(vol, "volume_type", "")).lower()
-            if "sbs" in vtype or "b_ssd" in vtype:
-                vid = getattr(vol, "id", None)
-                if vid:
-                    sbs_volume_ids.append(vid)
 
         self._instance.server_action(
             server_id=server.id, zone=server.location, action=ServerAction.TERMINATE
         )
 
-        for vid in sbs_volume_ids:
-            self._delete_sbs_volume(vid, server.location)
-
-    def _delete_sbs_volume(self, volume_id: str, zone, timeout: int = 60) -> None:
-        """Best-effort delete of a detached SBS volume.
-
-        terminate detaches the volume asynchronously; deleting it while still
-        ``in_use`` fails, so retry until it detaches (or is already gone). This
-        is best-effort: on timeout we log rather than block teardown forever —
-        a rare straggler is preferable to stalling scale_down.
-        """
-        deadline = time.time() + timeout
-        while True:
-            try:
-                self._block.delete_volume(volume_id=volume_id, zone=zone)
-                return
-            except Exception as exc:
-                if getattr(exc, "status_code", None) == 404:
-                    return  # already deleted
-                if time.time() >= deadline:
+    def _tag_boot_volumes(self, server, zone) -> None:
+        """Tag the instance's SBS (boot-on-block) volumes for later reaping."""
+        for vol in (getattr(server, "volumes", None) or {}).values():
+            vtype = str(getattr(vol, "volume_type", "")).lower()
+            vid = getattr(vol, "id", None)
+            if vid and ("sbs" in vtype or "b_ssd" in vtype):
+                try:
+                    self._block.update_volume(
+                        volume_id=vid, zone=zone, tags=[_RUNNER_VOLUME_TAG]
+                    )
+                except Exception as exc:
                     with Action(
-                        f"Could not delete SBS volume {volume_id} within {timeout}s "
-                        f"(still attached?): {exc}",
+                        f"Could not tag boot volume {vid} for reaping: {exc}",
                         stacklevel=3,
                         ignore_fail=True,
                     ):
                         pass
-                    return
-                time.sleep(3)
+
+    def reap_orphaned_volumes(self) -> None:
+        """Delete detached SBS volumes we created that no instance references.
+
+        terminate detaches (does not delete) boot-on-block volumes, so they
+        linger and consume the SbsVolumeSizeGb quota. Each is tagged at create
+        time; here we delete any that are detached (no references) and have been
+        detached longer than a short grace, so we never race an in-flight
+        create. Stateless and idempotent — safe to run every scale_down cycle.
+        """
+        try:
+            volumes = self._block.list_volumes_all(
+                zone=self._zone, tags=[_RUNNER_VOLUME_TAG]
+            )
+        except Exception as exc:
+            with Action(
+                f"Could not list Scaleway volumes to reap: {exc}",
+                stacklevel=3,
+                ignore_fail=True,
+            ):
+                pass
+            return
+
+        now = datetime.now(timezone.utc)
+        for vol in volumes or []:
+            if getattr(vol, "references", None):
+                continue  # still attached to an instance
+            detached_at = getattr(vol, "last_detached_at", None) or getattr(
+                vol, "created_at", None
+            )
+            if (
+                detached_at is not None
+                and (now - detached_at).total_seconds() < _ORPHAN_VOLUME_GRACE_SECONDS
+            ):
+                continue  # too fresh; avoid racing an in-flight create
+            try:
+                self._block.delete_volume(volume_id=vol.id, zone=self._zone)
+                with Action(
+                    f"Reaped orphaned Scaleway volume {vol.id}",
+                    stacklevel=3,
+                    level=logging.DEBUG,
+                ):
+                    pass
+            except Exception as exc:
+                if getattr(exc, "status_code", None) == 404:
+                    continue
+                with Action(
+                    f"Could not reap orphaned volume {vol.id}: {exc}",
+                    stacklevel=3,
+                    ignore_fail=True,
+                ):
+                    pass
 
     def get_server(self, name: str) -> ProviderServer | None:
         servers = self._instance.list_servers_all(zone=self._zone, name=name)

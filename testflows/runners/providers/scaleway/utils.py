@@ -30,6 +30,9 @@ from ...cloud_provider import CloudProvider, ProviderServer
 _RUNNER_TAG = "github-runner"
 _RUNNER_LABEL_TAG_PREFIX = "github-runner-label"
 _SSH_KEY_TAG = "github-runner-ssh-key"
+# Applied to boot-on-block (SBS) volumes at create time so orphaned volumes
+# left detached after an instance is terminated can be found and reaped.
+_RUNNER_VOLUME_TAG = "github-runner-volume=active"
 
 # Scaleway ServerState values -> abstract CloudProvider status constants.
 # See scaleway.instance.v1.ServerState: running / stopped / stopped_in_place /

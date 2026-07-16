@@ -441,6 +441,14 @@ def scale_down(
                     _p.reconcile_runner_leases(managed_runner_names)
 
             with Action(
+                "Reaping orphaned provider volumes",
+                level=logging.DEBUG,
+                interval=interval,
+            ):
+                for _p in providers:
+                    _p.reap_orphaned_volumes()
+
+            with Action(
                 "Getting list of servers", level=logging.DEBUG, interval=interval
             ):
                 server_providers: dict[str, CloudProvider] = {}

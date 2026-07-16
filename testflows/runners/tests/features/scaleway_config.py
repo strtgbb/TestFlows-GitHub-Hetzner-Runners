@@ -304,37 +304,73 @@ def get_server_arch_defaults_x64_without_sdk_type(self):
 
 
 @TestScenario
-def delete_server_deletes_sbs_boot_volume(self):
-    """delete_server terminates the instance AND deletes its SBS boot volume.
+def delete_server_terminates_only(self):
+    """delete_server issues a single terminate; volumes are reaped out of band.
 
-    terminate only detaches SBS volumes; without an explicit delete they leak
-    and exhaust the SbsVolumeSizeGb quota. Local (l_ssd) volumes are removed by
-    terminate and must not be touched.
+    terminate detaches (does not delete) SBS boot volumes; deleting them inline
+    is neither atomic nor crash-safe, so the boot volume is tagged at create and
+    reclaimed later by reap_orphaned_volumes.
     """
-    from types import SimpleNamespace
-
     with Given("a scaleway provider"):
         provider = scaleway_provider()
-    with And("a server with an SBS boot volume and a local volume"):
+    with And("a server with an SBS boot volume"):
         native = SimpleNamespace(volumes={
             "0": SimpleNamespace(id="vol-sbs", volume_type="sbs_volume", boot=True),
-            "1": SimpleNamespace(id="vol-local", volume_type="l_ssd", boot=False),
         })
         server = ProviderServer(
             id="srv-1", name="github-runner-1-0-dev1.s", status="off",
             public_ipv4=None, private_ipv4=None, labels={},
             server_type="dev1.s", location="fr-par-1", created=None, _native=native,
         )
-        provider._block.delete_volume.return_value = None  # detaches cleanly
     with When("delete_server is called"):
         provider.delete_server(server)
-    with Then("the instance is terminated"):
+    with Then("it terminates and does not delete volumes inline"):
         _, kwargs = provider._instance.server_action.call_args
         assert str(kwargs["action"]) == "terminate", kwargs["action"]
-    with And("only the SBS volume is deleted (not the local one)"):
+        provider._block.delete_volume.assert_not_called()
+
+
+@TestScenario
+def tag_boot_volumes_tags_sbs_only(self):
+    """Boot-on-block (SBS) volumes are tagged for reaping; local volumes are not."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("a server with an SBS boot volume and a local volume"):
+        server = SimpleNamespace(volumes={
+            "0": SimpleNamespace(id="vol-sbs", volume_type="sbs_volume", boot=True),
+            "1": SimpleNamespace(id="vol-local", volume_type="l_ssd", boot=False),
+        })
+    with When("_tag_boot_volumes runs"):
+        provider._tag_boot_volumes(server, "fr-par-1")
+    with Then("only the SBS volume is tagged with the reaper marker"):
+        assert provider._block.update_volume.call_count == 1, provider._block.update_volume.call_count
+        _, kwargs = provider._block.update_volume.call_args
+        assert kwargs["volume_id"] == "vol-sbs", kwargs
+        assert "github-runner-volume=active" in kwargs["tags"], kwargs
+
+
+@TestScenario
+def reap_orphaned_volumes_deletes_detached_aged_only(self):
+    """The reaper deletes detached, aged, tagged volumes; not attached or fresh ones."""
+    from datetime import datetime, timezone, timedelta
+
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("tagged volumes: detached+old, attached, and just-detached"):
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(minutes=10)
+        provider._block.list_volumes_all.return_value = [
+            SimpleNamespace(id="orphan", references=[], last_detached_at=old, created_at=old),
+            SimpleNamespace(id="attached", references=[SimpleNamespace(id="r")],
+                            last_detached_at=None, created_at=old),
+            SimpleNamespace(id="fresh", references=[], last_detached_at=now, created_at=now),
+        ]
+    with When("reap_orphaned_volumes runs"):
+        provider.reap_orphaned_volumes()
+    with Then("only the detached, aged orphan is deleted"):
         assert provider._block.delete_volume.call_count == 1, provider._block.delete_volume.call_count
         _, vkwargs = provider._block.delete_volume.call_args
-        assert vkwargs["volume_id"] == "vol-sbs", vkwargs
+        assert vkwargs["volume_id"] == "orphan", vkwargs
 
 
 @TestScenario

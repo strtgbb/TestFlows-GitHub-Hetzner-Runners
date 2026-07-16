@@ -241,6 +241,15 @@ class CloudProvider(ABC):
         """Optional hook for providers that derive occupancy from GitHub runner names."""
         del runner_names
 
+    def reap_orphaned_volumes(self) -> None:
+        """Optional hook: reclaim storage left behind after servers are deleted.
+
+        Providers whose teardown detaches (rather than deletes) persistent
+        volumes — e.g. Scaleway, where terminate only detaches boot-on-block SBS
+        volumes — override this to delete the orphans out of band each
+        scale_down cycle. Must be stateless and idempotent. Default is a no-op.
+        """
+
     def release_claim(self, server: "ProviderServer", *, succeeded: bool) -> None:
         """Optional hook: release any provisional claim staked before setup.
 

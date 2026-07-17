@@ -219,10 +219,10 @@ class ScalewayCloudProvider(CloudProvider):
         ``terminate`` deletes the instance, its local volume, and the dynamic IP,
         and only *detaches* any Block Storage (SBS) volume — it does not delete
         it. The detached boot volume still counts against the SbsVolumeSizeGb
-        quota, so it is reclaimed out of band by ``reap_orphaned_volumes`` (the
-        volume is tagged at create time). Keeping teardown one non-blocking call
-        is also crash-safe: an orphan is reaped on a later cycle no matter how it
-        was stranded.
+        quota, so it is reclaimed out of band by ``after_scale_down``
+        maintenance (the volume is tagged at create time). Keeping teardown one
+        non-blocking call is also crash-safe: an orphan is reaped on a later
+        cycle no matter how it was stranded.
         """
         from scaleway.instance.v1 import ServerAction
 
@@ -332,7 +332,11 @@ class ScalewayCloudProvider(CloudProvider):
                     continue
             self._clear_orphan_volume(volume_id)
 
-    def reap_orphaned_volumes(self) -> None:
+    def after_scale_down(self) -> None:
+        """Run provider maintenance after scale-down decisions."""
+        self._reap_orphaned_volumes()
+
+    def _reap_orphaned_volumes(self) -> None:
         """Delete detached SBS volumes we created that no instance references.
 
         terminate detaches (does not delete) boot-on-block volumes, so they

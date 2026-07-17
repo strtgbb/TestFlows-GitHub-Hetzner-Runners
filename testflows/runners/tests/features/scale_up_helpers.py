@@ -617,13 +617,12 @@ def recyclable_network_and_key_must_match(self):
 
 
 # ---------------------------------------------------------------------------
-# server_setup: provider release_claim hook is always invoked
+# server_setup: generic post-setup hook is always invoked
 # ---------------------------------------------------------------------------
 
 
 @TestScenario
-def server_setup_releases_claim_on_success(self):
-    """On a successful setup, server_setup releases the claim with succeeded=True."""
+def server_setup_reports_success_to_provider(self):
     provider = MagicMock()
     server = MagicMock()
     with patch.object(scale_up_mod, "_run_server_setup"):
@@ -636,13 +635,14 @@ def server_setup_releases_claim_on_success(self):
             github_repository="owner/repo",
             runner_labels="self-hosted",
         )
-    provider.release_claim.assert_called_once_with(server, succeeded=True)
+    provider.after_server_setup.assert_called_once()
+    setup_server, error = provider.after_server_setup.call_args.args
+    assert setup_server is server
+    assert error is None
 
 
 @TestScenario
-def server_setup_releases_claim_on_failure(self):
-    """On a failed setup, server_setup releases with succeeded=False and the
-    exception still propagates."""
+def server_setup_reports_original_failure_to_provider(self):
     provider = MagicMock()
     server = MagicMock()
     boom = RuntimeError("setup blew up")
@@ -661,7 +661,72 @@ def server_setup_releases_claim_on_failure(self):
         except RuntimeError as e:
             raised = e
     assert raised is boom, "setup exception must propagate"
-    provider.release_claim.assert_called_once_with(server, succeeded=False)
+    provider.after_server_setup.assert_called_once()
+    setup_server, error = provider.after_server_setup.call_args.args
+    assert setup_server is server
+    assert error is boom
+
+
+@TestScenario
+def post_setup_hook_failure_does_not_mask_setup_outcome(self):
+    provider = MagicMock()
+    provider.name = "broken"
+    provider.after_server_setup.side_effect = RuntimeError("hook failed")
+    server = MagicMock()
+    setup_error = RuntimeError("setup failed")
+
+    with patch.object(scale_up_mod, "_run_server_setup", side_effect=setup_error):
+        try:
+            server_setup(
+                provider=provider,
+                server=server,
+                setup_script="setup.sh",
+                startup_script="startup.sh",
+                github_token="token",
+                github_repository="owner/repo",
+                runner_labels="self-hosted",
+            )
+        except RuntimeError as raised:
+            assert raised is setup_error
+        else:
+            assert False, "setup failure must propagate"
+
+    with patch.object(scale_up_mod, "_run_server_setup"):
+        server_setup(
+            provider=provider,
+            server=server,
+            setup_script="setup.sh",
+            startup_script="startup.sh",
+            github_token="token",
+            github_repository="owner/repo",
+            runner_labels="self-hosted",
+        )
+    assert provider.after_server_setup.call_count == 2
+
+
+@TestScenario
+def post_setup_base_exception_does_not_mask_setup_failure(self):
+    provider = MagicMock()
+    provider.name = "broken"
+    provider.after_server_setup.side_effect = KeyboardInterrupt()
+    server = MagicMock()
+    setup_error = RuntimeError("setup failed")
+
+    with patch.object(scale_up_mod, "_run_server_setup", side_effect=setup_error):
+        try:
+            server_setup(
+                provider=provider,
+                server=server,
+                setup_script="setup.sh",
+                startup_script="startup.sh",
+                github_token="token",
+                github_repository="owner/repo",
+                runner_labels="self-hosted",
+            )
+        except RuntimeError as raised:
+            assert raised is setup_error
+        else:
+            assert False, "setup failure must remain primary"
 
 
 # ---------------------------------------------------------------------------

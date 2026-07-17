@@ -285,28 +285,22 @@ class CloudProvider(ABC):
         convention (e.g. Hetzner uses ``github-hetzner-runner=active``).
         """
 
-    def reconcile_runner_leases(self, runner_names: set[str]) -> None:
-        """Optional hook for providers that derive occupancy from GitHub runner names."""
-        del runner_names
+    def before_scale_up(self, managed_runner_names: frozenset[str]) -> None:
+        """Optional hook before scale-up provider inventory is read."""
+        del managed_runner_names
 
-    def reap_orphaned_volumes(self) -> None:
-        """Optional hook: reclaim storage left behind after servers are deleted.
+    def before_scale_down(self, managed_runner_names: frozenset[str]) -> None:
+        """Optional hook before scale-down provider inventory is read."""
+        del managed_runner_names
 
-        Providers whose teardown detaches (rather than deletes) persistent
-        volumes — e.g. Scaleway, where terminate only detaches boot-on-block SBS
-        volumes — override this to delete the orphans out of band each
-        scale_down cycle. Must be stateless and idempotent. Default is a no-op.
-        """
+    def after_scale_down(self) -> None:
+        """Optional hook after each scale-down cycle."""
 
-    def release_claim(self, server: "ProviderServer", *, succeeded: bool) -> None:
-        """Optional hook: release any provisional claim staked before setup.
-
-        Providers that durably claim a host before provisioning (e.g. the
-        dedicated_static claim marker) can clear it here once setup finishes.
-        ``succeeded`` is False when setup raised, in which case the host should
-        also be freed for re-dispatch. Default is a no-op.
-        """
-        del server, succeeded
+    def after_server_setup(
+        self, server: ProviderServer, error: BaseException | None
+    ) -> None:
+        """Optional hook after a server setup attempt."""
+        del server, error
 
     def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
         """Reserve a compatible recyclable server, or return None.

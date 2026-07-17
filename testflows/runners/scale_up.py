@@ -40,6 +40,7 @@ from .cloud_provider import (
     RecycleClaim,
     RecycleRequest,
 )
+from .provider_hooks import run_before_scale_up_hooks
 from .errors import ServerTypeError, ImageSpecFormatError, LocationError
 from .constants import (
     server_name_prefix,
@@ -160,7 +161,7 @@ def server_setup(
     timeout: float = 60,
 ):
     """Run server setup, then let the provider handle claim cleanup."""
-    succeeded = False
+    setup_error = None
     try:
         _run_server_setup(
             provider=provider,
@@ -172,9 +173,22 @@ def server_setup(
             runner_labels=runner_labels,
             timeout=timeout,
         )
-        succeeded = True
+    except BaseException as exc:
+        setup_error = exc
+        raise
     finally:
-        provider.release_claim(server, succeeded=succeeded)
+        try:
+            provider.after_server_setup(
+                server,
+                setup_error,
+            )
+        except BaseException as hook_error:
+            logging.exception(
+                f"Provider {provider.name} post-setup hook failed for "
+                f"{server.name}: {hook_error}"
+            )
+            if setup_error is None and not isinstance(hook_error, Exception):
+                raise
 
 
 def _run_server_setup(
@@ -1189,6 +1203,7 @@ def scale_up(
     if providers is None:
         from .providers.hetzner.provider import HetznerCloudProvider
         providers = [HetznerCloudProvider(token=config.hetzner_token)]
+    cycle_providers = providers
 
     def create_runner_server(
         name: str,
@@ -1238,7 +1253,7 @@ def scale_up(
         # both are provider-specific (image format; and setup_script_name picks
         # the script from the provider's own label/default rules).
         # Keep-warm pins to one provider (resolve only against it); else all.
-        candidate_providers = [provider] if provider is not None else providers
+        candidate_providers = [provider] if provider is not None else cycle_providers
         resolved = []
         for type_name in server_types:
             try:
@@ -1411,7 +1426,9 @@ def scale_up(
                 # Servers from providers that have their own cap are excluded from
                 # the global count so they don't crowd out uncapped providers.
                 if max_servers is not None and resolved_provider.max_runners is None:
-                    _capped = {p.name for p in providers if p.max_runners is not None}
+                    _capped = {
+                        p.name for p in cycle_providers if p.max_runners is not None
+                    }
                     _gs = [s for s in servers if getattr(s, "provider_name", None) not in _capped]
                     _gf = [f for f in (futures or []) if getattr(f, "provider_name", None) not in _capped]
                     total_servers_count = get_total_server_count(_gs, _gf)
@@ -1578,13 +1595,32 @@ def scale_up(
                     workflow_runs = queued_runs + in_progress_runs
 
                 with Action(
+                    "Getting list of self-hosted runners",
+                    level=logging.DEBUG,
+                    interval=interval,
+                ):
+                    runners: list[SelfHostedActionsRunner] = [
+                        runner
+                        for runner in repo.get_self_hosted_runners()
+                        if runner.name.startswith(runner_name_prefix)
+                    ]
+                registered_runner_names = {runner.name for runner in runners}
+
+                provider_selection = run_before_scale_up_hooks(
+                    providers,
+                    sequence=interval,
+                    managed_runner_names=registered_runner_names,
+                )
+                cycle_providers = list(provider_selection.providers)
+
+                with Action(
                     "Getting list of available volumes",
                     level=logging.DEBUG,
                     interval=interval,
                 ):
-                    # Fan out across all providers; skip those that don't support volumes.
+                    # Fan out across healthy providers; skip those without volumes.
                     all_volumes = []
-                    for _p in providers:
+                    for _p in cycle_providers:
                         try:
                             all_volumes.extend(
                                 _p.list_volumes(
@@ -1598,26 +1634,6 @@ def scale_up(
                     volumes = [
                         v._native for v in all_volumes if v.status == "available"
                     ]
-
-                with Action(
-                    "Getting list of self-hosted runners",
-                    level=logging.DEBUG,
-                    interval=interval,
-                ):
-                    runners: list[SelfHostedActionsRunner] = [
-                        runner
-                        for runner in repo.get_self_hosted_runners()
-                        if runner.name.startswith(runner_name_prefix)
-                    ]
-                registered_runner_names = {runner.name for runner in runners}
-
-                with Action(
-                    "Reconciling dedicated static leases from GitHub runner list",
-                    level=logging.DEBUG,
-                    interval=interval,
-                ):
-                    for _p in providers:
-                        _p.reconcile_runner_leases(registered_runner_names)
 
                 with Action(
                     "Getting list of servers", level=logging.DEBUG, interval=interval
@@ -1644,7 +1660,7 @@ def scale_up(
                                 server=ps,
                                 provider_name=p.name,
                             )
-                            for p in providers
+                            for p in cycle_providers
                             for ps in p.list_runner_servers()
                         ],
                         with_label,
@@ -1662,7 +1678,7 @@ def scale_up(
                                     server.runner_status = "busy" if runner.busy else "ready"
 
                 # Lazily fetch prices for any provider that is missing them
-                for _p in providers:
+                for _p in cycle_providers:
                     if _p.name not in config.server_prices:
                         try:
                             _prices = _p.get_prices()
@@ -1851,7 +1867,7 @@ def scale_up(
                     level=logging.DEBUG,
                     interval=interval,
                 ):
-                    for _p in providers:
+                    for _p in cycle_providers:
                         if _p.name != "dedicated_static":
                             continue
 

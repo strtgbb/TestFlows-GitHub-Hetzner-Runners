@@ -37,7 +37,12 @@ from .scale_up import (
 )
 from .server import get_runner_server_name
 from .config import Config
-from .cloud_provider import CloudProvider, ProviderServer, RetirementResult
+from .cloud_provider import (
+    CloudProvider,
+    ProviderServer,
+    RetirementResult,
+)
+from .provider_hooks import run_after_scale_down_hooks, run_before_scale_down_hooks
 from .ordered_set import OrderedSet as set
 
 from github import Auth, Github
@@ -105,6 +110,13 @@ def _server_age_components(server: ProviderServer) -> tuple[int, int, int, int]:
     hours, rem = divmod(rem, 3600)
     minutes, seconds = divmod(rem, 60)
     return days, hours, minutes, seconds
+
+
+def should_skip_runner_absence_cleanup(
+    *, runner_server_found: bool, provider_inventory_complete: bool
+) -> bool:
+    """Skip deregistration only for not-found runners with partial inventory."""
+    return (not runner_server_found) and (not provider_inventory_complete)
 
 
 def delete_recyclable_server(
@@ -349,26 +361,25 @@ def scale_down(
             ):
                 runners: list[SelfHostedActionsRunner] = repo.get_self_hosted_runners()
 
-            with Action(
-                "Reconciling dedicated static leases from GitHub runner list",
-                level=logging.DEBUG,
-                interval=interval,
-            ):
-                managed_runner_names = {
-                    runner.name
-                    for runner in runners
-                    if runner.name.startswith(runner_name_prefix)
-                }
-                for _p in providers:
-                    _p.reconcile_runner_leases(managed_runner_names)
-                    _p.reap_orphaned_volumes()
+            managed_runner_names = {
+                runner.name
+                for runner in runners
+                if runner.name.startswith(runner_name_prefix)
+            }
+            provider_selection = run_before_scale_down_hooks(
+                providers,
+                sequence=interval,
+                managed_runner_names=managed_runner_names,
+            )
+            cycle_providers = list(provider_selection.providers)
+            provider_inventory_complete = provider_selection.inventory_complete
 
             with Action(
                 "Getting list of servers", level=logging.DEBUG, interval=interval
             ):
                 server_providers: dict[str, CloudProvider] = {}
                 servers: list[ProviderServer] = []
-                for _lp in providers:
+                for _lp in cycle_providers:
                     for _ps in _lp.list_runner_servers():
                         servers.append(_ps)
                         server_providers[_ps.name] = _lp
@@ -668,6 +679,7 @@ def scale_down(
                             age_intervals = current_interval - unused_runner.time
                             runner_server: ProviderServer | None = None
                             runner_server_provider: CloudProvider | None = None
+                            runner_server_found = False
                             with Action(
                                 "Scale-down decision for unused runner",
                                 level=logging.DEBUG,
@@ -685,13 +697,14 @@ def scale_down(
                                 server_name=get_runner_server_name(runner_name),
                                 interval=interval,
                             ):
-                                for _p in providers:
+                                for _p in cycle_providers:
                                     _ps = _p.get_server(
                                         get_runner_server_name(runner_name)
                                     )
                                     if _ps is not None:
                                         runner_server = _ps
                                         runner_server_provider = _p
+                                        runner_server_found = True
                                         break
 
                             with Action(
@@ -701,7 +714,7 @@ def scale_down(
                                 interval=interval,
                             ) as action:
                                 provider_lookup_summary = []
-                                for _p in providers:
+                                for _p in cycle_providers:
                                     lookup_name = get_runner_server_name(runner_name)
                                     matched = _p.get_server(lookup_name) is not None
                                     provider_lookup_summary.append(
@@ -740,6 +753,15 @@ def scale_down(
                                             reason="unused",
                                         )
                                 runner_server = None
+
+                            if (
+                                runner_server is None
+                                and should_skip_runner_absence_cleanup(
+                                    runner_server_found=runner_server_found,
+                                    provider_inventory_complete=provider_inventory_complete,
+                                )
+                            ):
+                                continue
 
                             if runner_server is None:
                                 with Action(
@@ -840,6 +862,11 @@ def scale_down(
                                         deleted_recyclable_server_name
                                     )
                                     scaleup_failures.pop(scaleup_failure.server_name)
+
+            run_after_scale_down_hooks(
+                cycle_providers,
+                sequence=interval,
+            )
 
         # Check if there were any exceptions in the scale down cycle
         if scale_down_cycle.exc_value is None:

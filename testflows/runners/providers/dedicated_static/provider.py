@@ -43,7 +43,7 @@ class _StaticHost:
     ssh_key_path: str | None
     static_name: str
     # In-memory cache of the current lease, re-derived each cycle from the live
-    # GitHub runner list (reconcile_runner_leases). NOT the source of truth for
+    # GitHub runner list (pre-cycle hooks). NOT the source of truth for
     # in-flight setups — that is the durable claim marker on the host itself.
     lease_name: str | None = None
 
@@ -313,7 +313,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
         # Unknown types are rejected earlier by get_server_type.
         return None
 
-    def release_claim(self, server: ProviderServer, *, succeeded: bool) -> None:
+    def after_server_setup(
+        self, server: ProviderServer, error: BaseException | None
+    ) -> None:
         """Handle post-setup claim lifecycle.
 
         Success keeps the durable claim in place; normal runner teardown (reboot)
@@ -325,7 +327,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
         host = getattr(server, "_native", None)
         if host is None or not isinstance(host, _StaticHost):
             return
-        if succeeded:
+        if error is None:
             return
         try:
             self._clear_claim(host)
@@ -404,7 +406,13 @@ class DedicatedStaticCloudProvider(CloudProvider):
             servers = [self._as_provider_server(host) for host in self._hosts]
         return [server for server in servers if server is not None]
 
-    def reconcile_runner_leases(self, runner_names: set[str]) -> None:
+    def before_scale_up(self, managed_runner_names: frozenset[str]) -> None:
+        self._reconcile_runner_leases(managed_runner_names)
+
+    def before_scale_down(self, managed_runner_names: frozenset[str]) -> None:
+        self._reconcile_runner_leases(managed_runner_names)
+
+    def _reconcile_runner_leases(self, runner_names: frozenset[str]) -> None:
         """Reconcile the in-memory lease cache from registered GitHub runner names.
 
         This only adjudicates *registered* runners (the durable signal for an

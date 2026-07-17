@@ -18,7 +18,10 @@ from testflows.runners.config.config import (
 )
 from types import SimpleNamespace
 
-from testflows.runners.cloud_provider import ProviderServer, ProviderServerType
+from testflows.runners.cloud_provider import (
+    ProviderServer,
+    ProviderServerType,
+)
 from testflows.runners.errors import ImageError, ImageSpecFormatError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
@@ -365,8 +368,8 @@ def reap_orphaned_volumes_deletes_detached_aged_only(self):
                             last_detached_at=None, created_at=old),
             SimpleNamespace(id="fresh", references=[], last_detached_at=now, created_at=now),
         ]
-    with When("reap_orphaned_volumes runs"):
-        provider.reap_orphaned_volumes()
+    with When("the scale-down post-cycle hook runs"):
+        provider.after_scale_down()
     with Then("it lists tagged, non-deleted volumes"):
         _, lkwargs = provider._block.list_volumes_all.call_args
         assert lkwargs.get("include_deleted") is False, lkwargs
@@ -375,6 +378,32 @@ def reap_orphaned_volumes_deletes_detached_aged_only(self):
         assert provider._block.delete_volume.call_count == 1, provider._block.delete_volume.call_count
         _, vkwargs = provider._block.delete_volume.call_args
         assert vkwargs["volume_id"] == "orphan", vkwargs
+
+
+@TestScenario
+def scale_up_hook_does_not_reap_volumes(self):
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    provider.before_scale_up(frozenset())
+    provider._block.list_volumes_all.assert_not_called()
+    provider._block.delete_volume.assert_not_called()
+
+
+@TestScenario
+def scale_down_maintenance_failure_is_non_fatal(self):
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("maintenance raises unexpectedly"):
+        provider._reap_orphaned_volumes = lambda: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+    with Then("after_scale_down raises and is handled by orchestration"):
+        try:
+            provider.after_scale_down()
+        except RuntimeError:
+            pass
+        else:
+            assert False, "expected maintenance failure to propagate"
 
 
 @TestScenario

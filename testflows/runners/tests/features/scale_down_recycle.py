@@ -122,6 +122,118 @@ def delete_recyclable_resolves_provider_per_server(self):
         assert deleted in (s1.name, s2.name), deleted
 
 
+@TestScenario
+def delete_recyclable_skips_already_reserved_servers(self):
+    """A candidate another worker already reserved is skipped for the next one."""
+    provider = MagicMock()
+    provider.is_recycle_claimed.return_value = False
+    # First reservation attempt loses the race; the next one wins.
+    provider.reserve_recycled_server.side_effect = [False, True]
+    s1 = _server(f"{recycle_server_name_prefix}one")
+    s2 = _server(f"{recycle_server_name_prefix}two")
+    with When("one candidate cannot be reserved"):
+        deleted = delete_recyclable_server(
+            server_name="github-runner-9-0-cx22",
+            recyclable_servers=[(s1, provider), (s2, provider)],
+            provider_prices={},
+            recycle_grace_period=0,
+        )
+    with Then("it falls through to a candidate it can reserve"):
+        assert provider.delete_server.call_count == 1, provider.delete_server.call_count
+        assert deleted in (s1.name, s2.name), deleted
+
+
+@TestScenario
+def delete_recyclable_returns_none_when_all_reserved(self):
+    """If every candidate is reserved, nothing is deleted."""
+    provider = MagicMock()
+    provider.is_recycle_claimed.return_value = False
+    provider.reserve_recycled_server.return_value = False
+    s1 = _server(f"{recycle_server_name_prefix}one")
+    with When("no candidate can be reserved"):
+        deleted = delete_recyclable_server(
+            server_name="github-runner-9-0-cx22",
+            recyclable_servers=[(s1, provider)],
+            provider_prices={},
+            recycle_grace_period=0,
+        )
+    with Then("nothing is deleted and no name is returned"):
+        assert deleted is None
+        provider.delete_server.assert_not_called()
+
+
+@TestScenario
+def delete_recyclable_excludes_claimed_servers(self):
+    """A server currently being activated (claimed) is never chosen for deletion."""
+    provider = MagicMock()
+    provider.reserve_recycled_server.return_value = True
+    claimed = _server(f"{recycle_server_name_prefix}claimed")
+    free = _server(f"{recycle_server_name_prefix}free")
+    provider.is_recycle_claimed.side_effect = lambda s: s.name == claimed.name
+    with When("one of the candidates is reserved for activation"):
+        deleted = delete_recyclable_server(
+            server_name="github-runner-9-0-cx22",
+            recyclable_servers=[(claimed, provider), (free, provider)],
+            provider_prices={},
+            recycle_grace_period=0,
+        )
+    with Then("only the unclaimed server is eligible for deletion"):
+        assert deleted == free.name, deleted
+        provider.delete_server.assert_called_once_with(free)
+
+
+@TestScenario
+def delete_recyclable_falls_back_to_random_across_currencies(self):
+    """Mixed provider currencies disable price comparison and force a random pick."""
+    p_eur = MagicMock()
+    p_eur.name = "hetzner"
+    p_usd = MagicMock()
+    p_usd.name = "aws"
+    for p in (p_eur, p_usd):
+        p.is_recycle_claimed.return_value = False
+        p.reserve_recycled_server.return_value = True
+    s1 = _server(f"{recycle_server_name_prefix}one")
+    s2 = _server(f"{recycle_server_name_prefix}two")
+    prices = {
+        "hetzner": {"currency": "EUR", "prices": {"cx22": {"nbg1": 5.0}}},
+        "aws": {"currency": "USD", "prices": {"cx22": {"nbg1": 5.0}}},
+    }
+    with When("candidates span two currencies"), patch(
+        "testflows.runners.scale_down.random.shuffle"
+    ) as shuffle:
+        delete_recyclable_server(
+            server_name="github-runner-9-0-cx22",
+            recyclable_servers=[(s1, p_eur), (s2, p_usd)],
+            provider_prices=prices,
+            recycle_grace_period=0,
+        )
+    with Then("prices are not compared across currencies (random pick)"):
+        shuffle.assert_called_once()
+
+
+@TestScenario
+def delete_recyclable_uses_price_order_within_one_currency(self):
+    """A single currency keeps the cheapest ordering rather than shuffling."""
+    provider = MagicMock()
+    provider.name = "hetzner"
+    provider.is_recycle_claimed.return_value = False
+    provider.reserve_recycled_server.return_value = True
+    s1 = _server(f"{recycle_server_name_prefix}one")
+    s2 = _server(f"{recycle_server_name_prefix}two")
+    prices = {"hetzner": {"currency": "EUR", "prices": {"cx22": {"nbg1": 5.0}}}}
+    with When("all candidates share one currency"), patch(
+        "testflows.runners.scale_down.random.shuffle"
+    ) as shuffle:
+        delete_recyclable_server(
+            server_name="github-runner-9-0-cx22",
+            recyclable_servers=[(s1, provider), (s2, provider)],
+            provider_prices=prices,
+            recycle_grace_period=0,
+        )
+    with Then("the cheapest ordering is used, not a shuffle"):
+        shuffle.assert_not_called()
+
+
 @TestFeature
 @Name("scale_down recycle")
 def feature(self):

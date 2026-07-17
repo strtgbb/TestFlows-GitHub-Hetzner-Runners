@@ -290,6 +290,158 @@ def end_of_life_server_respects_grace_then_deletes(self):
     provider.delete_server.assert_called_once_with(server)
 
 
+@TestScenario
+def recycle_disabled_deletes_owned_server(self):
+    """With recycling off, an owned server is deleted outright (never parked)."""
+    server = _server()
+    provider = _provider(server)
+    result = retire_to_recycle_pool(
+        provider,
+        server,
+        recycle_enabled=False,
+        ssh_key_names={"ours"},
+        end_of_life=50,
+        recycle_grace_period=0,
+    )
+    assert result.action == "deleted"
+    provider.delete_server.assert_called_once_with(server)
+    provider.power_off_server.assert_not_called()
+    provider.update_server.assert_not_called()
+
+
+@TestScenario
+def end_of_life_within_grace_is_retained(self):
+    """A past-EOL server whose grace window is unexpired is kept, not deleted."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    server.created = datetime.now(timezone.utc) - timedelta(minutes=55)
+    server.labels[recycle_timestamp_label] = str(int(time.time()) - 10)
+    provider = _provider(server)
+    provider.is_recycled_server.return_value = True
+    result = retire_to_recycle_pool(
+        provider,
+        server,
+        recycle_enabled=True,
+        ssh_key_names={"ours"},
+        end_of_life=50,
+        recycle_grace_period=60,
+    )
+    assert result.action == "pooled"
+    provider.delete_server.assert_not_called()
+    provider.reserve_recycled_server.assert_not_called()
+
+
+@TestScenario
+def recycled_server_without_timestamp_is_stamped(self):
+    """A pooled server missing its recycle timestamp is stamped before any delete."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    server.labels.pop(recycle_timestamp_label, None)
+    provider = _provider(server)
+    provider.is_recycled_server.return_value = True
+    result = retire_to_recycle_pool(
+        provider,
+        server,
+        recycle_enabled=True,
+        ssh_key_names={"ours"},
+        end_of_life=0,  # already past EOL, yet the stamp must happen first
+        recycle_grace_period=60,
+    )
+    assert result.action == "pooled"
+    provider.set_server_tags.assert_called_once()
+    assert recycle_timestamp_label in provider.set_server_tags.call_args.args[1]
+    provider.delete_server.assert_not_called()
+
+
+@TestScenario
+def recycled_server_before_end_of_life_is_retained(self):
+    """A pooled server below its EOL minute is kept even once past the grace window."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    server.created = datetime.now(timezone.utc) - timedelta(minutes=10)
+    server.labels[recycle_timestamp_label] = str(int(time.time()) - 3600)
+    provider = _provider(server)
+    provider.is_recycled_server.return_value = True
+    result = retire_to_recycle_pool(
+        provider,
+        server,
+        recycle_enabled=True,
+        ssh_key_names={"ours"},
+        end_of_life=50,
+        recycle_grace_period=60,
+    )
+    assert result.action == "pooled"
+    provider.delete_server.assert_not_called()
+    provider.set_server_tags.assert_not_called()
+    provider.update_server.assert_not_called()
+
+
+@TestScenario
+def running_recycled_server_is_powered_off(self):
+    """A pooled server found running is powered back off before being retained."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_RUNNING)
+    server.created = datetime.now(timezone.utc) - timedelta(minutes=10)
+    server.labels[recycle_timestamp_label] = str(int(time.time()) - 30)
+    provider = _provider(server)
+    provider.is_recycled_server.return_value = True
+    result = retire_to_recycle_pool(
+        provider,
+        server,
+        recycle_enabled=True,
+        ssh_key_names={"ours"},
+        end_of_life=50,
+        recycle_grace_period=60,
+    )
+    assert result.action == "pooled"
+    provider.power_off_server.assert_called_once_with(server)
+    provider.delete_server.assert_not_called()
+
+
+@TestScenario
+def activation_aborts_when_server_evicted(self):
+    """If the claimed server vanished before activation, the claim is released."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    provider = _provider(server)
+    provider.get_server.return_value = None
+    claim = _claim(server)
+    acquired = activate_recycled_server(provider, claim, rebuild=False)
+    assert acquired is None
+    provider.release_recycle_claim.assert_called_once_with(claim)
+    provider.power_on_server.assert_not_called()
+    provider.update_server.assert_not_called()
+
+
+@TestScenario
+def activation_rejects_invalid_labels(self):
+    """Invalid runner labels abort activation and return the server to the pool."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    provider = _provider(server)
+    provider.validate_labels.return_value = (False, "bad tag")
+    try:
+        activate_recycled_server(provider, _claim(server), rebuild=False)
+    except ValueError:
+        pass
+    else:
+        assert False, "invalid labels were not rejected"
+    provider.update_server.assert_not_called()
+    provider.power_off_server.assert_called_once()
+    provider.release_recycle_claim.assert_called_once()
+
+
+@TestScenario
+def reimage_failure_returns_server_to_pool(self):
+    """A Hetzner rebuild failure re-raises and powers the server back off (no delete)."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    provider = _provider(server)
+    provider.rebuild_server.side_effect = RuntimeError("rebuild failed")
+    try:
+        activate_recycled_server(provider, _claim(server), rebuild=True)
+    except RuntimeError:
+        pass
+    else:
+        assert False, "rebuild failure was not propagated"
+    provider.delete_server.assert_not_called()
+    provider.power_off_server.assert_called_once()
+    provider.release_recycle_claim.assert_called_once()
+
+
 @TestFeature
 @Name("recycling lifecycle")
 def feature(self):

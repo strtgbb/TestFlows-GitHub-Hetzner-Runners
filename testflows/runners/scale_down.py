@@ -21,6 +21,7 @@ import logging
 import threading
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from .actions import Action
 from . import metrics
@@ -36,10 +37,9 @@ from .scale_up import (
     uid,
     StandbyRunner,
     ScaleUpFailureMessage,
-    get_runner_server_name,
 )
 from .logger import logger
-from .server import age
+from .server import get_runner_server_name
 from .config import Config
 from .cloud_provider import CloudProvider, ProviderServer
 from .ordered_set import OrderedSet as set
@@ -98,6 +98,19 @@ class UnusedRunner:
     observed_interval: float
 
 
+def _server_age_components(server: ProviderServer) -> tuple[int, int, int, int]:
+    """Return server age as (days, hours, minutes, seconds)."""
+    created = server.created
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - created
+    total_seconds = max(int(delta.total_seconds()), 0)
+    days, rem = divmod(total_seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return days, hours, minutes, seconds
+
+
 def delete_server(
     server: ProviderServer, provider: CloudProvider, action: str = "delete"
 ):
@@ -134,9 +147,8 @@ def delete_server(
 
 def delete_recyclable_server(
     server_name,
-    recyclable_servers: list[ProviderServer],
-    server_providers: dict[str, CloudProvider],
-    server_prices: dict[str, dict[str, float]],
+    recyclable_servers: list[tuple[ProviderServer, CloudProvider]],
+    provider_prices: dict[str, dict[str, dict[str, float]]],
     recycle_grace_period: int | None = None,
     stack_level=2,
 ):
@@ -144,16 +156,16 @@ def delete_recyclable_server(
 
     :param server_name: name of the server that we are trying to create
     :param recyclable_servers: list of recyclable servers
-    :param server_prices: dictionary of server prices
+    :param provider_prices: dictionary of provider prices
     """
     if not recyclable_servers:
         return
 
     if recycle_grace_period and recycle_grace_period > 0:
         now_ts = int(time.time())
-        eligible_servers: list[ProviderServer] = []
-        for server in recyclable_servers:
-            recycle_ts_raw = server.labels.get(recycle_timestamp_label)
+        eligible_servers: list[tuple[ProviderServer, CloudProvider]] = []
+        for server, provider in recyclable_servers:
+            recycle_ts_raw = provider.get_server_tag(server, recycle_timestamp_label)
             try:
                 recycle_ts = int(recycle_ts_raw)
             except (TypeError, ValueError):
@@ -166,11 +178,9 @@ def delete_recyclable_server(
                     level=logging.DEBUG,
                     server_name=server_name,
                 ):
-                    _p = server_providers.get(server.name)
-                    if _p is not None:
-                        _p.set_server_tags(
-                            server, {recycle_timestamp_label: str(now_ts)}
-                        )
+                    provider.set_server_tags(
+                        server, {recycle_timestamp_label: str(now_ts)}
+                    )
                 continue
 
             time_since_recycle = now_ts - recycle_ts
@@ -185,7 +195,7 @@ def delete_recyclable_server(
                 ):
                     continue
 
-            eligible_servers.append(server)
+            eligible_servers.append((server, provider))
 
         recyclable_servers = eligible_servers
 
@@ -193,17 +203,21 @@ def delete_recyclable_server(
         return
 
     picking = "randomly picked"
-    if server_prices is None:
+    if not provider_prices:
         random.shuffle(recyclable_servers)
     else:
         picking = "the cheapest"
 
-        def sorting_key(server):
+        def sorting_key(recyclable_server: tuple[ProviderServer, CloudProvider]):
+            server, provider = recyclable_server
             server_type_name = server.server_type
             server_location_name = server.location
-            server_age = age(server) if server else 0
+            _, _, minutes, _ = _server_age_components(server)
+            provider_server_prices = (provider_prices or {}).get(provider.name, {}).get(
+                "prices", {}
+            )
             try:
-                return (60 - server_age.minutes) - server_prices[server_type_name][
+                return (60 - minutes) - provider_server_prices[server_type_name][
                     server_location_name
                 ] / 60
             except KeyError:
@@ -217,7 +231,7 @@ def delete_recyclable_server(
 
         recyclable_servers.sort(key=sorting_key, reverse=True)
 
-    recyclable_server = recyclable_servers.pop()
+    recyclable_server, recyclable_provider = recyclable_servers.pop()
 
     with Action(
         f"Deleting {picking} recyclable server {recyclable_server.name} with type "
@@ -226,9 +240,7 @@ def delete_recyclable_server(
         ignore_fail=True,
         server_name=server_name,
     ):
-        _p = server_providers.get(recyclable_server.name)
-        if _p is not None:
-            _p.delete_server(recyclable_server)
+        recyclable_provider.delete_server(recyclable_server)
 
     return recyclable_server.name
 
@@ -237,7 +249,7 @@ def recycle_server(
     reason: str,
     server: ProviderServer,
     provider: CloudProvider,
-    ssh_keys: dict,
+    ssh_key_names: set[str],
     end_of_life: int,
     recycle_grace_period: int,
 ):
@@ -252,30 +264,18 @@ def recycle_server(
     Args:
         reason: The reason for recycling (e.g., "powered_off", "zombie", "unused_runner")
         server: The server to recycle
-        provider: The CloudProvider that owns the server
-        ssh_keys: Mapping of provider name -> list of this controller's SSH keys,
-            used to verify the server was created by us before touching it
+        provider: Provider that manages this server.
+        ssh_key_names: Allowed SSH key names for ownership check.
         end_of_life: Minutes after which server reaches end-of-life
         recycle_grace_period: Minimum seconds server must be in recycled state before deletion
     """
-    if provider is None:
-        return
+    days, hours, minutes, _ = _server_age_components(server)
 
-    days, hours, minutes, _ = age(server=server)
-
-    # Verify the server was created by this controller: its stored SSH-key name
-    # (read via the provider's own tag convention) must match one of the keys we
-    # registered for that provider. Otherwise it is not ours to recycle.
-    stored_ssh_key_name = provider.get_server_ssh_key_name(server)
-    expected_ssh_key_names = {
-        getattr(k, "name", None)
-        for k in ((ssh_keys or {}).get(provider.name) or [])
-    }
-    if not stored_ssh_key_name or stored_ssh_key_name not in expected_ssh_key_names:
+    if not provider.has_matching_ssh_key(server, ssh_key_names):
         with Action(
             f"Try deleting {reason} server {server.name} "
             f"used {days}d{hours}h{minutes}m "
-            "as it is not owned by this controller (SSH key mismatch)",
+            "as it is not owned by this controller",
             stacklevel=3,
             ignore_fail=True,
             server_name=server.name,
@@ -289,7 +289,7 @@ def recycle_server(
         # Only enforce grace period for servers already marked for recycling by name.
         # If a recycled server is missing the timestamp label, treat it as timestamp 0.
         if server.name.startswith(recycle_server_name_prefix):
-            recycle_ts_raw = server.labels.get(recycle_timestamp_label)
+            recycle_ts_raw = provider.get_server_tag(server, recycle_timestamp_label)
             try:
                 recycle_ts = int(recycle_ts_raw)
             except (TypeError, ValueError):
@@ -349,7 +349,7 @@ def recycle_server(
             updated_labels = dict(server.labels)
             updated_labels[recycle_timestamp_label] = str(int(time.time()))
             provider.update_server(
-                server,
+                server=server,
                 name=f"{recycle_server_name_prefix}{uid()}",
                 labels=updated_labels,
             )
@@ -358,7 +358,7 @@ def recycle_server(
 def scale_down(
     terminate: threading.Event,
     mailbox: queue.Queue,
-    ssh_keys: dict[str, list],
+    ssh_keys: dict[str, list] | None,
     config: Config,
     providers: list[CloudProvider] = None,
 ):
@@ -383,14 +383,7 @@ def scale_down(
     max_powered_off_time: int = config.max_powered_off_time
     max_unused_runner_time: int = config.max_unused_runner_time
     max_runner_registration_time: int = config.max_runner_registration_time
-    _provider_prices: dict[str, dict] = config.server_prices
-    # The recycle path (delete_random) is Hetzner-specific; extract the flat
-    # {type: {location: price}} dict that _delete_random_recyclable_server expects.
-    server_prices: dict[str, dict[str, float]] = (
-        (_provider_prices or {}).get("hetzner", {}).get("prices")
-        if _provider_prices
-        else None
-    )
+    provider_prices: dict[str, dict] = config.server_prices or {}
     powered_off_servers: dict[str, PoweredOffServer] = {}
     unused_runners: dict[str, UnusedRunner] = {}
     zombie_servers: dict[str, ZombieServer] = {}
@@ -401,6 +394,12 @@ def scale_down(
         from .providers.hetzner.provider import HetznerCloudProvider
         providers = [HetznerCloudProvider(token=config.hetzner_token)]
 
+    provider_ssh_key_names: dict[str, set[str]] = {}
+    for provider_name, keys in (ssh_keys or {}).items():
+        provider_ssh_key_names[provider_name] = {
+            key.name for key in keys if hasattr(key, "name")
+        }
+
     with Action("Logging in to GitHub"):
         github = Github(auth=Auth.Token(github_token), per_page=100)
 
@@ -410,7 +409,7 @@ def scale_down(
     while True:
         interval += 1
         current_interval = time.time()
-        recyclable_servers: dict[str, ProviderServer] = {}
+        recyclable_servers: dict[str, tuple[ProviderServer, CloudProvider]] = {}
 
         if terminate.is_set():
             with Action("Terminating scale down service", interval=interval):
@@ -439,14 +438,6 @@ def scale_down(
                 }
                 for _p in providers:
                     _p.reconcile_runner_leases(managed_runner_names)
-
-            with Action(
-                "Reaping orphaned provider volumes",
-                level=logging.DEBUG,
-                interval=interval,
-            ):
-                for _p in providers:
-                    _p.reap_orphaned_volumes()
 
             with Action(
                 "Getting list of servers", level=logging.DEBUG, interval=interval
@@ -481,7 +472,7 @@ def scale_down(
                             _sp = server_providers.get(ps.name)
                             if recycle and _sp is not None and _sp.supports_recycling:
                                 if ps.name not in recyclable_servers:
-                                    recyclable_servers[ps.name] = ps
+                                    recyclable_servers[ps.name] = (ps, _sp)
 
             with Action(
                 "Looking for powered off or zombie servers",
@@ -642,60 +633,49 @@ def scale_down(
                             powered_off_servers.pop(server_name)
 
                     else:
-                        _sp = server_providers.get(powered_off_server.server.name)
-                        recycles = (
-                            recycle and _sp is not None and _sp.supports_recycling
-                        )
-                        with Action(
-                            "Scale-down decision for powered off server",
-                            level=logging.DEBUG,
-                            server_name=server_name,
-                            interval=interval,
-                        ) as action:
-                            action.note(
-                                f"age_intervals={current_interval - powered_off_server.time}, "
-                                f"threshold={max_powered_off_time}, "
-                                f"provider={(getattr(_sp, 'name', 'unknown') if _sp is not None else 'none')}, "
-                                f"recycles={recycles}"
-                            )
-                        if recycles:
-                            # Recycling providers park the server; wait out the
-                            # grace before converting it into a recyclable.
-                            if (
-                                current_interval - powered_off_server.time
-                                > max_powered_off_time
-                            ):
+                        if (
+                            current_interval - powered_off_server.time
+                            > max_powered_off_time
+                        ):
+                            age_intervals = current_interval - powered_off_server.time
+                            _sp = server_providers.get(powered_off_server.server.name)
+                            with Action(
+                                "Scale-down decision for powered off server",
+                                level=logging.DEBUG,
+                                server_name=server_name,
+                                interval=interval,
+                            ) as action:
+                                action.note(
+                                    f"age_intervals={age_intervals}, threshold={max_powered_off_time}, "
+                                    f"provider={(getattr(_sp, 'name', 'unknown') if _sp is not None else 'none')}, "
+                                    f"recycle={recycle and _sp is not None and _sp.supports_recycling}"
+                                )
+                            if recycle and _sp is not None and _sp.supports_recycling:
                                 recycle_server(
                                     reason="powered_off",
                                     server=powered_off_server.server,
                                     provider=_sp,
-                                    ssh_keys=ssh_keys,
+                                    ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
                                     end_of_life=_effective_end_of_life(_sp),
                                     recycle_grace_period=recycle_grace_period,
                                 )
-                                powered_off_servers.pop(server_name)
-                        elif _sp is not None:
-                            # No recycling for this provider: a powered-off runner
-                            # is finished work, and a stopped instance still counts
-                            # against quota (e.g. Scaleway leaves it "stopped in
-                            # place"). Terminate it immediately — the grace only
-                            # exists to time the recycle/park decision above.
-                            with Action(
-                                f"Deleting powered off server {server_name}",
-                                ignore_fail=True,
-                                server_name=server_name,
-                                interval=interval,
-                            ) as action:
-                                metrics.record_server_deletion(
-                                    server_type=powered_off_server.server.server_type,
-                                    location=powered_off_server.server.location,
-                                    reason="powered_off",
-                                )
-                                delete_server(
-                                    powered_off_server.server,
-                                    _sp,
-                                    action="delete_powered_off",
-                                )
+                            else:
+                                with Action(
+                                    f"Deleting powered off server {server_name}",
+                                    ignore_fail=True,
+                                    server_name=server_name,
+                                    interval=interval,
+                                ) as action:
+                                    metrics.record_server_deletion(
+                                        server_type=powered_off_server.server.server_type,
+                                        location=powered_off_server.server.location,
+                                        reason="powered_off",
+                                    )
+                                    delete_server(
+                                        powered_off_server.server,
+                                        _sp,
+                                        action="delete_powered_off",
+                                    )
                             powered_off_servers.pop(server_name)
 
             with Action(
@@ -737,7 +717,7 @@ def scale_down(
                                     reason="zombie",
                                     server=zombie_server.server,
                                     provider=_sp,
-                                    ssh_keys=ssh_keys,
+                                    ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
                                     end_of_life=_effective_end_of_life(_sp),
                                     recycle_grace_period=recycle_grace_period,
                                 )
@@ -841,7 +821,9 @@ def scale_down(
                                         reason="unused_runner",
                                         server=runner_server,
                                         provider=runner_server_provider,
-                                        ssh_keys=ssh_keys,
+                                        ssh_key_names=provider_ssh_key_names.get(
+                                            runner_server_provider.name, set()
+                                        ),
                                         end_of_life=_effective_end_of_life(runner_server_provider),
                                         recycle_grace_period=recycle_grace_period,
                                     )
@@ -882,13 +864,15 @@ def scale_down(
                 for server_name in list(recyclable_servers.keys()):
                     if terminate.is_set():
                         break
-                    recyclable_server = recyclable_servers[server_name]
+                    recyclable_server, recyclable_provider = recyclable_servers[server_name]
                     recycle_server(
                         reason="unused_recyclable",
                         server=recyclable_server,
-                        provider=server_providers.get(server_name),
-                        ssh_keys=ssh_keys,
-                        end_of_life=_effective_end_of_life(server_providers.get(server_name)),
+                        provider=recyclable_provider,
+                        ssh_key_names=provider_ssh_key_names.get(
+                            recyclable_provider.name, set()
+                        ),
+                        end_of_life=_effective_end_of_life(recyclable_provider),
                         recycle_grace_period=recycle_grace_period,
                     )
                     recyclable_servers.pop(server_name)
@@ -950,8 +934,7 @@ def scale_down(
                                         recyclable_servers=list(
                                             recyclable_servers.values()
                                         ),
-                                        server_providers=server_providers,
-                                        server_prices=server_prices,
+                                        provider_prices=provider_prices,
                                         recycle_grace_period=recycle_grace_period,
                                         stack_level=3,
                                         server_name=server_name,

@@ -443,6 +443,12 @@ class DedicatedStaticCloudProvider(CloudProvider):
     def set_server_tags(self, server: ProviderServer, tags: dict[str, str]) -> None:
         server.labels = {**server.labels, **tags}
 
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        key_name = server.labels.get(server_ssh_key_label)
+        return key_name in ssh_key_names if key_name is not None else False
+
     # ---------------------------------------------------------------------------
     # SSH key management
     # ---------------------------------------------------------------------------

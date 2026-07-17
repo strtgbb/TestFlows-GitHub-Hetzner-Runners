@@ -248,6 +248,15 @@ class HetznerCloudProvider(CloudProvider):
         # Keep the ProviderServer in sync.
         server.labels = updated_labels
 
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        """Return True when the server SSH key tag matches a known key name."""
+        from ...constants import server_ssh_key_label
+
+        key_name = server.labels.get(server_ssh_key_label)
+        return key_name in ssh_key_names if key_name is not None else False
+
     # ---------------------------------------------------------------------------
     # SSH key management
     # ---------------------------------------------------------------------------

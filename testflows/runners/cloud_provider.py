@@ -308,6 +308,16 @@ class CloudProvider(ABC):
         also update ``server.labels`` to reflect the new state.
         """
 
+    @abstractmethod
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        """Return True if *server* has an SSH key tag in *ssh_key_names*.
+
+        Providers should return False when no key marker is present or when it
+        does not match.
+        """
+
     # ---------------------------------------------------------------------------
     # SSH key management
     # ---------------------------------------------------------------------------

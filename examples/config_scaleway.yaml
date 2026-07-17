@@ -3,6 +3,8 @@ config:
   github_repository: ${GITHUB_REPOSITORY}
   with_label:
     - self-hosted
+  # Completed instances are stopped and reused with recycle.sh by default.
+  recycle: true
 
   providers:
     scaleway:

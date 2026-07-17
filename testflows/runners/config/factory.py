@@ -72,6 +72,7 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 ssh_key_path=config.ssh_key,
                 max_runners=config.providers.hetzner.max_runners,
                 end_of_life=config.providers.hetzner.end_of_life,
+                recycle_with_rebuild=config.providers.hetzner.recycle_with_rebuild,
             )
         )
 

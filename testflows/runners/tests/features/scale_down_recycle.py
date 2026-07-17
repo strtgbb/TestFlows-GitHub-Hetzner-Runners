@@ -7,11 +7,11 @@ verifying its stored SSH-key name (read via the provider's own tag) matches one
 of this controller's keys for that provider.
 """
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from testflows.core import *
 
-from testflows.runners.cloud_provider import ProviderServer
+from testflows.runners.cloud_provider import ProviderServer, RetirementResult
 from testflows.runners.scale_down import recycle_server, delete_recyclable_server
 from testflows.runners.constants import (
     recycle_timestamp_label,
@@ -37,7 +37,13 @@ def _provider(stored_ssh_key_name, name="hetzner"):
     """A mock provider whose stored SSH-key name is controllable per test."""
     provider = MagicMock()
     provider.name = name
-    provider.get_server_ssh_key_name.return_value = stored_ssh_key_name
+    provider.has_matching_ssh_key.side_effect = (
+        lambda server, key_names: stored_ssh_key_name in key_names
+    )
+    provider.is_recycle_claimed.return_value = False
+    provider.retire_runner_server.return_value = RetirementResult(
+        "pooled", "server"
+    )
     return provider
 
 
@@ -51,8 +57,8 @@ def _ssh_keys(*names, provider_name="hetzner"):
 
 
 @TestScenario
-def mark_fresh_owned_server_for_recycle_via_provider(self):
-    """A fresh, owned server is parked via provider.power_off_server + update_server."""
+def retirement_is_delegated_to_provider(self):
+    """Scale-down delegates the complete retirement transition."""
     provider = _provider(stored_ssh_key_name="mykey")
     server = _server("github-runner-1-0-cx22")
     with When("recycle_server runs on a fresh, owned, non-recycle server"):
@@ -60,89 +66,55 @@ def mark_fresh_owned_server_for_recycle_via_provider(self):
             reason="powered_off",
             server=server,
             provider=provider,
-            ssh_keys=_ssh_keys("mykey"),
+            ssh_key_names={"mykey"},
             end_of_life=60,
             recycle_grace_period=0,
         )
-    with Then("it powers off and renames via the provider, not native calls"):
-        provider.power_off_server.assert_called_once_with(server)
-        assert provider.update_server.call_count == 1, provider.update_server.call_count
-        _, kwargs = provider.update_server.call_args
-        assert kwargs["name"].startswith(recycle_server_name_prefix), kwargs["name"]
-        assert recycle_timestamp_label in kwargs["labels"]
-        provider.delete_server.assert_not_called()
+    with Then("it passes policy and ownership context to the provider"):
+        provider.retire_runner_server.assert_called_once_with(
+            server,
+            reason="powered_off",
+            recycle_enabled=True,
+            ssh_key_names={"mykey"},
+            end_of_life=60,
+            recycle_grace_period=0,
+        )
 
 
 @TestScenario
-def delete_when_not_owned_via_provider(self):
-    """A server whose stored SSH key isn't ours is deleted through the provider."""
-    with When("the server has no stored SSH-key name"):
-        provider = _provider(stored_ssh_key_name=None)
-        server = _server("github-runner-1-0-cx22")
-        recycle_server(
-            reason="zombie",
-            server=server,
-            provider=provider,
-            ssh_keys=_ssh_keys("mykey"),
-            end_of_life=60,
-            recycle_grace_period=0,
-        )
-    with Then("it deletes via the provider and does not power off"):
-        provider.delete_server.assert_called_once_with(server)
-        provider.power_off_server.assert_not_called()
-
-    with When("the server's stored SSH key belongs to a different controller"):
-        provider2 = _provider(stored_ssh_key_name="someone-elses-key")
-        server2 = _server("github-runner-2-0-cx22")
-        recycle_server(
-            reason="zombie",
-            server=server2,
-            provider=provider2,
-            ssh_keys=_ssh_keys("mykey"),
-            end_of_life=60,
-            recycle_grace_period=0,
-        )
-    with Then("it is also deleted as not owned"):
-        provider2.delete_server.assert_called_once_with(server2)
-        provider2.power_off_server.assert_not_called()
-
-
-@TestScenario
-def set_recycle_timestamp_via_provider(self):
-    """A recycle-prefixed owned server past end-of-life with no timestamp gets tagged."""
+def retirement_failure_records_metric(self):
     provider = _provider(stored_ssh_key_name="mykey")
-    name = f"{recycle_server_name_prefix}abc"
-    server = _server(name)
-    with When("recycle_server runs on a recycle server missing its timestamp"):
-        recycle_server(
-            reason="unused_recyclable",
+    provider.retire_runner_server.side_effect = RuntimeError("delete failed")
+    server = _server("github-runner-1-0-cx22")
+    with patch(
+        "testflows.runners.scale_down.metrics.record_scale_down_failure"
+    ) as record_failure:
+        result = recycle_server(
+            reason="zombie",
             server=server,
             provider=provider,
-            ssh_keys=_ssh_keys("mykey"),
-            end_of_life=0,  # already past end-of-life
-            recycle_grace_period=60,
+            ssh_key_names={"mykey"},
+            end_of_life=50,
+            recycle_grace_period=0,
         )
-    with Then("it sets the recycle timestamp tag via the provider (no delete)"):
-        provider.set_server_tags.assert_called_once()
-        args, _ = provider.set_server_tags.call_args
-        assert args[0] is server
-        assert recycle_timestamp_label in args[1]
-        provider.delete_server.assert_not_called()
+    assert result.action == "failed"
+    record_failure.assert_called_once()
+    assert record_failure.call_args.kwargs["error_type"] == "retire_zombie_failed"
 
 
 @TestScenario
 def delete_recyclable_resolves_provider_per_server(self):
     """delete_recyclable_server deletes the picked server via its own provider."""
     provider = MagicMock()
+    provider.is_recycle_claimed.return_value = False
+    provider.reserve_recycled_server.return_value = True
     s1 = _server(f"{recycle_server_name_prefix}one")
     s2 = _server(f"{recycle_server_name_prefix}two")
-    server_providers = {s1.name: provider, s2.name: provider}
     with When("delete_recyclable_server is called with ProviderServers"):
         deleted = delete_recyclable_server(
             server_name="github-runner-9-0-cx22",
-            recyclable_servers=[s1, s2],
-            server_providers=server_providers,
-            server_prices=None,  # random pick
+            recyclable_servers=[(s1, provider), (s2, provider)],
+            provider_prices={},  # random pick
             recycle_grace_period=0,
         )
     with Then("exactly one server is deleted through the provider"):

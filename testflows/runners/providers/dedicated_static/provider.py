@@ -9,7 +9,12 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
+from ...cloud_provider import (
+    CloudProvider,
+    ProviderServer,
+    ProviderServerType,
+    RetirementResult,
+)
 from ...constants import github_runner_label, server_ssh_key_label, runner_name_prefix
 from ...errors import ServerTypeError, LocationError, ImageSpecFormatError
 from ...server import ssh
@@ -132,7 +137,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
     @property
     def supports_recycling(self) -> bool:
-        return False
+        return True
 
     def setup_script_name(self, labels: list[str], label_prefix: str = "") -> str:
         # Static hosts are provisioned out of band, so the setup-step is cleanup,
@@ -336,6 +341,21 @@ class DedicatedStaticCloudProvider(CloudProvider):
                     self._clear_lease(host)
                     return
 
+    def retire_runner_server(
+        self,
+        server: ProviderServer,
+        *,
+        reason: str,
+        recycle_enabled: bool,
+        ssh_key_names: set[str],
+        end_of_life: int,
+        recycle_grace_period: int,
+    ) -> RetirementResult:
+        del reason, recycle_enabled, ssh_key_names, end_of_life, recycle_grace_period
+        original_name = server.name
+        self.delete_server(server)
+        return RetirementResult("released", original_name)
+
     def get_server(self, name: str) -> ProviderServer | None:
         with self._lock:
             static_name_exists = False
@@ -433,6 +453,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
             for key, value in server.labels.items()
             if key.startswith(self._RUNNER_LABEL_PREFIX)
         }
+
+    def is_runner_label_tag(self, key: str) -> bool:
+        return key.startswith(self._RUNNER_LABEL_PREFIX)
 
     # ---------------------------------------------------------------------------
     # Tag / label operations

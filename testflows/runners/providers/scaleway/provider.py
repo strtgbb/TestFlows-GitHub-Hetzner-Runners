@@ -3,12 +3,10 @@
 Uses the official ``scaleway`` SDK (optional dependency:
 ``pip install testflows.runners[scaleway]``).
 
-v1 scope: create/delete lifecycle only (``supports_recycling = False``), matching
-the AWS provider.  Image-rebuild recycling is deferred to a high-priority phase 2
-because, against the current long-job workload, Scaleway's hourly billing makes
-recycling a marginal cost win, and Scaleway's recycle lifecycle differs from
-hcloud's in-place ``rebuild`` (a powered-off Instance releases its node and may
-fail to power back on under capacity pressure).
+Recycling uses stop/start plus the configured recycle cleanup script. Scaleway
+does not offer in-place image rebuild; a powered-off Instance releases its node
+and may fail to power back on under capacity pressure, in which case the
+candidate is terminated and fresh capacity is created on a later attempt.
 
 Type translation: every type that crosses the SDK boundary is converted between
 the canonical dot-form used by the orchestrator (``dev1.s``) and Scaleway's
@@ -18,10 +16,26 @@ native dash-form (``DEV1-S``) via :func:`utils.native_type` / :func:`utils.canon
 import time
 import hashlib
 import logging
+import os
+import threading
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from ...actions import Action
-from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
+from ...cloud_provider import (
+    AcquiredServer,
+    CloudProvider,
+    ProviderServer,
+    ProviderServerType,
+    RecycleClaim,
+    RecycleRequest,
+    RetirementResult,
+)
+from ...recycling import (
+    activate_recycled_server,
+    recyclable_server_matches,
+    retire_to_recycle_pool,
+)
 from ...errors import ServerTypeError, ImageError, ImageSpecFormatError, LocationError
 from .utils import (
     _RUNNER_TAG,
@@ -54,8 +68,8 @@ class ScalewaySSHKey:
 class ScalewayCloudProvider(CloudProvider):
     """Scaleway Instances implementation of CloudProvider.
 
-    Recycling is not supported in v1 (``supports_recycling = False``).
-    Volume operations raise ``NotImplementedError`` (inherited from base class).
+    Recycling uses stop/start without image rebuild. Volume operations raise
+    ``NotImplementedError`` (inherited from base class).
     """
 
     def __init__(
@@ -92,6 +106,11 @@ class ScalewayCloudProvider(CloudProvider):
         self._ssh_user = ssh_user
         self._max_runners = max_runners
         self._end_of_life = end_of_life
+        orphan_key = hashlib.sha256(f"{project_id}:{zone}".encode()).hexdigest()[:12]
+        self._orphan_state_path = os.path.expanduser(
+            f"~/.cache/testflows-runners/scaleway-{orphan_key}-orphan-volumes"
+        )
+        self._orphan_state_lock = threading.Lock()
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -107,8 +126,7 @@ class ScalewayCloudProvider(CloudProvider):
 
     @property
     def supports_recycling(self) -> bool:
-        # Deferred to phase 2 (see module docstring).
-        return False
+        return True
 
     def get_prices(self) -> dict[str, dict[str, float]]:
         from .estimate import check_prices
@@ -178,18 +196,20 @@ class ScalewayCloudProvider(CloudProvider):
         )
         server = created.server
 
-        # Tag the boot-on-block (SBS) volume so it can be reaped after teardown
-        # (terminate only detaches SBS volumes; reap_orphaned_volumes deletes
-        # the tagged, detached ones out of band).
-        self._tag_boot_volumes(server, zone)
-
-        self._instance.server_action(
-            server_id=server.id, zone=zone, action=ServerAction.POWERON
-        )
-        with Action(f"Waiting for Scaleway instance {name} to start", stacklevel=3):
-            server = self._wait_for_state(
-                server.id, zone, states={"running"}, timeout=300
+        try:
+            # Tag boot-on-block volumes before power-on so every later terminate
+            # path can discover and reap them.
+            self._tag_boot_volumes(server, zone)
+            self._instance.server_action(
+                server_id=server.id, zone=zone, action=ServerAction.POWERON
             )
+            with Action(f"Waiting for Scaleway instance {name} to start", stacklevel=3):
+                server = self._wait_for_state(
+                    server.id, zone, states={"running"}, timeout=300
+                )
+        except Exception:
+            self._cleanup_failed_create(server, zone)
+            raise
 
         return _server_to_provider(server, ssh_user=self._ssh_user)
 
@@ -216,17 +236,101 @@ class ScalewayCloudProvider(CloudProvider):
             vtype = str(getattr(vol, "volume_type", "")).lower()
             vid = getattr(vol, "id", None)
             if vid and ("sbs" in vtype or "b_ssd" in vtype):
-                try:
-                    self._block.update_volume(
-                        volume_id=vid, zone=zone, tags=[_RUNNER_VOLUME_TAG]
-                    )
-                except Exception as exc:
-                    with Action(
-                        f"Could not tag boot volume {vid} for reaping: {exc}",
-                        stacklevel=3,
-                        ignore_fail=True,
-                    ):
-                        pass
+                last_error = None
+                for _ in range(3):
+                    try:
+                        self._block.update_volume(
+                            volume_id=vid, zone=zone, tags=[_RUNNER_VOLUME_TAG]
+                        )
+                        last_error = None
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        time.sleep(1)
+                if last_error is not None:
+                    raise RuntimeError(
+                        f"could not tag boot volume {vid} for reaping"
+                    ) from last_error
+
+    def _cleanup_failed_create(self, server, zone) -> None:
+        """Best-effort compensation for a partially created Instance."""
+        from scaleway.instance.v1 import ServerAction
+
+        volume_ids = [
+            getattr(volume, "id", None)
+            for volume in (getattr(server, "volumes", None) or {}).values()
+            if getattr(volume, "id", None)
+            and (
+                "sbs" in str(getattr(volume, "volume_type", "")).lower()
+                or "b_ssd" in str(getattr(volume, "volume_type", "")).lower()
+            )
+        ]
+        orphan_state_error = None
+        try:
+            self._record_orphan_volumes(volume_ids)
+        except Exception as exc:
+            orphan_state_error = exc
+        try:
+            self._instance.server_action(
+                server_id=server.id, zone=zone, action=ServerAction.TERMINATE
+            )
+        except Exception:
+            pass
+
+        for volume_id in volume_ids:
+            try:
+                self._block.delete_volume(volume_id=volume_id, zone=zone)
+            except Exception as exc:
+                if getattr(exc, "status_code", None) != 404:
+                    continue
+            try:
+                self._clear_orphan_volume(volume_id)
+            except Exception as exc:
+                orphan_state_error = orphan_state_error or exc
+        if orphan_state_error is not None:
+            with Action(
+                f"Could not persist failed-create volume cleanup state: {orphan_state_error}",
+                stacklevel=3,
+                ignore_fail=True,
+            ):
+                pass
+
+    def _load_orphan_volumes(self) -> set[str]:
+        try:
+            with open(self._orphan_state_path, encoding="utf-8") as state:
+                return {line.strip() for line in state if line.strip()}
+        except FileNotFoundError:
+            return set()
+
+    def _save_orphan_volumes(self, volume_ids: set[str]) -> None:
+        os.makedirs(os.path.dirname(self._orphan_state_path), exist_ok=True)
+        temporary_path = f"{self._orphan_state_path}.tmp"
+        with open(temporary_path, "w", encoding="utf-8") as state:
+            state.write("".join(f"{volume_id}\n" for volume_id in sorted(volume_ids)))
+        os.replace(temporary_path, self._orphan_state_path)
+
+    def _record_orphan_volumes(self, volume_ids: list[str]) -> None:
+        with self._orphan_state_lock:
+            recorded = self._load_orphan_volumes()
+            recorded.update(volume_ids)
+            self._save_orphan_volumes(recorded)
+
+    def _clear_orphan_volume(self, volume_id: str) -> None:
+        with self._orphan_state_lock:
+            recorded = self._load_orphan_volumes()
+            recorded.discard(volume_id)
+            self._save_orphan_volumes(recorded)
+
+    def _reap_recorded_orphan_volumes(self) -> None:
+        with self._orphan_state_lock:
+            recorded = self._load_orphan_volumes()
+        for volume_id in recorded:
+            try:
+                self._block.delete_volume(volume_id=volume_id, zone=self._zone)
+            except Exception as exc:
+                if getattr(exc, "status_code", None) != 404:
+                    continue
+            self._clear_orphan_volume(volume_id)
 
     def reap_orphaned_volumes(self) -> None:
         """Delete detached SBS volumes we created that no instance references.
@@ -237,6 +341,7 @@ class ScalewayCloudProvider(CloudProvider):
         detached longer than a short grace, so we never race an in-flight
         create. Stateless and idempotent — safe to run every scale_down cycle.
         """
+        self._reap_recorded_orphan_volumes()
         try:
             volumes = self._block.list_volumes_all(
                 zone=self._zone, tags=[_RUNNER_VOLUME_TAG], include_deleted=False
@@ -329,6 +434,62 @@ class ScalewayCloudProvider(CloudProvider):
     def list_runner_servers(self) -> list[ProviderServer]:
         return self.list_servers(label_selector=f"{_RUNNER_TAG}=active")
 
+    def is_recycled_server(self, server: ProviderServer) -> bool:
+        from ...constants import recycle_server_name_prefix
+
+        return server.name.startswith(recycle_server_name_prefix)
+
+    def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
+        return self._claim_matching_recycled_server(
+            request,
+            lambda server, req: recyclable_server_matches(
+                self,
+                server,
+                replace(
+                    req,
+                    enable_ipv4=bool(server.public_ipv4),
+                    enable_ipv6=bool(server.public_ipv6),
+                ),
+            ),
+        )
+
+    @property
+    def recycled_server_uses_cleanup(self) -> bool:
+        return True
+
+    def is_runner_label_tag(self, key: str) -> bool:
+        return key.startswith(_RUNNER_LABEL_TAG_PREFIX)
+
+    def activate_recycled_server(
+        self, claim: RecycleClaim
+    ) -> AcquiredServer | None:
+        return activate_recycled_server(
+            self,
+            claim,
+            rebuild=False,
+            delete_on_activation_failure=True,
+        )
+
+    def retire_runner_server(
+        self,
+        server: ProviderServer,
+        *,
+        reason: str,
+        recycle_enabled: bool,
+        ssh_key_names: set[str],
+        end_of_life: int,
+        recycle_grace_period: int,
+    ) -> RetirementResult:
+        del reason
+        return retire_to_recycle_pool(
+            self,
+            server,
+            recycle_enabled=recycle_enabled,
+            ssh_key_names=ssh_key_names,
+            end_of_life=end_of_life,
+            recycle_grace_period=recycle_grace_period,
+        )
+
     # ---------------------------------------------------------------------------
     # Runner label helpers
     # ---------------------------------------------------------------------------
@@ -339,6 +500,12 @@ class ScalewayCloudProvider(CloudProvider):
             for key, value in server.labels.items()
             if key.startswith(_RUNNER_LABEL_TAG_PREFIX)
         }
+
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        key_name = server.labels.get(_SSH_KEY_TAG)
+        return key_name in ssh_key_names if key_name is not None else False
 
     # ---------------------------------------------------------------------------
     # Server metadata helpers

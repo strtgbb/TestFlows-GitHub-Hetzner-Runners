@@ -26,22 +26,18 @@ from datetime import datetime, timezone
 from .actions import Action
 from . import metrics
 from .constants import (
-    server_name_prefix,
     runner_name_prefix,
     standby_runner_name_prefix,
     recycle_server_name_prefix,
-    github_runner_label,
     recycle_timestamp_label,
 )
 from .scale_up import (
-    uid,
     StandbyRunner,
     ScaleUpFailureMessage,
 )
-from .logger import logger
 from .server import get_runner_server_name
 from .config import Config
-from .cloud_provider import CloudProvider, ProviderServer
+from .cloud_provider import CloudProvider, ProviderServer, RetirementResult
 from .ordered_set import OrderedSet as set
 
 from github import Auth, Github
@@ -111,40 +107,6 @@ def _server_age_components(server: ProviderServer) -> tuple[int, int, int, int]:
     return days, hours, minutes, seconds
 
 
-def delete_server(
-    server: ProviderServer, provider: CloudProvider, action: str = "delete"
-):
-    """Delete server and record any failures.
-
-    Args:
-        server: The ProviderServer to delete.
-        provider: The CloudProvider that owns the server.
-        action: The action label for failure metrics.
-    """
-    try:
-        provider.delete_server(server)
-    except Exception as e:
-        error_details = {
-            "error": str(e),
-            "server_type": server.server_type,
-            "location": server.location,
-            "labels": ",".join(provider.get_runner_labels(server)),
-            "timestamp": time.time(),
-        }
-
-        metrics.record_scale_down_failure(
-            error_type=f"{action}_failed",
-            server_name=server.name,
-            server_type=server.server_type,
-            server_location=server.location,
-            error_details=error_details,
-        )
-
-        # Mark that this failure was already logged
-        e.failure_logged = True
-        raise
-
-
 def delete_recyclable_server(
     server_name,
     recyclable_servers: list[tuple[ProviderServer, CloudProvider]],
@@ -158,6 +120,14 @@ def delete_recyclable_server(
     :param recyclable_servers: list of recyclable servers
     :param provider_prices: dictionary of provider prices
     """
+    if not recyclable_servers:
+        return
+
+    recyclable_servers = [
+        (server, provider)
+        for server, provider in recyclable_servers
+        if not provider.is_recycle_claimed(server)
+    ]
     if not recyclable_servers:
         return
 
@@ -203,7 +173,12 @@ def delete_recyclable_server(
         return
 
     picking = "randomly picked"
-    if not provider_prices:
+    candidate_currencies = {
+        provider_prices.get(provider.name, {}).get("currency")
+        for _, provider in recyclable_servers
+        if provider_prices.get(provider.name, {}).get("currency")
+    }
+    if not provider_prices or len(candidate_currencies) > 1:
         random.shuffle(recyclable_servers)
     else:
         picking = "the cheapest"
@@ -231,16 +206,32 @@ def delete_recyclable_server(
 
         recyclable_servers.sort(key=sorting_key, reverse=True)
 
-    recyclable_server, recyclable_provider = recyclable_servers.pop()
+    recyclable_server = recyclable_provider = None
+    while recyclable_servers:
+        candidate_server, candidate_provider = recyclable_servers.pop()
+        if candidate_provider.reserve_recycled_server(candidate_server):
+            recyclable_server = candidate_server
+            recyclable_provider = candidate_provider
+            break
+    if recyclable_server is None:
+        return
 
-    with Action(
-        f"Deleting {picking} recyclable server {recyclable_server.name} with type "
-        f"{recyclable_server.server_type}",
-        stacklevel=stack_level,
-        ignore_fail=True,
-        server_name=server_name,
-    ):
-        recyclable_provider.delete_server(recyclable_server)
+    deletion_submitted = False
+    try:
+        with Action(
+            f"Deleting {picking} recyclable server {recyclable_server.name} with type "
+            f"{recyclable_server.server_type}",
+            stacklevel=stack_level,
+            ignore_fail=True,
+            server_name=server_name,
+        ):
+            recyclable_provider.delete_server(recyclable_server)
+            deletion_submitted = True
+    finally:
+        if deletion_submitted:
+            recyclable_provider.mark_recycled_server_deleting(recyclable_server)
+        else:
+            recyclable_provider.release_recycled_server(recyclable_server)
 
     return recyclable_server.name
 
@@ -252,107 +243,39 @@ def recycle_server(
     ssh_key_names: set[str],
     end_of_life: int,
     recycle_grace_period: int,
+    recycle_enabled: bool = True,
 ):
-    """Recycle server.
-
-    When recycle mode is active, servers are marked for recycling instead of being
-    deleted immediately. A recycle timestamp label is set when the server is first
-    marked for recycling. At end-of-life, the server is only deleted if it was
-    previously marked for recycling and has been in recycled state for at least
-    recycle_grace_period seconds.
-
-    Args:
-        reason: The reason for recycling (e.g., "powered_off", "zombie", "unused_runner")
-        server: The server to recycle
-        provider: Provider that manages this server.
-        ssh_key_names: Allowed SSH key names for ownership check.
-        end_of_life: Minutes after which server reaches end-of-life
-        recycle_grace_period: Minimum seconds server must be in recycled state before deletion
-    """
-    days, hours, minutes, _ = _server_age_components(server)
-
-    if not provider.has_matching_ssh_key(server, ssh_key_names):
+    """Delegate the retirement transition to the owning provider."""
+    try:
+        return provider.retire_runner_server(
+            server,
+            reason=reason,
+            recycle_enabled=recycle_enabled,
+            ssh_key_names=ssh_key_names,
+            end_of_life=end_of_life,
+            recycle_grace_period=recycle_grace_period,
+        )
+    except Exception as exc:
+        metrics.record_scale_down_failure(
+            error_type=f"retire_{reason}_failed",
+            server_name=server.name,
+            server_type=server.server_type,
+            server_location=server.location,
+            error_details={
+                "error": str(exc),
+                "server_type": server.server_type,
+                "location": server.location,
+                "labels": ",".join(provider.get_runner_labels(server)),
+                "timestamp": time.time(),
+            },
+        )
         with Action(
-            f"Try deleting {reason} server {server.name} "
-            f"used {days}d{hours}h{minutes}m "
-            "as it is not owned by this controller",
-            stacklevel=3,
+            f"Could not retire {reason} server {server.name}: {exc}",
             ignore_fail=True,
             server_name=server.name,
         ):
-            try:
-                provider.delete_server(server)
-            finally:
-                return
-
-    if minutes >= end_of_life:
-        # Only enforce grace period for servers already marked for recycling by name.
-        # If a recycled server is missing the timestamp label, treat it as timestamp 0.
-        if server.name.startswith(recycle_server_name_prefix):
-            recycle_ts_raw = provider.get_server_tag(server, recycle_timestamp_label)
-            try:
-                recycle_ts = int(recycle_ts_raw)
-            except (TypeError, ValueError):
-                recycle_ts = 0
-
-            if recycle_ts <= 0:
-                with Action(
-                    f"Setting recycle timestamp for {reason} server {server.name} "
-                    f"used {days}d{hours}h{minutes}m",
-                    stacklevel=3,
-                    level=logging.DEBUG,
-                    server_name=server.name,
-                ):
-                    provider.set_server_tags(
-                        server, {recycle_timestamp_label: str(int(time.time()))}
-                    )
-                return
-            time_since_recycle = int(time.time()) - recycle_ts
-
-            if time_since_recycle >= recycle_grace_period:
-                with Action(
-                    f"Try deleting {reason} server {server.name} "
-                    f"used {days}d{hours}h{minutes}m "
-                    f"as it is end of life and recycled for {time_since_recycle}s",
-                    stacklevel=3,
-                    ignore_fail=True,
-                    server_name=server.name,
-                ):
-                    try:
-                        provider.delete_server(server)
-                    finally:
-                        return
-            else:
-                with Action(
-                    f"Skipping deletion of {reason} server {server.name} "
-                    f"used {days}d{hours}h{minutes}m "
-                    f"as it has only been recycled for {time_since_recycle}s "
-                    f"(need {recycle_grace_period}s)",
-                    stacklevel=3,
-                    level=logging.DEBUG,
-                    server_name=server.name,
-                ):
-                    return
-        # Not marked for recycling yet - fall through to mark it now
-
-    if not server.name.startswith(recycle_server_name_prefix):
-        with Action(
-            f"Marking {reason} server {server.name} "
-            f"used {days}d{hours}h{minutes}m "
-            f"for recycling with {60 - minutes}m of life",
-            stacklevel=3,
-            ignore_fail=True,
-            server_name=server.name,
-        ):
-            provider.power_off_server(server)
-            # Merge existing labels with new recycle timestamp label
-            updated_labels = dict(server.labels)
-            updated_labels[recycle_timestamp_label] = str(int(time.time()))
-            provider.update_server(
-                server=server,
-                name=f"{recycle_server_name_prefix}{uid()}",
-                labels=updated_labels,
-            )
+            raise
+        return RetirementResult("failed", server.name)
 
 
 def scale_down(
@@ -438,6 +361,7 @@ def scale_down(
                 }
                 for _p in providers:
                     _p.reconcile_runner_leases(managed_runner_names)
+                    _p.reap_orphaned_volumes()
 
             with Action(
                 "Getting list of servers", level=logging.DEBUG, interval=interval
@@ -470,7 +394,7 @@ def scale_down(
                     if ps.status == CloudProvider.STATUS_OFF:
                         if ps.name.startswith(recycle_server_name_prefix):
                             _sp = server_providers.get(ps.name)
-                            if recycle and _sp is not None and _sp.supports_recycling:
+                            if recycle and _sp is not None and _sp.is_recycled_server(ps):
                                 if ps.name not in recyclable_servers:
                                     recyclable_servers[ps.name] = (ps, _sp)
 
@@ -648,33 +572,23 @@ def scale_down(
                                 action.note(
                                     f"age_intervals={age_intervals}, threshold={max_powered_off_time}, "
                                     f"provider={(getattr(_sp, 'name', 'unknown') if _sp is not None else 'none')}, "
-                                    f"recycle={recycle and _sp is not None and _sp.supports_recycling}"
+                                    f"recycle={recycle}"
                                 )
-                            if recycle and _sp is not None and _sp.supports_recycling:
-                                recycle_server(
+                            if _sp is not None:
+                                result = recycle_server(
                                     reason="powered_off",
                                     server=powered_off_server.server,
                                     provider=_sp,
                                     ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
                                     end_of_life=_effective_end_of_life(_sp),
                                     recycle_grace_period=recycle_grace_period,
+                                    recycle_enabled=recycle,
                                 )
-                            else:
-                                with Action(
-                                    f"Deleting powered off server {server_name}",
-                                    ignore_fail=True,
-                                    server_name=server_name,
-                                    interval=interval,
-                                ) as action:
+                                if result.action == "deleted":
                                     metrics.record_server_deletion(
                                         server_type=powered_off_server.server.server_type,
                                         location=powered_off_server.server.location,
                                         reason="powered_off",
-                                    )
-                                    delete_server(
-                                        powered_off_server.server,
-                                        _sp,
-                                        action="delete_powered_off",
                                     )
                             powered_off_servers.pop(server_name)
 
@@ -710,31 +624,23 @@ def scale_down(
                                 action.note(
                                     f"age_intervals={age_intervals}, threshold={max_runner_registration_time}, "
                                     f"provider={(getattr(_sp, 'name', 'unknown') if _sp is not None else 'none')}, "
-                                    f"recycle={recycle and _sp is not None and _sp.supports_recycling}"
+                                    f"recycle={recycle}"
                                 )
-                            if recycle and _sp is not None and _sp.supports_recycling:
-                                recycle_server(
+                            if _sp is not None:
+                                result = recycle_server(
                                     reason="zombie",
                                     server=zombie_server.server,
                                     provider=_sp,
                                     ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
                                     end_of_life=_effective_end_of_life(_sp),
                                     recycle_grace_period=recycle_grace_period,
+                                    recycle_enabled=recycle,
                                 )
-                            else:
-                                with Action(
-                                    f"Deleting zombie server {server_name}",
-                                    ignore_fail=True,
-                                    server_name=server_name,
-                                    interval=interval,
-                                ) as action:
+                                if result.action == "deleted":
                                     metrics.record_server_deletion(
                                         server_type=zombie_server.server.server_type,
                                         location=zombie_server.server.location,
                                         reason="zombie",
-                                    )
-                                    delete_server(
-                                        zombie_server.server, _sp, action="delete_zombie"
                                     )
                             zombie_servers.pop(server_name)
 
@@ -816,33 +722,22 @@ def scale_down(
                                 )
 
                             if runner_server is not None:
-                                if recycle and runner_server_provider.supports_recycling:
-                                    recycle_server(
-                                        reason="unused_runner",
-                                        server=runner_server,
-                                        provider=runner_server_provider,
-                                        ssh_key_names=provider_ssh_key_names.get(
-                                            runner_server_provider.name, set()
-                                        ),
-                                        end_of_life=_effective_end_of_life(runner_server_provider),
-                                        recycle_grace_period=recycle_grace_period,
-                                    )
-                                else:
-                                    with Action(
-                                        f"Deleting unused runner server {runner_server.name}",
-                                        ignore_fail=True,
-                                        server_name=runner_server.name,
-                                        interval=interval,
-                                    ):
+                                result = recycle_server(
+                                    reason="unused_runner",
+                                    server=runner_server,
+                                    provider=runner_server_provider,
+                                    ssh_key_names=provider_ssh_key_names.get(
+                                        runner_server_provider.name, set()
+                                    ),
+                                    end_of_life=_effective_end_of_life(runner_server_provider),
+                                    recycle_grace_period=recycle_grace_period,
+                                    recycle_enabled=recycle,
+                                )
+                                if result.action == "deleted":
                                         metrics.record_server_deletion(
                                             server_type=runner_server.server_type,
                                             location=runner_server.location,
                                             reason="unused",
-                                        )
-                                        delete_server(
-                                            runner_server,
-                                            runner_server_provider,
-                                            action="delete_unused",
                                         )
                                 runner_server = None
 

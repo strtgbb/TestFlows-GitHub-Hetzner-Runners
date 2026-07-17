@@ -1,7 +1,12 @@
 config:
     github_token: ${GITHUB_TOKEN}
     github_repository: ${GITHUB_REPOSITORY}
-    hetzner_token: ${HETZNER_TOKEN}
+    providers:
+        hetzner:
+            token: ${HETZNER_TOKEN}
+            # Default recycling powers the server back on and runs recycle.sh.
+            # Opt into full reimaging for stronger isolation.
+            recycle_with_rebuild: false
     ssh_key: "~/.ssh/id_rsa.pub"
     #additional_ssh_keys:
     # - additional_key

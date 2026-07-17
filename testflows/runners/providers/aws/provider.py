@@ -262,6 +262,9 @@ class AWSCloudProvider(CloudProvider):
             if key.startswith(_RUNNER_LABEL_TAG_PREFIX)
         }
 
+    def is_runner_label_tag(self, key: str) -> bool:
+        return key.startswith(_RUNNER_LABEL_TAG_PREFIX)
+
     # ---------------------------------------------------------------------------
     # Tag / label operations
     # ---------------------------------------------------------------------------

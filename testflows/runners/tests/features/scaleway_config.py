@@ -242,7 +242,7 @@ def factory_builds_scaleway_provider(self):
         assert provider._project_id == "proj-123"
         assert provider._zone == "nl-ams-1"
         assert provider._default_image == "ubuntu_jammy"
-        assert provider.supports_recycling is False
+        assert provider.supports_recycling is True
 
 
 @TestScenario
@@ -556,8 +556,7 @@ def provider_sdk_calls_match_real_signatures(self):
         from scaleway.marketplace.v2 import MarketplaceV2API
         from scaleway.iam.v1alpha1 import IamV1Alpha1API
     except ImportError:
-        with Action("scaleway SDK not installed; skipping signature audit"):
-            return
+        return
 
     calls = [
         (InstanceV1API, "_create_server", dict(zone="z", name="n", commercial_type="t", image="i", dynamic_ip_required=True, protected=False, tags=[], project="p")),

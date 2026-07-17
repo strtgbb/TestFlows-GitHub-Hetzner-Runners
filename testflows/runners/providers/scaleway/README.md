@@ -104,10 +104,13 @@ is not offered in a given zone simply fails that attempt and the loop moves on.
   can be delayed or fail under zone/type capacity pressure. The scale-up loop
   falls back across zones (`in-` labels) and types when a create fails.
 
-## Scope
+## Recycling
 
-v1 implements the **create/delete** lifecycle only
-(`supports_recycling = False`), matching the AWS provider. Image-rebuild
-recycling is deferred to a high-priority **phase 2**; on Scaleway the recycle
-lifecycle differs from Hetzner's in-place `rebuild` (a powered-off Instance is
-not guaranteed to power back on), so it needs its own design.
+Scaleway uses provider-owned no-reimage recycling. Completed Instances are
+powered off and later powered on for a compatible job, then `recycle.sh` cleans
+the retained filesystem before runner registration.
+
+A powered-off Instance is not guaranteed to reacquire capacity. If activation
+fails, the provider terminates that candidate and a later scale-up attempt
+creates fresh capacity. Scaleway does not offer the Hetzner-only
+`recycle_with_rebuild` option.

@@ -17,7 +17,7 @@ differently — read them before changing anything here.
 | Existence | a server exists ⇔ it's allocated | host **always exists**; allocation is tracked separately (see lease model) |
 | Setup step | `setup.sh` (provisioning) | **`recycle.sh` (cleanup)** — see "Setup step" |
 | Setup-step script label | `setup-<name>` | `recycle-<name>` (**`setup-` ignored**) |
-| `supports_recycling` | Hetzner `True` | **`False`** — never enters the power-off/rename/rebuild parking loop |
+| Recycling | stopped-server pool | **lease cleanup/release** — never enters the power-off parking loop |
 | `power_off`/`power_on`/`rebuild` | implemented | **`NotImplementedError`** (can't power-cycle someone else's hardware) |
 | Runner name | `{name}-{type}-{location}` | **bare stable `static_name`** — see "Naming" |
 | Images | AMI / hcloud image | **none** — `image-` labels are silently ignored (the lease is fixed hardware) |
@@ -56,8 +56,7 @@ strand a static host — the provider can't power it back on (see the table). A 
 `startup-<name>` script must honour the `RUNNER_ON_EXIT` env var rather than hard-coding shutdown.
 
 **Ignored config.** Static hosts are reused in place, never parked, so the cloud recycle/parking
-options have no effect here: `recycle`, `recycle_without_rebuild`, and `recycle_grace_period` are
-all ignored.
+options have no effect here: `recycle` and `recycle_grace_period` are ignored.
 
 ## Lease model
 

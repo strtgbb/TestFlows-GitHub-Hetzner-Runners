@@ -33,17 +33,21 @@ from .config import (
 )
 from .config import standby_runner as StandbyRunner
 from .utils import get_runner_server_type
-from .cloud_provider import CloudProvider, ProviderServer, ProviderServerType
+from .cloud_provider import (
+    CloudProvider,
+    ProviderServer,
+    ProviderServerType,
+    RecycleClaim,
+    RecycleRequest,
+)
 from .errors import ServerTypeError, ImageSpecFormatError, LocationError
 from .constants import (
     server_name_prefix,
     runner_name_prefix,
     standby_server_name_prefix,
     standby_runner_name_prefix,
-    recycle_server_name_prefix,
-    server_ssh_key_label,
     github_runner_label,
-    recycle_timestamp_label,
+    recycle_image_label,
 )
 
 from .server import wait_ssh, ssh, get_runner_server_name
@@ -458,8 +462,8 @@ def get_recycle_script(
 ):
     """Get recycle script.
 
-    Required when recycle_without_rebuild is enabled. Both label overrides
-    (recycle-<name>) and the default recycle.sh must point to an existing script.
+    Used by providers that reactivate a server without reimaging it. Both label
+    overrides (recycle-<name>) and the default recycle.sh must exist.
     """
     script = None
 
@@ -842,6 +846,9 @@ def create_server(
                 server_labels = provider.build_server_labels(
                     labels, ssh_keys[0].name if ssh_keys else None
                 )
+                server_labels[recycle_image_label] = provider.recycle_image_id(
+                    server_image
+                )
 
                 with Action(
                     f"Validating server {name} labels {labels} of {server_type} in {_loc_name(server_location) or 'None'}",
@@ -941,70 +948,30 @@ def create_server(
 
 
 def recycle_server(
-    server_name: str,
-    server_volumes: list[Volume],
+    claim: RecycleClaim,
     provider: CloudProvider,
     setup_worker_pool: ThreadPoolExecutor,
     labels: list[str],
     name: str,
-    server_image,
     startup_script: str,
     setup_script: str,
+    recycle_script: str,
     github_token: str,
     github_repository: str,
-    ssh_key: SSHKey,
     timeout=60,
-    without_rebuild: bool = False,
-    recycle_script: str = None,
 ):
-    """Repurpose a recycled server as an active runner.
-
-    When recycling a server, we merge existing labels with the new runner labels
-    to preserve any critical labels. The recycle timestamp label is removed since
-    the server is now active again.
-
-    If without_rebuild is True, the server image is not rebuilt. Instead the server
-    is powered on and recycle_script is run in place of setup_script before startup.
-    """
-    with Action(f"Get recyclable server {server_name}", server_name=name):
-        provider_server = provider.get_server(name=server_name)
-
-    # Start with existing labels and merge in the new runner labels.
-    # This preserves any labels that aren't explicitly being replaced.
-    merged_labels = dict(provider_server.labels)
-    runner_labels = provider.build_server_labels(
-        labels, ssh_key.name if ssh_key is not None else None
-    )
-    merged_labels.update(runner_labels)
-
-    # Remove recycle timestamp label since server is now active.
-    merged_labels.pop(recycle_timestamp_label, None)
-
-    with Action(f"Validating server {name} labels", server_name=name):
-        valid, error_msg = provider.validate_labels(merged_labels)
-        if not valid:
-            raise ValueError(f"invalid server labels {merged_labels}: {error_msg}")
-
-    with Action(f"Recycling server {server_name} to make {name}", server_name=name):
-        provider.update_server(provider_server, name=name, labels=merged_labels)
-
-    if without_rebuild:
-        with Action(
-            f"Powering on recycled server {provider_server.name} without rebuild",
-            server_name=name,
-        ):
-            provider.power_on_server(provider_server, timeout=timeout)
+    """Activate a provider-owned recycle claim and configure its runner."""
+    with Action(f"Activating recycled server for {name}", server_name=name):
+        acquired = provider.activate_recycled_server(claim)
+    if acquired is None:
+        raise CanceledServerCreation(f"recycled server for {name} is no longer available")
+    if acquired.use_recycle_script:
         setup_script = recycle_script
-    else:
-        with Action(
-            f"Rebuilding recycled server {provider_server.name} image", server_name=name
-        ):
-            provider.rebuild_server(provider_server, server_image)
 
     setup_worker_pool.submit(
         server_setup,
         provider=provider,
-        server=provider_server,
+        server=acquired.server,
         setup_script=setup_script,
         startup_script=startup_script,
         github_token=github_token,
@@ -1100,46 +1067,6 @@ def max_servers_in_workflow_run_reached(
             ):
                 return True
     return False
-
-
-def recyclable_server_match(
-    server: RunnerServer,
-    server_type: str,
-    server_location: str | None,
-    server_volumes: list[Volume],
-    server_net_config: ServerCreatePublicNetwork,
-    ssh_key: SSHKey,
-):
-    """Check if a recyclable server matches for the specified
-    server type, location, and ssh key."""
-    if server.server_type != server_type:
-        return False
-
-    if server_location and server.server_location != server_location:
-        return False
-
-    native = server.server._native
-
-    if server_net_config.enable_ipv4 and native.public_net.ipv4 is None:
-        return False
-
-    if not server_net_config.enable_ipv4 and native.public_net.ipv4 is not None:
-        return False
-
-    if server_net_config.enable_ipv6 and native.public_net.ipv6 is None:
-        return False
-
-    if not server_net_config.enable_ipv6 and native.public_net.ipv6 is not None:
-        return False
-
-    if set([v.name for v in server_volumes]) != set(
-        [v.name for v in server.server_volumes]
-    ):
-        return False
-
-    if ssh_key is None:
-        return False
-    return ssh_key.name == native.labels.get(server_ssh_key_label)
 
 
 def set_future_attributes(
@@ -1251,7 +1178,6 @@ def scale_up(
     debug: bool = config.debug
     standby_runners: list[StandbyRunner] = config.standby_runners
     recycle: bool = config.recycle
-    recycle_without_rebuild: bool = config.recycle_without_rebuild
     with_label: list[str] = config.with_label
     label_prefix: str = config.label_prefix
     meta_label: dict[str, set[str]] = config.meta_label
@@ -1278,8 +1204,6 @@ def scale_up(
         When ``provider`` is given, resolution is pinned to it;
         otherwise each type resolves across all providers.
         """
-        recyclable_servers: list[BoundServer] = []
-
         # signal to stop creating a new server
         create_server_canceled = threading.Event()
         # semaphore to limit the number of concurrent server creations to 1
@@ -1343,8 +1267,6 @@ def scale_up(
 
         if recycle:
             for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
-                if not resolved_provider.supports_recycling:
-                    continue
                 provider_ssh_keys = ssh_keys.get(resolved_provider.name, [])
                 for loc_name in _expand_locations(server_locations, resolved_provider):
                     effective_loc = loc_name if loc_name is not None else resolved_provider.default_location
@@ -1365,71 +1287,81 @@ def scale_up(
                     ):
                         pass
 
-                    for server in servers:
-                        if server.name.startswith(recycle_server_name_prefix):
-                            recyclable_servers.append(server)
+                    runner_labels = resolved_provider.build_server_labels(
+                        labels,
+                        provider_ssh_keys[0].name if provider_ssh_keys else None,
+                    )
+                    runner_labels[recycle_image_label] = (
+                        resolved_provider.recycle_image_id(server_image)
+                    )
+                    recycle_request = RecycleRequest(
+                        name=name,
+                        server_type=type_name,
+                        location=_loc_name(server_location),
+                        image=server_image,
+                        labels=runner_labels,
+                        ssh_key_names=frozenset(
+                            key.name for key in provider_ssh_keys if hasattr(key, "name")
+                        ),
+                        candidates=tuple(
+                            runner_server.server
+                            for runner_server in servers
+                            if runner_server.provider_name == resolved_provider.name
+                        ),
+                        volume_names=frozenset(volume.name for volume in server_volumes),
+                        enable_ipv4=server_net_config.enable_ipv4,
+                        enable_ipv6=server_net_config.enable_ipv6,
+                        timeout=max_server_ready_time,
+                    )
+                    claim = resolved_provider.claim_recycled_server(recycle_request)
+                    if claim is None:
+                        continue
 
-                            with Action(
-                                f"Checking if we can recycle {server.name}",
-                                stacklevel=3,
-                                level=logging.DEBUG,
-                                server_name=name,
-                            ):
-                                pass
-
-                            if recyclable_server_match(
-                                server=server,
-                                server_type=type_name,
-                                server_location=(
-                                    _loc_name(server_location)
-                                ),
-                                server_volumes=server_volumes,
-                                server_net_config=server_net_config,
-                                ssh_key=provider_ssh_keys[0] if provider_ssh_keys else None,
-                            ):
-                                recycle_script = get_recycle_script(
-                                    scripts=scripts,
-                                    labels=labels,
-                                    label_prefix=label_prefix,
-                                ) if recycle_without_rebuild else None
-                                future = worker_pool.submit(
-                                    recycle_server,
-                                    server_name=server.name,
-                                    server_volumes=server.server_volumes,
-                                    provider=resolved_provider,
-                                    setup_worker_pool=setup_worker_pool,
-                                    labels=labels,
-                                    name=name,
-                                    server_image=server_image,
-                                    startup_script=startup_script,
-                                    setup_script=setup_script,
-                                    github_token=github_token,
-                                    github_repository=github_repository,
-                                    ssh_key=provider_ssh_keys[0] if provider_ssh_keys else None,
-                                    timeout=max_server_ready_time,
-                                    without_rebuild=recycle_without_rebuild,
-                                    recycle_script=recycle_script,
-                                )
-                                set_future_attributes(
-                                    future,
-                                    name,
-                                    validated_type,
-                                    server_location,
-                                    server_volumes,
-                                    labels,
-                                    provider_name=resolved_provider.name,
-                                )
-                                futures.append(future)
-                                servers.pop(servers.index(server))
-                                return
-                            else:
-                                with Action(
-                                    f"Recyclable server {server.name} did not match {name}",
-                                    stacklevel=3,
-                                    level=logging.DEBUG,
-                                    server_name=name,
-                                ):
-                                    pass
+                    try:
+                        recycle_script = (
+                            get_recycle_script(
+                                scripts=scripts,
+                                labels=labels,
+                                label_prefix=label_prefix,
+                            )
+                            if resolved_provider.recycled_server_uses_cleanup
+                            else None
+                        )
+                        future = worker_pool.submit(
+                            recycle_server,
+                            claim=claim,
+                            provider=resolved_provider,
+                            setup_worker_pool=setup_worker_pool,
+                            labels=labels,
+                            name=name,
+                            startup_script=startup_script,
+                            setup_script=setup_script,
+                            recycle_script=recycle_script,
+                            github_token=github_token,
+                            github_repository=github_repository,
+                            timeout=max_server_ready_time,
+                        )
+                    except Exception:
+                        resolved_provider.release_recycle_claim(claim)
+                        raise
+                    set_future_attributes(
+                        future,
+                        name,
+                        validated_type,
+                        server_location,
+                        server_volumes,
+                        labels,
+                        provider_name=resolved_provider.name,
+                    )
+                    futures.append(future)
+                    for existing in list(servers):
+                        if (
+                            existing.provider_name == resolved_provider.name
+                            and existing.server.id == claim.server.id
+                        ):
+                            servers.remove(existing)
+                            break
+                    return
 
         for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
             if server_volumes and not resolved_provider.supports_volumes:

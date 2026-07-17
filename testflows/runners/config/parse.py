@@ -111,10 +111,12 @@ def parse_config(filename: str):
     if doc.get("recycle") is not None:
         assert isinstance(doc["recycle"], bool), "config.recycle: is not a boolean"
 
-    if doc.get("recycle_without_rebuild") is not None:
-        assert isinstance(
-            doc["recycle_without_rebuild"], bool
-        ), "config.recycle_without_rebuild: is not a boolean"
+    if "recycle_without_rebuild" in doc:
+        assert False, (
+            "config.recycle_without_rebuild has been removed; use "
+            "config.providers.hetzner.recycle_with_rebuild instead "
+            "(note the inverse semantics)"
+        )
 
     if doc.get("recycle_grace_period") is not None:
         v = doc["recycle_grace_period"]
@@ -488,6 +490,13 @@ def parse_config(filename: str):
                     h["token"], str
                 ), "config.providers.hetzner.token: is not a string"
             _hetzner_kwargs = {"token": h.get("token")}
+            if h.get("recycle_with_rebuild") is not None:
+                v = h["recycle_with_rebuild"]
+                assert isinstance(v, bool), (
+                    "config.providers.hetzner.recycle_with_rebuild: "
+                    "is not a boolean"
+                )
+                _hetzner_kwargs["recycle_with_rebuild"] = v
             if h.get("max_runners") is not None:
                 v = h["max_runners"]
                 assert isinstance(v, int) and v > 0, (
@@ -496,8 +505,8 @@ def parse_config(filename: str):
                 _hetzner_kwargs["max_runners"] = v
             if h.get("end_of_life") is not None:
                 v = h["end_of_life"]
-                assert isinstance(v, int) and v > 0, (
-                    "config.providers.hetzner.end_of_life: must be an integer > 0"
+                assert isinstance(v, int) and 0 < v < 60, (
+                    "config.providers.hetzner.end_of_life: must be an integer > 0 and < 60"
                 )
                 _hetzner_kwargs["end_of_life"] = v
             _hetzner = hetzner_provider(**_hetzner_kwargs)
@@ -537,8 +546,8 @@ def parse_config(filename: str):
                 _aws_kwargs["max_runners"] = v
             if a.get("end_of_life") is not None:
                 v = a["end_of_life"]
-                assert isinstance(v, int) and v > 0, (
-                    "config.providers.aws.end_of_life: must be an integer > 0"
+                assert isinstance(v, int) and 0 < v < 60, (
+                    "config.providers.aws.end_of_life: must be an integer > 0 and < 60"
                 )
                 _aws_kwargs["end_of_life"] = v
             _aws_defaults_raw = a.get("defaults")
@@ -594,8 +603,8 @@ def parse_config(filename: str):
                 _scaleway_kwargs["max_runners"] = v
             if s.get("end_of_life") is not None:
                 v = s["end_of_life"]
-                assert isinstance(v, int) and v > 0, (
-                    "config.providers.scaleway.end_of_life: must be an integer > 0"
+                assert isinstance(v, int) and 0 < v < 60, (
+                    "config.providers.scaleway.end_of_life: must be an integer > 0 and < 60"
                 )
                 _scaleway_kwargs["end_of_life"] = v
             _scaleway_defaults_raw = s.get("defaults")

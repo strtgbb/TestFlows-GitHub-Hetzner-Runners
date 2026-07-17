@@ -66,7 +66,11 @@ The `image-{arch}-{kind}-{name}` label format is Hetzner-specific. For AWS, jobs
 
 ### Recycling
 
-Recycling (powered-off server reuse via image reinstall) is Hetzner-only and will not be supported on AWS. On Hetzner it is necessary due to resource availability constraints; on AWS instance availability is not a comparable concern. The `CloudProvider` interface will expose a `supports_recycling` property; recycling logic in `scale_up`/`scale_down` is gated on this.
+Recycling is a provider-owned acquire/retire lifecycle. Hetzner and Scaleway
+maintain stopped-server pools; dedicated static releases and re-leases fixed
+hosts; AWS currently uses create/delete only. Reused servers run `recycle.sh`
+by default. Hetzner can opt into image rebuild with
+`providers.hetzner.recycle_with_rebuild`.
 
 ### Volumes
 

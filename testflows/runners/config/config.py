@@ -93,6 +93,7 @@ class hetzner_provider:
     token: str = None
     max_runners: int = None
     end_of_life: int = None
+    recycle_with_rebuild: bool = False
     defaults: provider_defaults = dataclasses.field(
         default_factory=lambda: provider_defaults(
             image="x86:system:ubuntu-22.04",
@@ -227,7 +228,6 @@ class Config:
     label_prefix: str = ""
     meta_label: dict[str, set[str]] = None
     recycle: bool = True
-    recycle_without_rebuild: bool = False
     recycle_grace_period: int = 1200
     end_of_life: int = 50
     delete_random: bool = False
@@ -314,6 +314,17 @@ class Config:
 
             if arg_value is not None:
                 setattr(self, attr, arg_value)
+
+        # Provider configuration is nested and intentionally skipped above.
+        # Apply Hetzner-specific CLI overrides through its provider update hook.
+        from ..providers.hetzner import config as hetzner_config
+
+        if self.providers.hetzner is not None:
+            hetzner_config.update_from_args(self.providers.hetzner, args)
+        elif getattr(args, "hetzner_token", None):
+            if self.providers.hetzner is None:
+                self.providers.hetzner = hetzner_provider()
+            hetzner_config.update_from_args(self.providers.hetzner, args)
 
         if getattr(args, "cloud_server_name", None) is not None:
             self.cloud.server_name = args.cloud_server_name

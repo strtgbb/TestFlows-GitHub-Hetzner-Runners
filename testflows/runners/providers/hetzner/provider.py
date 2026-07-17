@@ -10,7 +10,21 @@ from hcloud.locations.domain import Location
 
 from ...hclient import HClient
 from ...actions import Action
-from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType, ProviderVolume
+from ...cloud_provider import (
+    AcquiredServer,
+    CloudProvider,
+    ProviderServer,
+    ProviderServerType,
+    ProviderVolume,
+    RecycleClaim,
+    RecycleRequest,
+    RetirementResult,
+)
+from ...recycling import (
+    activate_recycled_server,
+    recyclable_server_matches,
+    retire_to_recycle_pool,
+)
 from ...errors import ImageSpecFormatError
 from . import config as hetzner_config
 from ...constants import github_runner_label
@@ -31,6 +45,7 @@ class HetznerCloudProvider(CloudProvider):
         default_image=None,
         max_runners: int = None,
         end_of_life: int = None,
+        recycle_with_rebuild: bool = False,
     ):
         """Initialise the provider.
 
@@ -50,6 +65,7 @@ class HetznerCloudProvider(CloudProvider):
         self._default_image = default_image
         self._max_runners = max_runners
         self._end_of_life = end_of_life
+        self._recycle_with_rebuild = recycle_with_rebuild
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -157,6 +173,57 @@ class HetznerCloudProvider(CloudProvider):
     def list_runner_servers(self) -> list[ProviderServer]:
         """Return all active runner servers using the Hetzner label convention."""
         return self.list_servers(label_selector=f"{github_runner_label}=active")
+
+    def is_recycled_server(self, server: ProviderServer) -> bool:
+        from ...constants import recycle_server_name_prefix
+
+        return server.name.startswith(recycle_server_name_prefix)
+
+    def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
+        return self._claim_matching_recycled_server(
+            request,
+            lambda server, req: recyclable_server_matches(self, server, req),
+        )
+
+    @property
+    def recycled_server_uses_cleanup(self) -> bool:
+        return not self._recycle_with_rebuild
+
+    @property
+    def recycled_server_requires_image_match(self) -> bool:
+        return not self._recycle_with_rebuild
+
+    def is_runner_label_tag(self, key: str) -> bool:
+        return key.startswith("github-hetzner-runner-label")
+
+    def activate_recycled_server(
+        self, claim: RecycleClaim
+    ) -> AcquiredServer | None:
+        return activate_recycled_server(
+            self,
+            claim,
+            rebuild=self._recycle_with_rebuild,
+        )
+
+    def retire_runner_server(
+        self,
+        server: ProviderServer,
+        *,
+        reason: str,
+        recycle_enabled: bool,
+        ssh_key_names: set[str],
+        end_of_life: int,
+        recycle_grace_period: int,
+    ) -> RetirementResult:
+        del reason
+        return retire_to_recycle_pool(
+            self,
+            server,
+            recycle_enabled=recycle_enabled,
+            ssh_key_names=ssh_key_names,
+            end_of_life=end_of_life,
+            recycle_grace_period=recycle_grace_period,
+        )
 
     # ---------------------------------------------------------------------------
     # Runner label helpers

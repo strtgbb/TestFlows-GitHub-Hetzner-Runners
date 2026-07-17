@@ -5,6 +5,8 @@ from hcloud.locations.domain import Location
 from hcloud.server_types.domain import ServerType
 from argparse import ArgumentTypeError
 
+from ...args import switch_type
+
 
 def image_type(v, separator=":"):
     """Hetzner image type argument. Example: x86:system:ubuntu-22.04"""
@@ -48,6 +50,13 @@ def add_arguments(parser):
         metavar="token",
         type=str,
         help="Hetzner Cloud token, default: project config or $HETZNER_TOKEN environment variable",
+    )
+
+    hetzner_group.add_argument(
+        "--hetzner-recycle-with-rebuild",
+        metavar="on|off",
+        type=switch_type,
+        help="rebuild the image when recycling Hetzner servers, either 'on' or 'off', default: off",
     )
 
     hetzner_group.add_argument(

@@ -3,10 +3,8 @@ config:
   github_repository: ${GITHUB_REPOSITORY}
   with_label:
     - self-hosted
-  recycle: true
-  # No-rebuild recycle mode is used by recyclable providers (e.g. Hetzner/AWS).
   # Dedicated static hosts are long-lived inventory and are always reused.
-  recycle_without_rebuild: true
+  # The global recycle switch only controls disposable cloud server pooling.
 
   providers:
     dedicated_static:

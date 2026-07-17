@@ -18,10 +18,18 @@ from setuptools import setup
 with open("README.rst", "r", encoding="utf-8") as fd:
     long_description = fd.read()
 
+# CI substitutes the version placeholder at release time. When it has not been
+# substituted (local / editable installs) it does not start with a digit, so
+# fall back to a valid PEP 440 dev version. Avoid a second literal placeholder
+# token here so the release-time global substitution only touches the line below.
+version = "__VERSION__"
+if not version[:1].isdigit():
+    version = "0.0.0.dev0"
+
 
 setup(
     name="testflows.runners",
-    version="__VERSION__",
+    version=version,
     description="Autoscaling GitHub Actions Runners",
     author="Vitaliy Zakaznikov",
     author_email="vzakaznikov@testflows.com",
@@ -48,8 +56,6 @@ setup(
         "testflows.runners.providers",
         "testflows.runners.providers.hetzner",
         "testflows.runners.providers.aws",
-        "testflows.runners.providers.azure",
-        "testflows.runners.providers.gcp",
         "testflows.runners.providers.scaleway",
     ],
     package_data={
@@ -71,6 +77,7 @@ setup(
     ],
     extras_require={
         "aws": ["boto3>=1.34"],
+        "scaleway": ["scaleway>=2.0"],
         "dev": [],
     },
 )

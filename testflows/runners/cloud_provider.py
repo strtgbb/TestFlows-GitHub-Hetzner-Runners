@@ -241,6 +241,15 @@ class CloudProvider(ABC):
         """Optional hook for providers that derive occupancy from GitHub runner names."""
         del runner_names
 
+    def reap_orphaned_volumes(self) -> None:
+        """Optional hook: reclaim storage left behind after servers are deleted.
+
+        Providers whose teardown detaches (rather than deletes) persistent
+        volumes — e.g. Scaleway, where terminate only detaches boot-on-block SBS
+        volumes — override this to delete the orphans out of band each
+        scale_down cycle. Must be stateless and idempotent. Default is a no-op.
+        """
+
     def release_claim(self, server: "ProviderServer", *, succeeded: bool) -> None:
         """Optional hook: release any provisional claim staked before setup.
 
@@ -271,6 +280,17 @@ class CloudProvider(ABC):
         method hides that scheme and returns a plain set of lowercase label
         value strings (e.g. ``{"self-hosted", "linux", "arm64"}``).
         """
+
+    def get_server_ssh_key_name(self, server: ProviderServer) -> str | None:
+        """Return the SSH-key name stored on the server when it was created, or None.
+
+        Used to verify a server was created by this controller (with one of its
+        SSH keys) before recycling or deleting it. Each provider stores the key
+        name under its own tag; the default reads the shared
+        ``github-runner-ssh-key`` tag (used by AWS and Scaleway). Hetzner
+        overrides this to read its ``github-hetzner-runner-ssh-key`` label.
+        """
+        return server.labels.get("github-runner-ssh-key")
 
     # ---------------------------------------------------------------------------
     # Tag / label operations

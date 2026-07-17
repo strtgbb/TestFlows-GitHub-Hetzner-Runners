@@ -202,7 +202,7 @@ def provider_type(value: str) -> list[str]:
     Raises:
         ArgumentTypeError: If any provider is invalid
     """
-    valid_providers = {"hetzner", "aws", "dedicated_static"}
+    valid_providers = {"hetzner", "aws", "scaleway", "dedicated_static"}
 
     # Split by comma and strip whitespace
     providers = [p.strip() for p in value.split(",")]

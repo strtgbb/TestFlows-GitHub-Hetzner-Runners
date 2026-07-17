@@ -17,7 +17,6 @@ import os
 import sys
 import time
 import queue
-import tempfile
 import logging
 import threading
 import logging.config
@@ -60,10 +59,9 @@ import testflows.runners.projects as projects
 import testflows.runners.volumes as volumes
 
 # Provider-specific argument validators
-from testflows.runners.providers import hetzner, aws
+from testflows.runners.providers import hetzner, aws, scaleway
 
 from requests_cache import DO_NOT_CACHE, EXPIRE_IMMEDIATELY, install_cache
-from requests_cache.backends.filesystem import FileCache
 
 description = f"""Auto-scaling GitHub Actions runners service using Hetzner Cloud.
 
@@ -77,7 +75,7 @@ description = f"""Auto-scaling GitHub Actions runners service using Hetzner Clou
 
     * Command line arguments (highest precedence)
     * Project configuration (if --project is specified or project is set)
-    * Environment variables ($GITHUB_TOKEN, $GITHUB_REPOSITORY, $HETZNER_TOKEN, $RUNNERS_CONFIG)
+    * Environment variables ($GITHUB_TOKEN, $GITHUB_REPOSITORY, $RUNNERS_CONFIG)
     * Configuration file (specified via --config or the default user config '{default_user_config}')
     * Default values (lowest precedence)
 """
@@ -145,14 +143,16 @@ def argparser():
         metavar="name",
         type=args.provider_type,
         help="Enable specific providers using comma-separated list.\n"
-             "Example: --provider hetzner,aws, default: hetzner only or\n"
-             "all providers specified in the configuration file"
+             "Example: --provider hetzner,aws,scaleway,dedicated_static, default:\n"
+             "hetzner only or all providers specified in the configuration file"
     )
 
     # Add provider-specific arguments
     hetzner.args.add_arguments(parser)
 
     aws.args.add_arguments(parser)
+
+    scaleway.args.add_arguments(parser)
 
     parser.add_argument(
         "--ssh-key",
@@ -1739,25 +1739,30 @@ def argparser():
 
 @contextmanager
 def http_cache():
-    """Enable caching of HTTP requests to GitHub api."""
-    with tempfile.TemporaryDirectory() as tempdir:
-        name = os.path.join(tempdir, "http_cache")
+    """Enable caching of HTTP requests to the GitHub/Hetzner APIs.
 
-        with Action(f"Enabling HTTP cache at {name}"):
-            pass
+    Uses the in-memory backend deliberately. The service runs scale_up,
+    scale_down and api_watch concurrently in a thread pool, and requests-cache's
+    SQLite-backed stores (used even by the filesystem backend for its redirects
+    index) share one connection across threads and segfault under that
+    concurrency (requests-cache issue #1008). The memory backend keeps the same
+    revalidation policy without any SQLite; per-run (non-persistent) caching is
+    all this needs, since the policy is EXPIRE_IMMEDIATELY / DO_NOT_CACHE anyway.
+    """
+    with Action("Enabling in-memory HTTP cache"):
+        pass
 
-        install_cache(
-            name=name,
-            backend=FileCache(name),
-            cache_control=True,
-            urls_expire_after={
-                "*.github.com": EXPIRE_IMMEDIATELY,
-                "*.hetzner.cloud": EXPIRE_IMMEDIATELY,
-                "*": DO_NOT_CACHE,
-            },
-        )
+    install_cache(
+        backend="memory",
+        cache_control=True,
+        urls_expire_after={
+            "*.github.com": EXPIRE_IMMEDIATELY,
+            "*.hetzner.cloud": EXPIRE_IMMEDIATELY,
+            "*": DO_NOT_CACHE,
+        },
+    )
 
-        yield
+    yield
 
 
 def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
@@ -1789,51 +1794,75 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
 
         with Action("Constructing cloud providers"):
             providers = provider_factory(config)
-            hetzner_provider = next(
-                (p for p in providers if p.name == "hetzner"), None
-            )
 
-        if hetzner_provider is not None:
-            with Action("Checking if default image exists"):
-                config.default_image = hetzner_provider.get_image(config.default_image)
+        # Per-provider default server type. Providers that carry their own
+        # defaults block (aws, scaleway) supply it there; Hetzner has no
+        # per-provider default and uses the global config.default_server_type.
+        _provider_defaults = {
+            "hetzner": config.providers.hetzner,
+            "aws": config.providers.aws,
+            "scaleway": config.providers.scaleway,
+        }
 
-            with Action("Checking if default location exists"):
-                config.default_location = hetzner_provider.get_location(
-                    config.default_location
+        def _default_server_type_for(p):
+            pcfg = _provider_defaults.get(p.name)
+            pdef = getattr(pcfg, "defaults", None) if pcfg else None
+            return getattr(pdef, "server_type", None) or config.default_server_type
+
+        # Validate each configured provider's defaults up front (fail fast) and
+        # resolve/store them so scale_up and create use validated, provider-
+        # native values. Hetzner uniquely relies on the global config.default_*,
+        # so its resolved values are also written back there.
+        for p in providers:
+            with Action(f"Checking if default image exists ({p.name})"):
+                image_spec = (
+                    p.default_image if p.default_image is not None
+                    else config.default_image
                 )
+                if image_spec is not None:
+                    resolved_image = p.get_image(image_spec)
+                    p._default_image = resolved_image
+                    if p.name == "hetzner":
+                        config.default_image = resolved_image
 
-            with Action("Checking if default volume location exists"):
-                config.default_volume_location = hetzner_provider.get_location(
-                    config.default_volume_location, required=True
+            with Action(f"Checking if default location exists ({p.name})"):
+                loc_spec = (
+                    p.default_location if p.default_location is not None
+                    else config.default_location
                 )
+                resolved_loc = p.get_location(loc_spec)
+                p._default_location = resolved_loc
+                if p.name == "hetzner":
+                    config.default_location = resolved_loc
 
-            with Action("Checking if default server type exists"):
-                config.default_server_type = hetzner_provider.get_server_type(
-                    config.default_server_type
-                )
+            if p.supports_volumes:
+                with Action(f"Checking if default volume location exists ({p.name})"):
+                    config.default_volume_location = p.get_location(
+                        config.default_volume_location, required=True
+                    )
+
+            with Action(f"Checking if default server type exists ({p.name})"):
+                resolved_type = p.get_server_type(_default_server_type_for(p))
+                if p.name == "hetzner":
+                    config.default_server_type = resolved_type
 
             if not config.delete_random:
-                with Action("Getting server prices"):
-                    hetzner_prices = hetzner_provider.get_prices()
-                    config.server_prices = config.server_prices or {}
-                    config.server_prices["hetzner"] = {
-                        "prices": hetzner_prices,
-                        "currency": hetzner_provider.currency,
-                    }
-
-        aws_provider = next((p for p in providers if p.name == "aws"), None)
-        if aws_provider is not None:
-            with Action("Getting EC2 on-demand prices"):
-                from testflows.runners.providers.aws.estimate import check_prices as aws_check_prices
-                try:
-                    aws_prices = aws_check_prices(aws_provider._region, session=aws_provider._session)
-                    config.server_prices = config.server_prices or {}
-                    config.server_prices["aws"] = {
-                        "prices": aws_prices,
-                        "currency": aws_provider.currency,
-                    }
-                except Exception as e:
-                    logger.error(f"Could not fetch EC2 prices: {e}")
+                with Action(f"Getting server prices ({p.name})"):
+                    try:
+                        if p.name == "aws":
+                            from testflows.runners.providers.aws.estimate import (
+                                check_prices as aws_check_prices,
+                            )
+                            prices = aws_check_prices(p._region, session=p._session)
+                        else:
+                            prices = p.get_prices()
+                        config.server_prices = config.server_prices or {}
+                        config.server_prices[p.name] = {
+                            "prices": prices,
+                            "currency": p.currency,
+                        }
+                    except Exception as e:
+                        logger.error(f"Could not fetch prices for {p.name}: {e}")
 
         for p in providers:
             with Action(f"Checking if SSH key exists ({p.name})"):
@@ -1857,7 +1886,7 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
             with Action("Creating scale down service"):
                 scale_down_service: Future = worker_pool.submit(
                     scale_down,
-                    ssh_key=ssh_keys["hetzner"][0] if ssh_keys.get("hetzner") else None,
+                    ssh_keys=ssh_keys,
                     terminate=terminate,
                     mailbox=mailbox,
                     config=config,

@@ -178,6 +178,94 @@
                                 "secret_access_key"
                             ]
                         },
+                        "scaleway": {
+                            "description": "Scaleway provider configuration",
+                            "type": "object",
+                            "properties": {
+                                "access_key": {
+                                    "description": "Scaleway API access key",
+                                    "type": "string",
+                                    "examples": [
+                                        "${SCW_ACCESS_KEY}"
+                                    ]
+                                },
+                                "secret_key": {
+                                    "description": "Scaleway API secret key",
+                                    "type": "string",
+                                    "examples": [
+                                        "${SCW_SECRET_KEY}"
+                                    ]
+                                },
+                                "project_id": {
+                                    "description": "Scaleway project ID",
+                                    "type": "string",
+                                    "examples": [
+                                        "${SCW_DEFAULT_PROJECT_ID}"
+                                    ]
+                                },
+                                "organization_id": {
+                                    "description": "Scaleway organization ID",
+                                    "type": "string",
+                                    "examples": [
+                                        "${SCW_DEFAULT_ORGANIZATION_ID}"
+                                    ]
+                                },
+                                "ssh_user": {
+                                    "description": "SSH login user for Scaleway images, default: root",
+                                    "type": "string",
+                                    "examples": [
+                                        "root"
+                                    ]
+                                },
+                                "max_runners": {
+                                    "description": "Per-provider runner cap",
+                                    "type": "integer"
+                                },
+                                "end_of_life": {
+                                    "description": "Per-provider end-of-life in minutes",
+                                    "type": "integer"
+                                },
+                                "defaults": {
+                                    "description": "Default server specifications for Scaleway",
+                                    "type": "object",
+                                    "properties": {
+                                        "image": {
+                                            "description": "Default image UUID or marketplace label",
+                                            "type": "string",
+                                            "examples": [
+                                                "ubuntu_jammy"
+                                            ]
+                                        },
+                                        "server_type": {
+                                            "description": "Default instance type in canonical dot-form (not Scaleway's dash-form DEV1-S)",
+                                            "type": "string",
+                                            "examples": [
+                                                "dev1.m"
+                                            ]
+                                        },
+                                        "location": {
+                                            "description": "Default Scaleway zone",
+                                            "type": "string",
+                                            "examples": [
+                                                "fr-par-1"
+                                            ]
+                                        },
+                                        "volume_size": {
+                                            "description": "Default volume size in GB",
+                                            "type": "integer",
+                                            "examples": [
+                                                20
+                                            ]
+                                        }
+                                    }
+                                }
+                            },
+                            "required": [
+                                "access_key",
+                                "secret_key",
+                                "project_id"
+                            ]
+                        },
                         "dedicated_static": {
                             "description": "Static dedicated-host provider configuration",
                             "type": "object",

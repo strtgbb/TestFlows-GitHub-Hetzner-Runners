@@ -129,6 +129,32 @@ class aws_provider:
 
 
 @dataclass
+class scaleway_provider:
+    """Scaleway provider configuration.
+
+    Instance types are configured in the canonical dot-form (e.g. ``dev1.s``),
+    not Scaleway's native dash-form (``DEV1-S``), because the runner label
+    grammar reserves ``-`` as a separator.
+    """
+
+    access_key: str = None
+    secret_key: str = None
+    project_id: str = None
+    organization_id: str = None
+    ssh_user: str = "root"
+    max_runners: int = None
+    end_of_life: int = None
+    defaults: provider_defaults = dataclasses.field(
+        default_factory=lambda: provider_defaults(
+            image="ubuntu_jammy",
+            server_type="dev1.m",
+            location="fr-par-1",
+            volume_size=20,
+        )
+    )
+
+
+@dataclass
 class dedicated_static_ssh:
     user: str = "root"
     port: int = 22
@@ -159,6 +185,7 @@ class provider_list:
 
     hetzner: hetzner_provider = None
     aws: aws_provider = None
+    scaleway: scaleway_provider = None
     dedicated_static: dedicated_static_provider = None
 
 
@@ -184,7 +211,11 @@ class Config:
 
     github_token: str = os.getenv("GITHUB_TOKEN")
     github_repository: str = os.getenv("GITHUB_REPOSITORY")
-    hetzner_token: str = os.getenv("HETZNER_TOKEN")
+    # Not read from the environment: an ambient HETZNER_TOKEN must not silently
+    # configure Hetzner. Set it explicitly via --hetzner-token, the config file
+    # (hetzner_token or providers.hetzner.token). Backfilled from
+    # providers.hetzner.token below for legacy internal readers.
+    hetzner_token: str = None
 
     # Multi-provider configuration
     providers: provider_list = dataclasses.field(default_factory=provider_list)
@@ -324,14 +355,24 @@ class Config:
                 and bool(self.providers.aws.access_key_id)
                 and bool(self.providers.aws.secret_access_key)
             )
+            has_scaleway = (
+                self.providers.scaleway is not None
+                and bool(self.providers.scaleway.access_key)
+                and bool(self.providers.scaleway.secret_key)
+                and bool(self.providers.scaleway.project_id)
+            )
             has_dedicated_static = (
                 self.providers.dedicated_static is not None
                 and bool(self.providers.dedicated_static.groups)
             )
-            if not (has_hetzner or has_aws or has_dedicated_static):
+            if not (
+                has_hetzner or has_aws or has_scaleway or has_dedicated_static
+            ):
                 print(
                     "argument error: no cloud provider configured; "
-                    "set --hetzner-token or add providers.hetzner.token / providers.aws credentials / providers.dedicated_static.groups to config file",
+                    "set --hetzner-token or add providers.hetzner.token / "
+                    "providers.aws / providers.scaleway credentials / "
+                    "providers.dedicated_static.groups to config file",
                     file=sys.stderr,
                 )
                 sys.exit(1)

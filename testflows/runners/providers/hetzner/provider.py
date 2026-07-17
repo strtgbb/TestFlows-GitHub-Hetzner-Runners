@@ -229,6 +229,12 @@ class HetznerCloudProvider(CloudProvider):
     # Tag / label operations
     # ---------------------------------------------------------------------------
 
+    def get_server_ssh_key_name(self, server: ProviderServer) -> str | None:
+        """Return the SSH-key name stored under Hetzner's ssh-key label, or None."""
+        from ...constants import server_ssh_key_label
+
+        return server.labels.get(server_ssh_key_label)
+
     def get_server_tag(self, server: ProviderServer, key: str) -> str | None:
         """Return the value of a server label, or None."""
         return server.labels.get(key)

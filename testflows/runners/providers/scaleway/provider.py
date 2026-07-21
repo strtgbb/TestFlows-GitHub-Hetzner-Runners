@@ -16,8 +16,6 @@ native dash-form (``DEV1-S``) via :func:`utils.native_type` / :func:`utils.canon
 import time
 import hashlib
 import logging
-import os
-import threading
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -106,11 +104,6 @@ class ScalewayCloudProvider(CloudProvider):
         self._ssh_user = ssh_user
         self._max_runners = max_runners
         self._end_of_life = end_of_life
-        orphan_key = hashlib.sha256(f"{project_id}:{zone}".encode()).hexdigest()[:12]
-        self._orphan_state_path = os.path.expanduser(
-            f"~/.cache/testflows-runners/scaleway-{orphan_key}-orphan-volumes"
-        )
-        self._orphan_state_lock = threading.Lock()
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -169,37 +162,60 @@ class ScalewayCloudProvider(CloudProvider):
         automount: bool = False,
         public_net=None,
     ) -> ProviderServer:
-        """Create a Scaleway Instance, power it on, and return a ProviderServer.
+        """Create a Scaleway Instance from a pre-created boot volume, power it on.
+
+        The SBS boot volume is created from the image's root snapshot and tagged
+        *before* the instance exists (see ``_create_boot_volume``), so the
+        ``after_scale_down`` reaper can reclaim it on every failure path — there
+        is no untagged window to compensate for.
 
         ``ssh_keys`` is accepted for interface compatibility but not passed to
         the API: Scaleway injects the project's registered SSH keys at boot
         (see ``get_or_create_ssh_key``).  ``volumes``/``automount``/``public_net``
-        are ignored in v1.
+        are ignored (the boot volume is derived from the image).
         """
-        from scaleway.instance.v1 import ServerAction
+        from scaleway.instance.v1 import (
+            ServerAction,
+            VolumeServerTemplate,
+            VolumeVolumeType,
+        )
+
+        del ssh_keys, volumes, automount, public_net
 
         zone = location or self._zone
         commercial_type = native_type(server_type.name)
+        boot_volume_name = f"{name}-boot"[:60]
 
-        # Scaleway create_server provisions a *stopped* server; we power it on
-        # afterwards.  dynamic_ip_required attaches an automatic public IPv4.
-        # The SDK exposes this as the single-underscore ``_create_server``.
+        boot_volume_id = self._create_boot_volume(
+            image_uuid=image,
+            zone=zone,
+            name=boot_volume_name,
+            tags=[_RUNNER_VOLUME_TAG],
+        )
+
+        # Volume-first create: attach the tagged SBS boot volume by id and omit
+        # ``image`` (the boot volume already carries the image contents). The
+        # SDK exposes this as the single-underscore ``_create_server``.
         created = self._instance._create_server(
             zone=zone,
             name=name,
             commercial_type=commercial_type,
-            image=image,
             dynamic_ip_required=True,
             protected=False,
             tags=dict_to_tags(labels),
             project=self._project_id,
+            volumes={
+                "0": VolumeServerTemplate(
+                    id=boot_volume_id,
+                    boot=True,
+                    volume_type=VolumeVolumeType.SBS_VOLUME,
+                    name=boot_volume_name,
+                )
+            },
         )
         server = created.server
 
         try:
-            # Tag boot-on-block volumes before power-on so every later terminate
-            # path can discover and reap them.
-            self._tag_boot_volumes(server, zone)
             self._instance.server_action(
                 server_id=server.id, zone=zone, action=ServerAction.POWERON
             )
@@ -208,7 +224,14 @@ class ScalewayCloudProvider(CloudProvider):
                     server.id, zone, states={"running"}, timeout=300
                 )
         except Exception:
-            self._cleanup_failed_create(server, zone)
+            # Best-effort terminate of the partial instance; the boot volume is
+            # tagged, so the reaper reclaims it no matter how this is stranded.
+            try:
+                self._instance.server_action(
+                    server_id=server.id, zone=zone, action=ServerAction.TERMINATE
+                )
+            except Exception:
+                pass
             raise
 
         return _server_to_provider(server, ssh_user=self._ssh_user)
@@ -230,107 +253,82 @@ class ScalewayCloudProvider(CloudProvider):
             server_id=server.id, zone=server.location, action=ServerAction.TERMINATE
         )
 
-    def _tag_boot_volumes(self, server, zone) -> None:
-        """Tag the instance's SBS (boot-on-block) volumes for later reaping."""
-        for vol in (getattr(server, "volumes", None) or {}).values():
-            vtype = str(getattr(vol, "volume_type", "")).lower()
-            vid = getattr(vol, "id", None)
-            if vid and ("sbs" in vtype or "b_ssd" in vtype):
-                last_error = None
-                for _ in range(3):
-                    try:
-                        self._block.update_volume(
-                            volume_id=vid, zone=zone, tags=[_RUNNER_VOLUME_TAG]
-                        )
-                        last_error = None
-                        break
-                    except Exception as exc:
-                        last_error = exc
-                        time.sleep(1)
-                if last_error is not None:
-                    raise RuntimeError(
-                        f"could not tag boot volume {vid} for reaping"
-                    ) from last_error
+    def _create_boot_volume(
+        self,
+        image_uuid: str,
+        zone: str,
+        name: str,
+        tags: list,
+        size: int | None = None,
+    ) -> str:
+        """Create a tagged SBS boot volume from an image's root snapshot.
 
-    def _cleanup_failed_create(self, server, zone) -> None:
-        """Best-effort compensation for a partially created Instance."""
-        from scaleway.instance.v1 import ServerAction
+        The volume is tagged *at creation*, so the ``after_scale_down`` reaper
+        can always reclaim it — this closes the untagged window the old
+        create-then-tag flow left open. Returns the new volume id.
 
-        volume_ids = [
-            getattr(volume, "id", None)
-            for volume in (getattr(server, "volumes", None) or {}).values()
-            if getattr(volume, "id", None)
-            and (
-                "sbs" in str(getattr(volume, "volume_type", "")).lower()
-                or "b_ssd" in str(getattr(volume, "volume_type", "")).lower()
+        Shaped for reuse by a future ``rebuild_server``: ``tags`` and ``size``
+        are parameters rather than hardcoded.
+
+        Only own-project SBS images work. A marketplace/public image's root
+        snapshot lives in another project, and the Block API denies creating a
+        volume from it, so we surface a helpful ``ImageError``.
+        """
+        from scaleway.block.v1 import CreateVolumeRequestFromSnapshot
+        from scaleway_core.api import ScalewayException
+
+        response = self._instance.get_image(image_id=image_uuid, zone=zone)
+        image = getattr(response, "image", response)
+        root_volume = getattr(image, "root_volume", None)
+        if root_volume is None or (
+            str(getattr(root_volume, "volume_type", "")).lower() != "sbs_snapshot"
+        ):
+            raise ImageError(
+                f"Scaleway image {image_uuid!r} has no SBS snapshot root volume; "
+                f"only SBS custom images are supported. Bake an SBS image in your "
+                f"project (local or marketplace images cannot be used)."
             )
-        ]
-        orphan_state_error = None
+
+        # root_volume.size is unreliable (reports 0); read the snapshot's real
+        # size when we own it. A cross-project (marketplace) snapshot is not
+        # readable — we fall through with size=None and surface the helpful
+        # error when create_volume is denied below.
+        volume_size = size
+        if volume_size is None:
+            try:
+                snapshot = self._block.get_snapshot(
+                    snapshot_id=root_volume.id, zone=zone
+                )
+                volume_size = getattr(snapshot, "size", None)
+            except ScalewayException:
+                volume_size = None
+
         try:
-            self._record_orphan_volumes(volume_ids)
-        except Exception as exc:
-            orphan_state_error = exc
-        try:
-            self._instance.server_action(
-                server_id=server.id, zone=zone, action=ServerAction.TERMINATE
+            volume = self._block.create_volume(
+                zone=zone,
+                name=name,
+                project_id=self._project_id,
+                tags=list(tags),
+                from_snapshot=CreateVolumeRequestFromSnapshot(
+                    snapshot_id=root_volume.id, size=volume_size
+                ),
             )
-        except Exception:
-            pass
+        except ScalewayException as exc:
+            if getattr(exc, "status_code", None) == 403:
+                raise ImageError(
+                    f"Scaleway denied creating a volume from image {image_uuid!r}: "
+                    f"its root snapshot is not in your project (a marketplace or "
+                    f"public image). Bake the image into your own project as an SBS "
+                    f"custom image and reference that instead."
+                ) from exc
+            raise
 
-        for volume_id in volume_ids:
-            try:
-                self._block.delete_volume(volume_id=volume_id, zone=zone)
-            except Exception as exc:
-                if getattr(exc, "status_code", None) != 404:
-                    continue
-            try:
-                self._clear_orphan_volume(volume_id)
-            except Exception as exc:
-                orphan_state_error = orphan_state_error or exc
-        if orphan_state_error is not None:
-            with Action(
-                f"Could not persist failed-create volume cleanup state: {orphan_state_error}",
-                stacklevel=3,
-                ignore_fail=True,
-            ):
-                pass
-
-    def _load_orphan_volumes(self) -> set[str]:
-        try:
-            with open(self._orphan_state_path, encoding="utf-8") as state:
-                return {line.strip() for line in state if line.strip()}
-        except FileNotFoundError:
-            return set()
-
-    def _save_orphan_volumes(self, volume_ids: set[str]) -> None:
-        os.makedirs(os.path.dirname(self._orphan_state_path), exist_ok=True)
-        temporary_path = f"{self._orphan_state_path}.tmp"
-        with open(temporary_path, "w", encoding="utf-8") as state:
-            state.write("".join(f"{volume_id}\n" for volume_id in sorted(volume_ids)))
-        os.replace(temporary_path, self._orphan_state_path)
-
-    def _record_orphan_volumes(self, volume_ids: list[str]) -> None:
-        with self._orphan_state_lock:
-            recorded = self._load_orphan_volumes()
-            recorded.update(volume_ids)
-            self._save_orphan_volumes(recorded)
-
-    def _clear_orphan_volume(self, volume_id: str) -> None:
-        with self._orphan_state_lock:
-            recorded = self._load_orphan_volumes()
-            recorded.discard(volume_id)
-            self._save_orphan_volumes(recorded)
-
-    def _reap_recorded_orphan_volumes(self) -> None:
-        with self._orphan_state_lock:
-            recorded = self._load_orphan_volumes()
-        for volume_id in recorded:
-            try:
-                self._block.delete_volume(volume_id=volume_id, zone=self._zone)
-            except Exception as exc:
-                if getattr(exc, "status_code", None) != 404:
-                    continue
-            self._clear_orphan_volume(volume_id)
+        with Action(
+            f"Waiting for Scaleway boot volume {volume.id} to be ready",
+            stacklevel=3,
+        ):
+            self._block.wait_for_volume(volume_id=volume.id, zone=zone)
+        return volume.id
 
     def after_scale_down(self) -> None:
         """Run provider maintenance after scale-down decisions."""
@@ -345,7 +343,6 @@ class ScalewayCloudProvider(CloudProvider):
         detached longer than a short grace, so we never race an in-flight
         create. Stateless and idempotent — safe to run every scale_down cycle.
         """
-        self._reap_recorded_orphan_volumes()
         try:
             volumes = self._block.list_volumes_all(
                 zone=self._zone, tags=[_RUNNER_VOLUME_TAG], include_deleted=False

@@ -29,6 +29,8 @@ def mock_scaleway_sdk(self):
         "scaleway.iam.v1alpha1",
         "scaleway.marketplace",
         "scaleway.marketplace.v2",
+        "scaleway_core",
+        "scaleway_core.api",
     ]
     saved = {name: sys.modules.get(name) for name in names}
     try:
@@ -45,14 +47,49 @@ def mock_scaleway_sdk(self):
 
         instance_mod.ServerAction = ServerAction
 
+        class VolumeVolumeType:
+            SBS_VOLUME = "sbs_volume"
+            SBS_SNAPSHOT = "sbs_snapshot"
+            L_SSD = "l_ssd"
+            B_SSD = "b_ssd"
+
+        instance_mod.VolumeVolumeType = VolumeVolumeType
+
+        class VolumeServerTemplate:
+            def __init__(self, **kwargs):
+                self.__dict__.update(kwargs)
+
+        instance_mod.VolumeServerTemplate = VolumeServerTemplate
+
         block_mod = types.ModuleType("scaleway.block.v1")
         block_mod.BlockV1API = MagicMock(name="BlockV1API")
+
+        class CreateVolumeRequestFromSnapshot:
+            def __init__(self, snapshot_id=None, size=None):
+                self.snapshot_id = snapshot_id
+                self.size = size
+
+        block_mod.CreateVolumeRequestFromSnapshot = CreateVolumeRequestFromSnapshot
 
         iam_mod = types.ModuleType("scaleway.iam.v1alpha1")
         iam_mod.IamV1Alpha1API = MagicMock(name="IamV1Alpha1API")
 
         marketplace_mod = types.ModuleType("scaleway.marketplace.v2")
         marketplace_mod.MarketplaceV2API = MagicMock(name="MarketplaceV2API")
+
+        # scaleway_core.api.ScalewayException — caught by the provider's create /
+        # image-resolution paths; faked so tests can simulate API errors (e.g. a
+        # 403 on a cross-project marketplace snapshot).
+        core_mod = types.ModuleType("scaleway_core")
+        core_api_mod = types.ModuleType("scaleway_core.api")
+
+        class ScalewayException(Exception):
+            def __init__(self, *args, status_code=None, **kwargs):
+                super().__init__(*args)
+                self.status_code = status_code
+
+        core_api_mod.ScalewayException = ScalewayException
+        core_mod.api = core_api_mod
 
         sys.modules["scaleway"] = scaleway_mod
         sys.modules["scaleway.instance"] = types.ModuleType("scaleway.instance")
@@ -63,6 +100,8 @@ def mock_scaleway_sdk(self):
         sys.modules["scaleway.iam.v1alpha1"] = iam_mod
         sys.modules["scaleway.marketplace"] = types.ModuleType("scaleway.marketplace")
         sys.modules["scaleway.marketplace.v2"] = marketplace_mod
+        sys.modules["scaleway_core"] = core_mod
+        sys.modules["scaleway_core.api"] = core_api_mod
 
         yield scaleway_mod
     finally:

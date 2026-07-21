@@ -1800,44 +1800,64 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
         def _default_server_type_for(p):
             pcfg = _provider_defaults.get(p.name)
             pdef = getattr(pcfg, "defaults", None) if pcfg else None
-            return getattr(pdef, "server_type", None) or config.default_server_type
+            own = getattr(pdef, "server_type", None)
+            if own is not None:
+                return own
+            # The global config.default_* belong to whichever provider owns them
+            # (see CloudProvider.owns_global_config_defaults); a provider without
+            # its own default has nothing to validate here.
+            return config.default_server_type if p.owns_global_config_defaults else None
 
         # Validate each configured provider's defaults up front (fail fast) and
         # resolve/store them so scale_up and create use validated, provider-
-        # native values. Hetzner uniquely relies on the global config.default_*,
-        # so its resolved values are also written back there.
+        # native values. The global config.default_* are owned by a single
+        # provider (Hetzner); its resolved values are written back to config for
+        # the other readers (scale_up, service command, deploy, dashboard).
         for p in providers:
+            # Each provider validates its own defaults. The global config.default_*
+            # are a Hetzner-shaped spec that belongs to the owning provider only;
+            # handing it to another provider (e.g. dedicated_static, which has no
+            # image concept) would make its get_image/get_location/get_server_type
+            # reject it and abort startup. A provider with no default of its own
+            # has nothing to validate here (specs resolve per-job from labels).
+            owns_global = p.owns_global_config_defaults
+
             with Action(f"Checking if default image exists ({p.name})"):
-                image_spec = (
-                    p.default_image if p.default_image is not None
-                    else config.default_image
-                )
+                image_spec = p.default_image
+                if image_spec is None and owns_global:
+                    image_spec = config.default_image
                 if image_spec is not None:
                     resolved_image = p.get_image(image_spec)
                     p._default_image = resolved_image
-                    if p.name == "hetzner":
+                    if owns_global:
                         config.default_image = resolved_image
 
             with Action(f"Checking if default location exists ({p.name})"):
-                loc_spec = (
-                    p.default_location if p.default_location is not None
-                    else config.default_location
-                )
-                resolved_loc = p.get_location(loc_spec)
-                p._default_location = resolved_loc
-                if p.name == "hetzner":
-                    config.default_location = resolved_loc
+                loc_spec = p.default_location
+                if loc_spec is None and owns_global:
+                    loc_spec = config.default_location
+                if loc_spec is not None:
+                    resolved_loc = p.get_location(loc_spec)
+                    p._default_location = resolved_loc
+                    if owns_global:
+                        config.default_location = resolved_loc
 
-            if p.supports_volumes:
+            # config.default_volume_location is another global (Hetzner-shaped)
+            # default, so only its owner validates/writes it back. Today only
+            # Hetzner supports volumes, so this is behavior-preserving; the gate
+            # keeps a future non-Hetzner volume provider from inheriting it.
+            if p.supports_volumes and owns_global:
                 with Action(f"Checking if default volume location exists ({p.name})"):
                     config.default_volume_location = p.get_location(
                         config.default_volume_location, required=True
                     )
 
-            with Action(f"Checking if default server type exists ({p.name})"):
-                resolved_type = p.get_server_type(_default_server_type_for(p))
-                if p.name == "hetzner":
-                    config.default_server_type = resolved_type
+            default_type = _default_server_type_for(p)
+            if default_type is not None:
+                with Action(f"Checking if default server type exists ({p.name})"):
+                    resolved_type = p.get_server_type(default_type)
+                    if owns_global:
+                        config.default_server_type = resolved_type
 
             if not config.delete_random:
                 with Action(f"Getting server prices ({p.name})"):

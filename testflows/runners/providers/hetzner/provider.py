@@ -83,6 +83,12 @@ class HetznerCloudProvider(CloudProvider):
     def supports_volumes(self) -> bool:
         return True
 
+    @property
+    def owns_global_config_defaults(self) -> bool:
+        # Hetzner's default image/location/server-type live in the top-level
+        # config.default_* (legacy), not under providers.hetzner.defaults.
+        return True
+
     # ---------------------------------------------------------------------------
     # Server lifecycle
     # ---------------------------------------------------------------------------

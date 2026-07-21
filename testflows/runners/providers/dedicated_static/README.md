@@ -17,7 +17,7 @@ differently — read them before changing anything here.
 | Existence | a server exists ⇔ it's allocated | host **always exists**; allocation is tracked separately (see lease model) |
 | Setup step | `setup.sh` (provisioning) | **`recycle.sh` (cleanup)** — see "Setup step" |
 | Setup-step script label | `setup-<name>` | `recycle-<name>` (**`setup-` ignored**) |
-| `supports_recycling` | Hetzner `True` | **`False`** — never enters the power-off/rename/rebuild parking loop |
+| Recycling | stopped-server pool | **lease cleanup/release** — never enters the power-off parking loop |
 | `power_off`/`power_on`/`rebuild` | implemented | **`NotImplementedError`** (can't power-cycle someone else's hardware) |
 | Runner name | `{name}-{type}-{location}` | **bare stable `static_name`** — see "Naming" |
 | Images | AMI / hcloud image | **none** — `image-` labels are silently ignored (the lease is fixed hardware) |
@@ -56,16 +56,15 @@ strand a static host — the provider can't power it back on (see the table). A 
 `startup-<name>` script must honour the `RUNNER_ON_EXIT` env var rather than hard-coding shutdown.
 
 **Ignored config.** Static hosts are reused in place, never parked, so the cloud recycle/parking
-options have no effect here: `recycle`, `recycle_without_rebuild`, and `recycle_grace_period` are
-all ignored.
+options have no effect here: `recycle` and `recycle_grace_period` are ignored.
 
 ## Lease model
 
 Because a host always exists, "is this host in use?" can't be answered by existence. Two layers
 answer it:
 
-1. **In-memory lease cache** (`_StaticHost.lease_name`) — re-derived every cycle from the live
-   GitHub runner list by `reconcile_runner_leases`: a host whose `static_name` is a registered
+1. **In-memory lease cache** (`_StaticHost.lease_name`) — re-derived by the provider's
+   pre-cycle hooks from the live GitHub runner list: a host whose `static_name` is a registered
    runner is leased; everything else is cleared. This is a **cache, not the source of truth** —
    it does not survive a restart and is rebuilt from GitHub each cycle.
 2. **Durable claim marker** (`/run/user/$UID/testflows-github-runners/claim`) — covers the gap the cache can't: the
@@ -74,7 +73,7 @@ answer it:
    others get `EEXIST`, so it's safe across controller processes and restarts. A marker older
    than `claim_ttl_minutes` (default 360 minutes) is treated as a crashed/abandoned setup and
    reclaimed. On successful setup the claim is kept (reboot-scoped behavior); on setup failure
-   `release_claim` clears it and also frees the in-memory lease.
+   `after_server_setup` clears it and also frees the in-memory lease.
 
    This is how a freshly-leased host still in setup isn't double-dispatched to a second queued
    job before its runner has registered.

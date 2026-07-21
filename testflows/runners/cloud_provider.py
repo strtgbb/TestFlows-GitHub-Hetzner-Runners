@@ -3,6 +3,8 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+import hashlib
+import threading
 from typing import Any
 
 
@@ -63,6 +65,48 @@ class ProviderServer:
     _native: Any = field(default=None, repr=False)
 
 
+@dataclass(frozen=True)
+class RecycleRequest:
+    """Provider-neutral requirements for reusing an existing runner server."""
+
+    name: str
+    server_type: str
+    location: str | None
+    image: Any
+    labels: dict[str, str]
+    ssh_key_names: frozenset[str]
+    candidates: tuple[ProviderServer, ...] | None = None
+    volume_names: frozenset[str] = frozenset()
+    enable_ipv4: bool = True
+    enable_ipv6: bool = True
+    timeout: int = 60
+
+
+@dataclass(frozen=True)
+class RecycleClaim:
+    """An in-process reservation of a recyclable server."""
+
+    server: ProviderServer
+    request: RecycleRequest
+
+
+@dataclass
+class AcquiredServer:
+    """Server returned by a provider acquisition transition."""
+
+    server: ProviderServer
+    reused: bool
+    use_recycle_script: bool
+
+
+@dataclass(frozen=True)
+class RetirementResult:
+    """Result of retiring a runner server."""
+
+    action: str
+    server_name: str
+
+
 class CloudProvider(ABC):
     """Abstract base class for cloud provider implementations.
 
@@ -80,6 +124,7 @@ class CloudProvider(ABC):
     STATUS_MIGRATING = "migrating"
     STATUS_DELETING = "deleting"
     STATUS_UNKNOWN = "unknown"
+    _claim_state_init_lock = threading.Lock()
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -129,9 +174,12 @@ class CloudProvider(ABC):
         """Human-readable provider name, e.g. 'hetzner' or 'aws'."""
 
     @property
-    @abstractmethod
     def supports_recycling(self) -> bool:
-        """True if this provider supports server recycling (rebuild/repurpose)."""
+        """Compatibility indicator for providers that reuse runner capacity.
+
+        Lifecycle orchestration must use the acquire/retire methods instead.
+        """
+        return False
 
     @property
     def supports_volumes(self) -> bool:
@@ -139,6 +187,22 @@ class CloudProvider(ABC):
 
         Defaults to False. Providers that implement create/get/list_volume
         should override this to return True.
+        """
+        return False
+
+    @property
+    def owns_global_config_defaults(self) -> bool:
+        """Whether this provider owns the top-level ``config.default_*`` slots.
+
+        For backward compatibility Hetzner's default image/location/server-type
+        live in the global ``config.default_*`` (read by scale_up, the service
+        install command, cloud deploy, and the dashboard) rather than under
+        ``providers.<name>.defaults`` like every other provider. Exactly one
+        provider may own them; the owner uses them as its defaults and the
+        startup validator writes the resolved values back to ``config``. Every
+        other provider uses only its own provider-level defaults, so it is never
+        handed a foreign (Hetzner-shaped) spec it cannot resolve. Defaults to
+        False; Hetzner overrides to True.
         """
         return False
 
@@ -237,28 +301,167 @@ class CloudProvider(ABC):
         convention (e.g. Hetzner uses ``github-hetzner-runner=active``).
         """
 
-    def reconcile_runner_leases(self, runner_names: set[str]) -> None:
-        """Optional hook for providers that derive occupancy from GitHub runner names."""
-        del runner_names
+    def before_scale_up(self, managed_runner_names: frozenset[str]) -> None:
+        """Optional hook before scale-up provider inventory is read."""
+        del managed_runner_names
 
-    def reap_orphaned_volumes(self) -> None:
-        """Optional hook: reclaim storage left behind after servers are deleted.
+    def before_scale_down(self, managed_runner_names: frozenset[str]) -> None:
+        """Optional hook before scale-down provider inventory is read."""
+        del managed_runner_names
 
-        Providers whose teardown detaches (rather than deletes) persistent
-        volumes — e.g. Scaleway, where terminate only detaches boot-on-block SBS
-        volumes — override this to delete the orphans out of band each
-        scale_down cycle. Must be stateless and idempotent. Default is a no-op.
+    def after_scale_down(self) -> None:
+        """Optional hook after each scale-down cycle."""
+
+    def after_server_setup(
+        self, server: ProviderServer, error: BaseException | None
+    ) -> None:
+        """Optional hook after a server setup attempt."""
+        del server, error
+
+    def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
+        """Reserve a compatible recyclable server, or return None.
+
+        Providers with a reusable stopped-server pool override this method.
+        Static providers acquire reusable hosts through ``create_server``.
         """
+        del request
+        return None
 
-    def release_claim(self, server: "ProviderServer", *, succeeded: bool) -> None:
-        """Optional hook: release any provisional claim staked before setup.
+    @property
+    def recycled_server_uses_cleanup(self) -> bool:
+        """Whether pooled activation requires a recycle cleanup script."""
+        return False
 
-        Providers that durably claim a host before provisioning (e.g. the
-        dedicated_static claim marker) can clear it here once setup finishes.
-        ``succeeded`` is False when setup raised, in which case the host should
-        also be freed for re-dispatch. Default is a no-op.
+    @property
+    def recycled_server_requires_image_match(self) -> bool:
+        """Whether restart recycling requires the original image to match."""
+        return True
+
+    def recycle_image_id(self, image: Any) -> str:
+        """Return a stable image identifier stored on recyclable servers."""
+        image_id = getattr(image, "id", None)
+        if image_id is not None:
+            identity = f"id:{image_id}"
+        else:
+            image_name = getattr(image, "name", None)
+            identity = f"name:{image_name}" if image_name else str(image)
+        return hashlib.sha256(identity.encode()).hexdigest()[:32]
+
+    def is_runner_label_tag(self, key: str) -> bool:
+        """Return whether *key* stores a GitHub runner label."""
+        del key
+        return False
+
+    def labels_for_recycled_server(
+        self, server: ProviderServer, runner_labels: dict[str, str]
+    ) -> dict[str, str]:
+        """Replace stale runner labels while preserving unrelated metadata."""
+        labels = {
+            key: value
+            for key, value in server.labels.items()
+            if not self.is_runner_label_tag(key)
+        }
+        labels.update(runner_labels)
+        return labels
+
+    def activate_recycled_server(self, claim: RecycleClaim) -> AcquiredServer:
+        """Activate a previously claimed recyclable server."""
+        raise NotImplementedError(f"provider '{self.name}' has no recyclable pool")
+
+    def release_recycle_claim(self, claim: RecycleClaim) -> None:
+        """Release an in-process recyclable-server reservation."""
+        lock, claimed = self._recycle_claim_state()
+        with lock:
+            claimed.discard(str(claim.server.id))
+
+    def is_recycle_claimed(self, server: ProviderServer) -> bool:
+        """Return whether *server* is reserved for activation."""
+        lock, claimed = self._recycle_claim_state()
+        with lock:
+            server_id = str(server.id)
+            return server_id in claimed or server_id in self._recycle_deleting_ids
+
+    def reserve_recycled_server(self, server: ProviderServer) -> bool:
+        """Atomically reserve *server* against activation or eviction."""
+        lock, claimed = self._recycle_claim_state()
+        with lock:
+            server_id = str(server.id)
+            if server_id in claimed or server_id in self._recycle_deleting_ids:
+                return False
+            claimed.add(server_id)
+            return True
+
+    def release_recycled_server(self, server: ProviderServer) -> None:
+        """Release a reservation created for activation or eviction."""
+        lock, claimed = self._recycle_claim_state()
+        with lock:
+            claimed.discard(str(server.id))
+
+    def mark_recycled_server_deleting(self, server: ProviderServer) -> None:
+        """Keep a tombstone reservation until deletion is observed."""
+        lock, claimed = self._recycle_claim_state()
+        with lock:
+            server_id = str(server.id)
+            claimed.discard(server_id)
+            self._recycle_deleting_ids.add(server_id)
+
+    def is_recycled_server(self, server: ProviderServer) -> bool:
+        """Return whether *server* belongs to this provider's recyclable pool."""
+        del server
+        return False
+
+    def retire_runner_server(
+        self,
+        server: ProviderServer,
+        *,
+        reason: str,
+        recycle_enabled: bool,
+        ssh_key_names: set[str],
+        end_of_life: int,
+        recycle_grace_period: int,
+    ) -> RetirementResult:
+        """Retire a runner server.
+
+        The default lifecycle is create/delete. Reusable cloud and static
+        providers override this to park or release resources.
         """
-        del server, succeeded
+        del reason, recycle_enabled, end_of_life, recycle_grace_period
+        if not self.has_matching_ssh_key(server, ssh_key_names):
+            return RetirementResult("unmanaged", server.name)
+        self.delete_server(server)
+        return RetirementResult("deleted", server.name)
+
+    def _recycle_claim_state(self) -> tuple[threading.Lock, set[str]]:
+        """Return the provider-local lock and claimed server IDs."""
+        if not hasattr(self, "_recycle_claim_lock"):
+            with self._claim_state_init_lock:
+                if not hasattr(self, "_recycle_claim_lock"):
+                    self._recycle_claim_lock = threading.Lock()
+                    self._recycle_claimed_ids = set()
+                    self._recycle_deleting_ids = set()
+        return self._recycle_claim_lock, self._recycle_claimed_ids
+
+    def _claim_matching_recycled_server(
+        self, request: RecycleRequest, matches
+    ) -> RecycleClaim | None:
+        """Reserve the first provider server accepted by *matches*."""
+        servers = (
+            list(request.candidates)
+            if request.candidates is not None
+            else self.list_runner_servers()
+        )
+        lock, claimed = self._recycle_claim_state()
+        with lock:
+            live_ids = {str(server.id) for server in servers}
+            self._recycle_deleting_ids.intersection_update(live_ids)
+            for server in servers:
+                server_id = str(server.id)
+                if server_id in claimed or server_id in self._recycle_deleting_ids:
+                    continue
+                if matches(server, request):
+                    claimed.add(server_id)
+                    return RecycleClaim(server=server, request=request)
+        return None
 
     def build_runner_name(self, server: ProviderServer) -> str:
         """Build GitHub runner registration name for a server.
@@ -306,6 +509,16 @@ class CloudProvider(ABC):
 
         Existing tags not in *tags* are preserved. The implementation should
         also update ``server.labels`` to reflect the new state.
+        """
+
+    @abstractmethod
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        """Return True if *server* has an SSH key tag in *ssh_key_names*.
+
+        Providers should return False when no key marker is present or when it
+        does not match.
         """
 
     # ---------------------------------------------------------------------------

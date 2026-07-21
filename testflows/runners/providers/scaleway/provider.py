@@ -3,12 +3,10 @@
 Uses the official ``scaleway`` SDK (optional dependency:
 ``pip install testflows.runners[scaleway]``).
 
-v1 scope: create/delete lifecycle only (``supports_recycling = False``), matching
-the AWS provider.  Image-rebuild recycling is deferred to a high-priority phase 2
-because, against the current long-job workload, Scaleway's hourly billing makes
-recycling a marginal cost win, and Scaleway's recycle lifecycle differs from
-hcloud's in-place ``rebuild`` (a powered-off Instance releases its node and may
-fail to power back on under capacity pressure).
+Recycling uses stop/start plus the configured recycle cleanup script. Scaleway
+does not offer in-place image rebuild; a powered-off Instance releases its node
+and may fail to power back on under capacity pressure, in which case the
+candidate is terminated and fresh capacity is created on a later attempt.
 
 Type translation: every type that crosses the SDK boundary is converted between
 the canonical dot-form used by the orchestrator (``dev1.s``) and Scaleway's
@@ -18,10 +16,24 @@ native dash-form (``DEV1-S``) via :func:`utils.native_type` / :func:`utils.canon
 import time
 import hashlib
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from ...actions import Action
-from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
+from ...cloud_provider import (
+    AcquiredServer,
+    CloudProvider,
+    ProviderServer,
+    ProviderServerType,
+    RecycleClaim,
+    RecycleRequest,
+    RetirementResult,
+)
+from ...recycling import (
+    activate_recycled_server,
+    recyclable_server_matches,
+    retire_to_recycle_pool,
+)
 from ...errors import ServerTypeError, ImageError, ImageSpecFormatError, LocationError
 from .utils import (
     _RUNNER_TAG,
@@ -54,8 +66,8 @@ class ScalewaySSHKey:
 class ScalewayCloudProvider(CloudProvider):
     """Scaleway Instances implementation of CloudProvider.
 
-    Recycling is not supported in v1 (``supports_recycling = False``).
-    Volume operations raise ``NotImplementedError`` (inherited from base class).
+    Recycling uses stop/start without image rebuild. Volume operations raise
+    ``NotImplementedError`` (inherited from base class).
     """
 
     def __init__(
@@ -107,8 +119,7 @@ class ScalewayCloudProvider(CloudProvider):
 
     @property
     def supports_recycling(self) -> bool:
-        # Deferred to phase 2 (see module docstring).
-        return False
+        return True
 
     def get_prices(self) -> dict[str, dict[str, float]]:
         from .estimate import check_prices
@@ -151,45 +162,77 @@ class ScalewayCloudProvider(CloudProvider):
         automount: bool = False,
         public_net=None,
     ) -> ProviderServer:
-        """Create a Scaleway Instance, power it on, and return a ProviderServer.
+        """Create a Scaleway Instance from a pre-created boot volume, power it on.
+
+        The SBS boot volume is created from the image's root snapshot and tagged
+        *before* the instance exists (see ``_create_boot_volume``), so the
+        ``after_scale_down`` reaper can reclaim it on every failure path — there
+        is no untagged window to compensate for.
 
         ``ssh_keys`` is accepted for interface compatibility but not passed to
         the API: Scaleway injects the project's registered SSH keys at boot
         (see ``get_or_create_ssh_key``).  ``volumes``/``automount``/``public_net``
-        are ignored in v1.
+        are ignored (the boot volume is derived from the image).
         """
-        from scaleway.instance.v1 import ServerAction
+        from scaleway.instance.v1 import (
+            ServerAction,
+            VolumeServerTemplate,
+            VolumeVolumeType,
+        )
+
+        del ssh_keys, volumes, automount, public_net
 
         zone = location or self._zone
         commercial_type = native_type(server_type.name)
+        boot_volume_name = f"{name}-boot"[:60]
 
-        # Scaleway create_server provisions a *stopped* server; we power it on
-        # afterwards.  dynamic_ip_required attaches an automatic public IPv4.
-        # The SDK exposes this as the single-underscore ``_create_server``.
+        boot_volume_id = self._create_boot_volume(
+            image_uuid=image,
+            zone=zone,
+            name=boot_volume_name,
+            tags=[_RUNNER_VOLUME_TAG],
+        )
+
+        # Volume-first create: attach the tagged SBS boot volume by id and omit
+        # ``image`` (the boot volume already carries the image contents). The
+        # SDK exposes this as the single-underscore ``_create_server``.
         created = self._instance._create_server(
             zone=zone,
             name=name,
             commercial_type=commercial_type,
-            image=image,
             dynamic_ip_required=True,
             protected=False,
             tags=dict_to_tags(labels),
             project=self._project_id,
+            volumes={
+                "0": VolumeServerTemplate(
+                    id=boot_volume_id,
+                    boot=True,
+                    volume_type=VolumeVolumeType.SBS_VOLUME,
+                    name=boot_volume_name,
+                )
+            },
         )
         server = created.server
 
-        # Tag the boot-on-block (SBS) volume so it can be reaped after teardown
-        # (terminate only detaches SBS volumes; reap_orphaned_volumes deletes
-        # the tagged, detached ones out of band).
-        self._tag_boot_volumes(server, zone)
-
-        self._instance.server_action(
-            server_id=server.id, zone=zone, action=ServerAction.POWERON
-        )
-        with Action(f"Waiting for Scaleway instance {name} to start", stacklevel=3):
-            server = self._wait_for_state(
-                server.id, zone, states={"running"}, timeout=300
+        try:
+            self._instance.server_action(
+                server_id=server.id, zone=zone, action=ServerAction.POWERON
             )
+            with Action(f"Waiting for Scaleway instance {name} to start", stacklevel=3):
+                server = self._wait_for_state(
+                    server.id, zone, states={"running"}, timeout=300
+                )
+        except Exception:
+            # Best-effort terminate of the partial instance; the boot volume is
+            # tagged, so the reaper reclaims it no matter how this is stranded.
+            try:
+                self._instance.server_action(
+                    server_id=server.id, zone=zone, action=ServerAction.TERMINATE
+                )
+            except Exception:
+                pass
+            raise
 
         return _server_to_provider(server, ssh_user=self._ssh_user)
 
@@ -199,10 +242,10 @@ class ScalewayCloudProvider(CloudProvider):
         ``terminate`` deletes the instance, its local volume, and the dynamic IP,
         and only *detaches* any Block Storage (SBS) volume — it does not delete
         it. The detached boot volume still counts against the SbsVolumeSizeGb
-        quota, so it is reclaimed out of band by ``reap_orphaned_volumes`` (the
-        volume is tagged at create time). Keeping teardown one non-blocking call
-        is also crash-safe: an orphan is reaped on a later cycle no matter how it
-        was stranded.
+        quota, so it is reclaimed out of band by ``after_scale_down``
+        maintenance (the volume is tagged at create time). Keeping teardown one
+        non-blocking call is also crash-safe: an orphan is reaped on a later
+        cycle no matter how it was stranded.
         """
         from scaleway.instance.v1 import ServerAction
 
@@ -210,25 +253,88 @@ class ScalewayCloudProvider(CloudProvider):
             server_id=server.id, zone=server.location, action=ServerAction.TERMINATE
         )
 
-    def _tag_boot_volumes(self, server, zone) -> None:
-        """Tag the instance's SBS (boot-on-block) volumes for later reaping."""
-        for vol in (getattr(server, "volumes", None) or {}).values():
-            vtype = str(getattr(vol, "volume_type", "")).lower()
-            vid = getattr(vol, "id", None)
-            if vid and ("sbs" in vtype or "b_ssd" in vtype):
-                try:
-                    self._block.update_volume(
-                        volume_id=vid, zone=zone, tags=[_RUNNER_VOLUME_TAG]
-                    )
-                except Exception as exc:
-                    with Action(
-                        f"Could not tag boot volume {vid} for reaping: {exc}",
-                        stacklevel=3,
-                        ignore_fail=True,
-                    ):
-                        pass
+    def _create_boot_volume(
+        self,
+        image_uuid: str,
+        zone: str,
+        name: str,
+        tags: list,
+        size: int | None = None,
+    ) -> str:
+        """Create a tagged SBS boot volume from an image's root snapshot.
 
-    def reap_orphaned_volumes(self) -> None:
+        The volume is tagged *at creation*, so the ``after_scale_down`` reaper
+        can always reclaim it — this closes the untagged window the old
+        create-then-tag flow left open. Returns the new volume id.
+
+        Shaped for reuse by a future ``rebuild_server``: ``tags`` and ``size``
+        are parameters rather than hardcoded.
+
+        Only own-project SBS images work. A marketplace/public image's root
+        snapshot lives in another project, and the Block API denies creating a
+        volume from it, so we surface a helpful ``ImageError``.
+        """
+        from scaleway.block.v1 import CreateVolumeRequestFromSnapshot
+        from scaleway_core.api import ScalewayException
+
+        response = self._instance.get_image(image_id=image_uuid, zone=zone)
+        image = getattr(response, "image", response)
+        root_volume = getattr(image, "root_volume", None)
+        if root_volume is None or (
+            str(getattr(root_volume, "volume_type", "")).lower() != "sbs_snapshot"
+        ):
+            raise ImageError(
+                f"Scaleway image {image_uuid!r} has no SBS snapshot root volume; "
+                f"only SBS custom images are supported. Bake an SBS image in your "
+                f"project (local or marketplace images cannot be used)."
+            )
+
+        # root_volume.size is unreliable (reports 0); read the snapshot's real
+        # size when we own it. A cross-project (marketplace) snapshot is not
+        # readable — we fall through with size=None and surface the helpful
+        # error when create_volume is denied below.
+        volume_size = size
+        if volume_size is None:
+            try:
+                snapshot = self._block.get_snapshot(
+                    snapshot_id=root_volume.id, zone=zone
+                )
+                volume_size = getattr(snapshot, "size", None)
+            except ScalewayException:
+                volume_size = None
+
+        try:
+            volume = self._block.create_volume(
+                zone=zone,
+                name=name,
+                project_id=self._project_id,
+                tags=list(tags),
+                from_snapshot=CreateVolumeRequestFromSnapshot(
+                    snapshot_id=root_volume.id, size=volume_size
+                ),
+            )
+        except ScalewayException as exc:
+            if getattr(exc, "status_code", None) == 403:
+                raise ImageError(
+                    f"Scaleway denied creating a volume from image {image_uuid!r}: "
+                    f"its root snapshot is not in your project (a marketplace or "
+                    f"public image). Bake the image into your own project as an SBS "
+                    f"custom image and reference that instead."
+                ) from exc
+            raise
+
+        with Action(
+            f"Waiting for Scaleway boot volume {volume.id} to be ready",
+            stacklevel=3,
+        ):
+            self._block.wait_for_volume(volume_id=volume.id, zone=zone)
+        return volume.id
+
+    def after_scale_down(self) -> None:
+        """Run provider maintenance after scale-down decisions."""
+        self._reap_orphaned_volumes()
+
+    def _reap_orphaned_volumes(self) -> None:
         """Delete detached SBS volumes we created that no instance references.
 
         terminate detaches (does not delete) boot-on-block volumes, so they
@@ -329,6 +435,62 @@ class ScalewayCloudProvider(CloudProvider):
     def list_runner_servers(self) -> list[ProviderServer]:
         return self.list_servers(label_selector=f"{_RUNNER_TAG}=active")
 
+    def is_recycled_server(self, server: ProviderServer) -> bool:
+        from ...constants import recycle_server_name_prefix
+
+        return server.name.startswith(recycle_server_name_prefix)
+
+    def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
+        return self._claim_matching_recycled_server(
+            request,
+            lambda server, req: recyclable_server_matches(
+                self,
+                server,
+                replace(
+                    req,
+                    enable_ipv4=bool(server.public_ipv4),
+                    enable_ipv6=bool(server.public_ipv6),
+                ),
+            ),
+        )
+
+    @property
+    def recycled_server_uses_cleanup(self) -> bool:
+        return True
+
+    def is_runner_label_tag(self, key: str) -> bool:
+        return key.startswith(_RUNNER_LABEL_TAG_PREFIX)
+
+    def activate_recycled_server(
+        self, claim: RecycleClaim
+    ) -> AcquiredServer | None:
+        return activate_recycled_server(
+            self,
+            claim,
+            rebuild=False,
+            delete_on_activation_failure=True,
+        )
+
+    def retire_runner_server(
+        self,
+        server: ProviderServer,
+        *,
+        reason: str,
+        recycle_enabled: bool,
+        ssh_key_names: set[str],
+        end_of_life: int,
+        recycle_grace_period: int,
+    ) -> RetirementResult:
+        del reason
+        return retire_to_recycle_pool(
+            self,
+            server,
+            recycle_enabled=recycle_enabled,
+            ssh_key_names=ssh_key_names,
+            end_of_life=end_of_life,
+            recycle_grace_period=recycle_grace_period,
+        )
+
     # ---------------------------------------------------------------------------
     # Runner label helpers
     # ---------------------------------------------------------------------------
@@ -339,6 +501,12 @@ class ScalewayCloudProvider(CloudProvider):
             for key, value in server.labels.items()
             if key.startswith(_RUNNER_LABEL_TAG_PREFIX)
         }
+
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        key_name = server.labels.get(_SSH_KEY_TAG)
+        return key_name in ssh_key_names if key_name is not None else False
 
     # ---------------------------------------------------------------------------
     # Server metadata helpers

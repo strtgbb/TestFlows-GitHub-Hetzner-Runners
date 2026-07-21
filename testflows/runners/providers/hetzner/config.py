@@ -22,6 +22,7 @@ def get_cli_fields():
     """Get list of all CLI field names for Hetzner provider."""
     return [
         "token",
+        "recycle_with_rebuild",
         "default_image",
         "default_server_type",
         "default_location",
@@ -46,6 +47,8 @@ def update_from_args(provider_config, args):
     # Update credentials
     if getattr(args, "hetzner_token", None) is not None:
         provider_config.token = args.hetzner_token
+    if getattr(args, "hetzner_recycle_with_rebuild", None) is not None:
+        provider_config.recycle_with_rebuild = args.hetzner_recycle_with_rebuild
 
     # Update defaults
     if getattr(args, "hetzner_default_image", None) is not None:

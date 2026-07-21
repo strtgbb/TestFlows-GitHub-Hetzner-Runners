@@ -15,7 +15,10 @@ from unittest.mock import patch
 
 from testflows.core import *
 
-from testflows.runners.cloud_provider import ProviderServer, ProviderServerType
+from testflows.runners.cloud_provider import (
+    ProviderServer,
+    ProviderServerType,
+)
 import testflows.runners.providers.dedicated_static.provider as provider_mod
 from testflows.runners.providers.dedicated_static.provider import (
     DedicatedStaticCloudProvider,
@@ -149,7 +152,7 @@ def busy_host_skipped_next_free_claimed(self):
 
 @TestScenario
 def release_on_success_clears_marker_keeps_lease(self):
-    """release_claim(succeeded=True) keeps claim and lease untouched.
+    """The successful post-setup hook keeps claim and lease untouched.
 
     The durable claim is reboot-scoped and remains on success; only failure
     clears claim/lease.
@@ -165,7 +168,9 @@ def release_on_success_clears_marker_keeps_lease(self):
         return 0
 
     with patch.object(provider_mod, "ssh", _ssh):
-        prov.release_claim(srv, succeeded=True)
+        prov.after_server_setup(
+            srv, None
+        )
 
     assert cmds == [], "success path must not clear the durable claim"
     assert prov._hosts[0].lease_name == "github-runner-abc", "lease kept on success"
@@ -173,17 +178,20 @@ def release_on_success_clears_marker_keeps_lease(self):
 
 @TestScenario
 def release_on_failure_clears_marker_and_frees_lease(self):
-    """release_claim(succeeded=False) releases the claim AND frees the lease."""
+    """The failed post-setup hook releases the claim and frees the lease."""
     prov = _provider()
     with patch.object(provider_mod, "ssh", _ssh_claim()):
         srv = _claim(prov)
-        prov.release_claim(srv, succeeded=False)
+        prov.after_server_setup(
+            srv,
+            RuntimeError("setup failed"),
+        )
     assert prov._hosts[0].lease_name is None, "lease must be freed on failure"
 
 
 @TestScenario
-def release_claim_is_noop_for_foreign_server(self):
-    """release_claim ignores a server that is not one of this provider's hosts."""
+def post_setup_is_noop_for_foreign_server(self):
+    """The post-setup hook ignores a server that is not this provider's host."""
     prov = _provider()
     foreign = ProviderServer(
         id="x", name="other", status="running",
@@ -192,23 +200,28 @@ def release_claim_is_noop_for_foreign_server(self):
     )
     called = []
     with patch.object(provider_mod, "ssh", lambda *a, **k: called.append(1)):
-        prov.release_claim(foreign, succeeded=False)  # must not raise
+        prov.after_server_setup(
+            foreign,
+            RuntimeError("setup failed"),
+        )
     assert called == [], "no SSH should be issued for a foreign server"
 
 
 @TestScenario
 def reconcile_confirms_active_and_clears_others(self):
-    """reconcile_runner_leases sets a host's lease to its static_name when its
+    """The pre-cycle hook sets a host's lease to its static_name when its
     runner is registered, and clears any host without a live runner."""
     prov = _provider(hosts=("1.2.3.4", "5.6.7.8"))
     h0, h1 = prov._hosts
     prov._set_lease(h0, "github-runner-old0")
     prov._set_lease(h1, "github-runner-old1")
 
-    prov.reconcile_runner_leases({h0.static_name})
-
-    assert h0.lease_name == h0.static_name, "registered runner -> active lease"
-    assert h1.lease_name is None, "no live runner -> lease cleared"
+    for hook in (prov.before_scale_up, prov.before_scale_down):
+        prov._set_lease(h0, "github-runner-old0")
+        prov._set_lease(h1, "github-runner-old1")
+        hook(frozenset({h0.static_name}))
+        assert h0.lease_name == h0.static_name, "registered runner -> active lease"
+        assert h1.lease_name is None, "no live runner -> lease cleared"
 
 
 @TestScenario
@@ -294,6 +307,39 @@ def concurrent_claims_only_one_wins(self):
 
     winners = [s for s in (srv_a, srv_b) if s is not None]
     assert len(winners) == 1, f"exactly one claim should win, got {winners!r}"
+
+
+@TestScenario
+def static_owns_no_global_defaults(self):
+    """Static hosts own no default image/location, so startup validation must
+    not feed them the Hetzner-shaped global config.default_*.
+
+    Regression: the per-provider startup loop used to fall back to the global
+    default image for any provider without its own, and dedicated_static's
+    get_image rejects foreign specs by design — aborting startup with
+    ImageSpecFormatError. The provider owns no defaults, so a correct validator
+    skips its image/location/type checks entirely.
+    """
+    from testflows.runners.errors import ImageSpecFormatError
+
+    prov = _provider()
+    with Then("the provider does not own the global config defaults"):
+        # So the startup validator never hands it the Hetzner-shaped globals.
+        assert prov.owns_global_config_defaults is False
+    with And("it exposes no default image or location of its own"):
+        assert prov.default_image is None, prov.default_image
+        assert prov.default_location is None, prov.default_location
+    with And("and still hard-rejects a foreign (Hetzner) image spec if asked"):
+        # This is exactly why the validator must not pass it the global default.
+        class _HetznerImage:
+            architecture = "x86"
+            name = "ubuntu-22.04"
+
+        try:
+            prov.get_image(_HetznerImage())
+            assert False, "expected ImageSpecFormatError for a foreign image spec"
+        except ImageSpecFormatError:
+            pass
 
 
 # ---------------------------------------------------------------------------

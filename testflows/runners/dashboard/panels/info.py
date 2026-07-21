@@ -88,8 +88,13 @@ def get_config_data(config: Config):
             "link": None,
         },
         {
-            "label": "Recycle Without Rebuild (--recycle-without-rebuild)",
-            "value": "yes" if config.recycle_without_rebuild else "no",
+            "label": "Hetzner Recycle With Rebuild (--hetzner-recycle-with-rebuild)",
+            "value": (
+                "yes"
+                if config.providers.hetzner
+                and config.providers.hetzner.recycle_with_rebuild
+                else "no"
+            ),
             "link": None,
         },
         {

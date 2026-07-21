@@ -18,7 +18,10 @@ from testflows.runners.config.config import (
 )
 from types import SimpleNamespace
 
-from testflows.runners.cloud_provider import ProviderServer, ProviderServerType
+from testflows.runners.cloud_provider import (
+    ProviderServer,
+    ProviderServerType,
+)
 from testflows.runners.errors import ImageError, ImageSpecFormatError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
@@ -242,7 +245,7 @@ def factory_builds_scaleway_provider(self):
         assert provider._project_id == "proj-123"
         assert provider._zone == "nl-ams-1"
         assert provider._default_image == "ubuntu_jammy"
-        assert provider.supports_recycling is False
+        assert provider.supports_recycling is True
 
 
 @TestScenario
@@ -330,23 +333,136 @@ def delete_server_terminates_only(self):
         provider._block.delete_volume.assert_not_called()
 
 
+def _running_native(name="github-runner-1-0"):
+    """A minimal Scaleway-native running server for _server_to_provider."""
+    return SimpleNamespace(
+        id="srv-1", name=name, state="running", zone="fr-par-1",
+        commercial_type="basic2-a16c-32g", tags=[],
+        public_ips=None, public_ip=None, private_ip=None,
+    )
+
+
 @TestScenario
-def tag_boot_volumes_tags_sbs_only(self):
-    """Boot-on-block (SBS) volumes are tagged for reaping; local volumes are not."""
+def create_server_builds_tagged_boot_volume(self):
+    """create_server pre-creates a tagged SBS boot volume and attaches it by id."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
-    with And("a server with an SBS boot volume and a local volume"):
-        server = SimpleNamespace(volumes={
-            "0": SimpleNamespace(id="vol-sbs", volume_type="sbs_volume", boot=True),
-            "1": SimpleNamespace(id="vol-local", volume_type="l_ssd", boot=False),
-        })
-    with When("_tag_boot_volumes runs"):
-        provider._tag_boot_volumes(server, "fr-par-1")
-    with Then("only the SBS volume is tagged with the reaper marker"):
-        assert provider._block.update_volume.call_count == 1, provider._block.update_volume.call_count
-        _, kwargs = provider._block.update_volume.call_args
-        assert kwargs["volume_id"] == "vol-sbs", kwargs
-        assert "github-runner-volume=active" in kwargs["tags"], kwargs
+    with And("an SBS custom image and stubbed volume/instance calls"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=128849018880)
+        provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+        provider._wait_for_state = lambda *a, **k: _running_native()
+    with When("create_server runs"):
+        provider.create_server(
+            name="github-runner-1-0",
+            server_type=ProviderServerType(name="basic2-a16c-32g"),
+            location="fr-par-1", image="img-uuid", ssh_keys=[],
+            labels={"github-runner": "active"},
+        )
+    with Then("the boot volume is created from the snapshot and tagged at birth"):
+        ckw = provider._block.create_volume.call_args.kwargs
+        assert "github-runner-volume=active" in ckw["tags"], ckw
+        assert ckw["from_snapshot"].snapshot_id == "snap-1", ckw
+    with And("the instance is created from that volume, not an image"):
+        skw = provider._instance._create_server.call_args.kwargs
+        assert skw.get("image") is None, skw
+        template = skw["volumes"]["0"]
+        assert template.id == "vol-boot", template
+        assert template.boot is True, template
+
+
+@TestScenario
+def create_server_local_snapshot_raises_helpful_error(self):
+    """A local (l_ssd) root volume yields a helpful error and creates no volume."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("an image whose root volume is a local snapshot"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-local", volume_type="l_ssd")
+            )
+        )
+    with Then("create_server raises ImageError and creates no volume"):
+        try:
+            provider.create_server(
+                name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
+                location="fr-par-1", image="img-local", ssh_keys=[], labels={},
+            )
+            assert False, "expected ImageError for a non-SBS image"
+        except ImageError as exc:
+            assert "SBS" in str(exc), exc
+        provider._block.create_volume.assert_not_called()
+
+
+@TestScenario
+def create_server_cross_project_snapshot_raises_helpful_error(self):
+    """A 403 from create_volume (marketplace/public snapshot) maps to a helpful error."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    # Imported after the fixture installs the faked scaleway_core into sys.modules.
+    from scaleway_core.api import ScalewayException
+
+    with And("an SBS-typed image whose snapshot is in another project"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-x", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.side_effect = ScalewayException(status_code=403)
+        provider._block.create_volume.side_effect = ScalewayException(status_code=403)
+    with Then("create_server raises ImageError mentioning the project"):
+        try:
+            provider.create_server(
+                name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
+                location="fr-par-1", image="img-marketplace", ssh_keys=[], labels={},
+            )
+            assert False, "expected ImageError for a cross-project snapshot"
+        except ImageError as exc:
+            assert "project" in str(exc), exc
+
+
+@TestScenario
+def create_server_powering_on_failure_terminates_partial_instance(self):
+    """If power-on/boot fails, the partial instance is terminated (volume reaper-covered)."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("a created boot volume + instance, but boot never reaches running"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=10)
+        provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+
+        def _boom(*a, **k):
+            raise RuntimeError("boot timeout")
+
+        provider._wait_for_state = _boom
+    with Then("it best-effort terminates the partial instance and re-raises"):
+        try:
+            provider.create_server(
+                name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
+                location="fr-par-1", image="img", ssh_keys=[], labels={},
+            )
+            assert False, "expected the boot failure to propagate"
+        except RuntimeError:
+            pass
+        actions = [
+            str(c.kwargs.get("action"))
+            for c in provider._instance.server_action.call_args_list
+        ]
+        assert "terminate" in actions, actions
 
 
 @TestScenario
@@ -365,8 +481,8 @@ def reap_orphaned_volumes_deletes_detached_aged_only(self):
                             last_detached_at=None, created_at=old),
             SimpleNamespace(id="fresh", references=[], last_detached_at=now, created_at=now),
         ]
-    with When("reap_orphaned_volumes runs"):
-        provider.reap_orphaned_volumes()
+    with When("the scale-down post-cycle hook runs"):
+        provider.after_scale_down()
     with Then("it lists tagged, non-deleted volumes"):
         _, lkwargs = provider._block.list_volumes_all.call_args
         assert lkwargs.get("include_deleted") is False, lkwargs
@@ -375,6 +491,32 @@ def reap_orphaned_volumes_deletes_detached_aged_only(self):
         assert provider._block.delete_volume.call_count == 1, provider._block.delete_volume.call_count
         _, vkwargs = provider._block.delete_volume.call_args
         assert vkwargs["volume_id"] == "orphan", vkwargs
+
+
+@TestScenario
+def scale_up_hook_does_not_reap_volumes(self):
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    provider.before_scale_up(frozenset())
+    provider._block.list_volumes_all.assert_not_called()
+    provider._block.delete_volume.assert_not_called()
+
+
+@TestScenario
+def scale_down_maintenance_failure_is_non_fatal(self):
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("maintenance raises unexpectedly"):
+        provider._reap_orphaned_volumes = lambda: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+    with Then("after_scale_down raises and is handled by orchestration"):
+        try:
+            provider.after_scale_down()
+        except RuntimeError:
+            pass
+        else:
+            assert False, "expected maintenance failure to propagate"
 
 
 @TestScenario
@@ -556,18 +698,20 @@ def provider_sdk_calls_match_real_signatures(self):
         from scaleway.marketplace.v2 import MarketplaceV2API
         from scaleway.iam.v1alpha1 import IamV1Alpha1API
     except ImportError:
-        with Action("scaleway SDK not installed; skipping signature audit"):
-            return
+        return
 
     calls = [
-        (InstanceV1API, "_create_server", dict(zone="z", name="n", commercial_type="t", image="i", dynamic_ip_required=True, protected=False, tags=[], project="p")),
+        (InstanceV1API, "_create_server", dict(zone="z", name="n", commercial_type="t", dynamic_ip_required=True, protected=False, tags=[], project="p", volumes={})),
         (InstanceV1API, "server_action", dict(server_id="s", zone="z", action="terminate")),
         (InstanceV1API, "_update_server", dict(server_id="s", zone="z", name="n", tags=[])),
         (InstanceV1API, "get_server", dict(server_id="s", zone="z")),
+        (InstanceV1API, "get_image", dict(image_id="i", zone="z")),
         (InstanceV1API, "list_servers_all", dict(zone="z", tags=["x"])),
         (InstanceV1API, "list_servers_types", dict(zone="z")),
         (InstanceV1API, "list_images_all", dict(zone="z", name="n", public=False, project="p")),
-        (BlockV1API, "update_volume", dict(volume_id="v", zone="z", tags=[])),
+        (BlockV1API, "create_volume", dict(zone="z", name="n", project_id="p", tags=[], from_snapshot=None)),
+        (BlockV1API, "get_snapshot", dict(snapshot_id="s", zone="z")),
+        (BlockV1API, "wait_for_volume", dict(volume_id="v", zone="z")),
         (BlockV1API, "delete_volume", dict(volume_id="v", zone="z")),
         (BlockV1API, "list_volumes_all", dict(zone="z", tags=["x"], include_deleted=False)),
         (MarketplaceV2API, "list_local_images_all", dict(image_label="l", zone="z", type_="instance_local")),

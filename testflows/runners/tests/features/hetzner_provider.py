@@ -90,6 +90,19 @@ def supports_recycling_is_true(self):
 
 
 @TestScenario
+def owns_global_config_defaults_is_true(self):
+    """Hetzner owns the top-level config.default_* (legacy), unlike other providers.
+
+    The startup validator uses this to decide which provider the global default
+    image/location/server-type belongs to, instead of matching on provider name.
+    """
+    with Given("a Hetzner provider"):
+        _, provider = hetzner_provider()
+    with Then("it owns the global config defaults"):
+        assert provider.owns_global_config_defaults is True
+
+
+@TestScenario
 def name_is_string(self):
     with Given("a Hetzner provider"):
         _, provider = hetzner_provider()

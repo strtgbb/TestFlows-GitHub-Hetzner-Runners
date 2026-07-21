@@ -25,10 +25,12 @@ def regression(self):
     Feature(run=load("testflows.runners.tests.features.hetzner_provider", "feature"))
     Feature(run=load("testflows.runners.tests.features.dedicated_static_provider", "feature"))
     Feature(run=load("testflows.runners.tests.features.provider_interface", "feature"))
+    Feature(run=load("testflows.runners.tests.features.provider_orchestration_hooks", "feature"))
     Feature(run=load("testflows.runners.tests.features.cli_and_config", "feature"))
     Feature(run=load("testflows.runners.tests.features.scale_up_helpers", "feature"))
     Feature(run=load("testflows.runners.tests.features.scale_up_labels", "feature"))
     Feature(run=load("testflows.runners.tests.features.scale_down_recycle", "feature"))
+    Feature(run=load("testflows.runners.tests.features.recycling_lifecycle", "feature"))
 
 
 if main():

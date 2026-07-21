@@ -9,7 +9,12 @@ import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
+from ...cloud_provider import (
+    CloudProvider,
+    ProviderServer,
+    ProviderServerType,
+    RetirementResult,
+)
 from ...constants import github_runner_label, server_ssh_key_label, runner_name_prefix
 from ...errors import ServerTypeError, LocationError, ImageSpecFormatError
 from ...server import ssh
@@ -38,7 +43,7 @@ class _StaticHost:
     ssh_key_path: str | None
     static_name: str
     # In-memory cache of the current lease, re-derived each cycle from the live
-    # GitHub runner list (reconcile_runner_leases). NOT the source of truth for
+    # GitHub runner list (pre-cycle hooks). NOT the source of truth for
     # in-flight setups — that is the durable claim marker on the host itself.
     lease_name: str | None = None
 
@@ -132,7 +137,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
     @property
     def supports_recycling(self) -> bool:
-        return False
+        return True
 
     def setup_script_name(self, labels: list[str], label_prefix: str = "") -> str:
         # Static hosts are provisioned out of band, so the setup-step is cleanup,
@@ -308,7 +313,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
         # Unknown types are rejected earlier by get_server_type.
         return None
 
-    def release_claim(self, server: ProviderServer, *, succeeded: bool) -> None:
+    def after_server_setup(
+        self, server: ProviderServer, error: BaseException | None
+    ) -> None:
         """Handle post-setup claim lifecycle.
 
         Success keeps the durable claim in place; normal runner teardown (reboot)
@@ -320,7 +327,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
         host = getattr(server, "_native", None)
         if host is None or not isinstance(host, _StaticHost):
             return
-        if succeeded:
+        if error is None:
             return
         try:
             self._clear_claim(host)
@@ -335,6 +342,21 @@ class DedicatedStaticCloudProvider(CloudProvider):
                 if host.lease_name == server.name or host.host_id == server.id:
                     self._clear_lease(host)
                     return
+
+    def retire_runner_server(
+        self,
+        server: ProviderServer,
+        *,
+        reason: str,
+        recycle_enabled: bool,
+        ssh_key_names: set[str],
+        end_of_life: int,
+        recycle_grace_period: int,
+    ) -> RetirementResult:
+        del reason, recycle_enabled, ssh_key_names, end_of_life, recycle_grace_period
+        original_name = server.name
+        self.delete_server(server)
+        return RetirementResult("released", original_name)
 
     def get_server(self, name: str) -> ProviderServer | None:
         with self._lock:
@@ -384,7 +406,13 @@ class DedicatedStaticCloudProvider(CloudProvider):
             servers = [self._as_provider_server(host) for host in self._hosts]
         return [server for server in servers if server is not None]
 
-    def reconcile_runner_leases(self, runner_names: set[str]) -> None:
+    def before_scale_up(self, managed_runner_names: frozenset[str]) -> None:
+        self._reconcile_runner_leases(managed_runner_names)
+
+    def before_scale_down(self, managed_runner_names: frozenset[str]) -> None:
+        self._reconcile_runner_leases(managed_runner_names)
+
+    def _reconcile_runner_leases(self, runner_names: frozenset[str]) -> None:
         """Reconcile the in-memory lease cache from registered GitHub runner names.
 
         This only adjudicates *registered* runners (the durable signal for an
@@ -434,6 +462,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
             if key.startswith(self._RUNNER_LABEL_PREFIX)
         }
 
+    def is_runner_label_tag(self, key: str) -> bool:
+        return key.startswith(self._RUNNER_LABEL_PREFIX)
+
     # ---------------------------------------------------------------------------
     # Tag / label operations
     # ---------------------------------------------------------------------------
@@ -442,6 +473,12 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
     def set_server_tags(self, server: ProviderServer, tags: dict[str, str]) -> None:
         server.labels = {**server.labels, **tags}
+
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        key_name = server.labels.get(server_ssh_key_label)
+        return key_name in ssh_key_names if key_name is not None else False
 
     # ---------------------------------------------------------------------------
     # SSH key management

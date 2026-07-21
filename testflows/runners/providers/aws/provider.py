@@ -262,6 +262,9 @@ class AWSCloudProvider(CloudProvider):
             if key.startswith(_RUNNER_LABEL_TAG_PREFIX)
         }
 
+    def is_runner_label_tag(self, key: str) -> bool:
+        return key.startswith(_RUNNER_LABEL_TAG_PREFIX)
+
     # ---------------------------------------------------------------------------
     # Tag / label operations
     # ---------------------------------------------------------------------------
@@ -275,6 +278,12 @@ class AWSCloudProvider(CloudProvider):
             Tags=[{"Key": k, "Value": v} for k, v in tags.items()],
         )
         server.labels = {**server.labels, **tags}
+
+    def has_matching_ssh_key(
+        self, server: ProviderServer, ssh_key_names: set[str]
+    ) -> bool:
+        key_name = server.labels.get(_SSH_KEY_TAG)
+        return key_name in ssh_key_names if key_name is not None else False
 
     # ---------------------------------------------------------------------------
     # SSH key management

@@ -12,12 +12,15 @@ import os
 import subprocess
 import sys
 from argparse import ArgumentTypeError
+from types import SimpleNamespace
 
 from testflows.core import *
 
 from testflows.runners.args import provider_type
+from testflows.runners.config.config import Config, hetzner_provider, provider_list
 from testflows.runners.config.parse import parse_config
 from testflows.runners.config.factory import provider_factory
+from testflows.runners.service import command_options
 
 # Repo root so the CLI subprocess can find the package without an install.
 _REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", ".."))
@@ -69,6 +72,71 @@ def cli_help_does_not_mention_removed_providers(self):
         output = result.stdout + result.stderr
         for removed in ("azure", "gcp"):
             assert removed not in output, f"removed provider '{removed}' still appears in --help"
+
+
+@TestScenario
+def cli_help_uses_provider_specific_rebuild_option(self):
+    with When("I run `tfs-runners --help`"):
+        result = _run_help()
+    with Then("the new Hetzner option is present and the global option is absent"):
+        output = result.stdout + result.stderr
+        assert "--hetzner-recycle-with-rebuild" in output
+        assert "--recycle-without-rebuild" not in output
+
+
+@TestScenario
+def hetzner_rebuild_cli_override_updates_nested_config(self):
+    cfg = Config(
+        providers=provider_list(
+            hetzner=hetzner_provider(token="token", recycle_with_rebuild=False)
+        )
+    )
+    with When("the provider-specific CLI override is applied"):
+        cfg.update(SimpleNamespace(hetzner_recycle_with_rebuild=True))
+    with Then("the nested Hetzner setting is overridden"):
+        assert cfg.providers.hetzner.recycle_with_rebuild is True
+
+
+@TestScenario
+def service_command_uses_provider_specific_rebuild_option(self):
+    cfg = Config(
+        github_token="token",
+        github_repository="owner/repo",
+        providers=provider_list(
+            hetzner=hetzner_provider(token="token", recycle_with_rebuild=True)
+        ),
+    )
+    with When("service command options are rendered"):
+        command = command_options(cfg)
+    with Then("the new provider-specific option is rendered"):
+        assert "--hetzner-recycle-with-rebuild on" in command
+        assert "--recycle-without-rebuild" not in command
+
+
+@TestScenario
+def service_command_does_not_inject_hetzner_provider(self):
+    cfg = Config(
+        github_token="token",
+        github_repository="owner/repo",
+        providers=provider_list(),
+    )
+    command = command_options(cfg)
+    assert "--hetzner-token" not in command
+    assert "--hetzner-recycle-with-rebuild" not in command
+
+
+@TestScenario
+def optional_hetzner_flag_does_not_create_provider(self):
+    cfg = Config(providers=provider_list())
+    cfg.update(SimpleNamespace(hetzner_recycle_with_rebuild=False))
+    assert cfg.providers.hetzner is None
+
+
+@TestScenario
+def explicit_hetzner_token_creates_provider(self):
+    cfg = Config(providers=provider_list())
+    cfg.update(SimpleNamespace(hetzner_token="token"))
+    assert cfg.providers.hetzner.token == "token"
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +271,65 @@ def config_rejects_removed_providers(self):
                 )
         finally:
             os.unlink(cfg_file)
+
+
+@TestScenario
+def config_parses_hetzner_recycle_with_rebuild(self):
+    import tempfile
+
+    text = _MINIMAL_BASE + """
+  providers:
+    hetzner:
+      token: token
+      recycle_with_rebuild: true
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(text)
+        path = f.name
+    try:
+        with When("I parse the provider-specific recycling setting"):
+            cfg = parse_config(path)
+        with Then("the value is stored under the Hetzner provider"):
+            assert cfg.providers.hetzner.recycle_with_rebuild is True
+    finally:
+        os.unlink(path)
+
+
+@TestScenario
+def factory_passes_hetzner_recycle_with_rebuild(self):
+    cfg = Config(
+        providers=provider_list(
+            hetzner=hetzner_provider(token="token", recycle_with_rebuild=True)
+        )
+    )
+    with When("I construct providers from the config"):
+        provider = provider_factory(cfg)[0]
+    with Then("the Hetzner provider receives the recycling mode"):
+        assert provider._recycle_with_rebuild is True
+
+
+@TestScenario
+def config_rejects_removed_recycle_without_rebuild(self):
+    import tempfile
+
+    text = _MINIMAL_BASE + "  recycle_without_rebuild: true\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(text)
+        path = f.name
+    try:
+        with When("I parse the removed global setting"):
+            try:
+                parse_config(path)
+                raised = None
+            except AssertionError as exc:
+                raised = exc
+        with Then("the error explains the provider-specific migration"):
+            assert raised is not None
+            message = str(raised)
+            assert "providers.hetzner.recycle_with_rebuild" in message
+            assert "inverse semantics" in message
+    finally:
+        os.unlink(path)
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +496,19 @@ def schema_removed_provider_absent(self):
         props = _providers_properties(schema)
         for removed in ("azure", "gcp"):
             assert removed not in props, f"removed provider '{removed}' still in schema"
+
+
+@TestScenario
+def schema_places_rebuild_setting_under_hetzner(self):
+    with open(_SCHEMA_PATH) as f:
+        schema = json.load(f)
+    config_properties = schema["properties"]["config"]["properties"]
+    with Then("only the provider-specific rebuild setting is defined"):
+        hetzner_properties = (
+            config_properties["providers"]["properties"]["hetzner"]["properties"]
+        )
+        assert "recycle_with_rebuild" in hetzner_properties
+        assert "recycle_without_rebuild" not in config_properties
 
 
 # ---------------------------------------------------------------------------

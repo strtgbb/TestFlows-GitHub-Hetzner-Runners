@@ -40,12 +40,14 @@ def command_options(
     command = ""
     command += f" --github-token {github_token}"
     command += f" --github-repository {github_repository}"
-    command += f" --hetzner-token {hetzner_token}"
     command += f" --config {config.config_file}" if config.config_file else ""
     command += f" --recycle " + ("on" if config.recycle else "off")
-    command += f" --recycle-without-rebuild " + (
-        "on" if config.recycle_without_rebuild else "off"
-    )
+    hetzner_config = config.providers.hetzner
+    if hetzner_config is not None:
+        command += f" --hetzner-token {hetzner_token}"
+        command += f" --hetzner-recycle-with-rebuild " + (
+            "on" if hetzner_config.recycle_with_rebuild else "off"
+        )
     command += f" --end-of-life {config.end_of_life}" if config.end_of_life else ""
     for l in config.with_label:
         command += f' --with-label "{l}"' if l else ""

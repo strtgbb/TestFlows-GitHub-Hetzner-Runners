@@ -11,3 +11,4 @@ server_ssh_key_label = "github-hetzner-runner-ssh-key"
 github_runner_label = "github-hetzner-runner"
 # Recycle timestamp label (stores epoch seconds when server was marked for recycling)
 recycle_timestamp_label = "github-hetzner-recycle-timestamp"
+recycle_image_label = "github-runner-recycle-image"

@@ -3,7 +3,13 @@ from unittest.mock import MagicMock, patch
 
 from testflows.core import *
 
-from testflows.runners.cloud_provider import CloudProvider
+from testflows.runners.cloud_provider import (
+    CloudProvider,
+    ProviderServer,
+    ProviderVolume,
+    RecycleRequest,
+)
+from testflows.runners.recycling import recyclable_server_matches
 import testflows.runners.scale_up as scale_up_mod
 from testflows.runners.scale_up import (
     RunnerServer,
@@ -17,11 +23,14 @@ from testflows.runners.scale_up import (
     get_total_server_count,
     get_volume_name,
     job_matches_labels,
-    recyclable_server_match,
     server_setup,
     set_future_attributes,
 )
-from testflows.runners.constants import runner_name_prefix, server_ssh_key_label
+from testflows.runners.constants import (
+    runner_name_prefix,
+    recycle_image_label,
+    recycle_server_name_prefix,
+)
 from testflows.runners.server import get_runner_server_name
 
 
@@ -482,27 +491,8 @@ def set_future_attributes_sets_all(self):
 
 
 # ---------------------------------------------------------------------------
-# recyclable_server_match — helpers + scenarios
+# provider-neutral recyclable matching
 # ---------------------------------------------------------------------------
-
-
-def _vol(name):
-    v = MagicMock()
-    v.name = name
-    return v
-
-
-def _net(ipv4=True, ipv6=False):
-    n = MagicMock(spec=["enable_ipv4", "enable_ipv6"])
-    n.enable_ipv4 = ipv4
-    n.enable_ipv6 = ipv6
-    return n
-
-
-def _ssh_key(name="mykey"):
-    k = MagicMock()
-    k.name = name
-    return k
 
 
 def _recyclable_server(
@@ -513,156 +503,126 @@ def _recyclable_server(
     ipv6=False,
     ssh_key_label="mykey",
 ):
-    native = MagicMock()
-    native.public_net.ipv4 = MagicMock() if ipv4 else None
-    native.public_net.ipv6 = MagicMock() if ipv6 else None
-    native.labels = {server_ssh_key_label: ssh_key_label}
-    return _runner_server(
-        server_type_name=type_name,
-        server_location_name=location_name,
-        server_volumes=[_vol(n) for n in (volume_names or [])],
-        native=native,
+    return ProviderServer(
+        id="recycled-1",
+        name=f"{recycle_server_name_prefix}one",
+        status=CloudProvider.STATUS_OFF,
+        public_ipv4="192.0.2.1" if ipv4 else None,
+        public_ipv6="2001:db8::1" if ipv6 else None,
+        private_ipv4=None,
+        labels={"ssh-key": ssh_key_label, recycle_image_label: "image"},
+        server_type=type_name,
+        location=location_name,
+        created=MagicMock(),
+        volumes=[
+            ProviderVolume(
+                id=name,
+                name=name,
+                size=10,
+                location=location_name,
+                labels={},
+            )
+            for name in (volume_names or [])
+        ],
     )
+
+
+def _recycle_request(
+    type_name="cx22",
+    location_name="nbg1",
+    volume_names=None,
+    ipv4=True,
+    ipv6=False,
+    ssh_key_name="mykey",
+):
+    return RecycleRequest(
+        name="github-runner-new",
+        server_type=type_name,
+        location=location_name,
+        image="image",
+        labels={recycle_image_label: "image"},
+        ssh_key_names=frozenset({ssh_key_name}),
+        volume_names=frozenset(volume_names or []),
+        enable_ipv4=ipv4,
+        enable_ipv6=ipv6,
+    )
+
+
+def _recycle_provider():
+    provider = MagicMock()
+    provider.is_recycled_server.side_effect = (
+        lambda server: server.name.startswith(recycle_server_name_prefix)
+    )
+    provider.has_matching_ssh_key.side_effect = (
+        lambda server, names: server.labels.get("ssh-key") in names
+    )
+    provider.get_server_tag.side_effect = lambda server, key: server.labels.get(key)
+    return provider
 
 
 @TestScenario
 def recyclable_full_match(self):
     server = _recyclable_server()
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="nbg1",
-        server_volumes=[],
-        server_net_config=_net(ipv4=True, ipv6=False),
-        ssh_key=_ssh_key("mykey"),
+    assert recyclable_server_matches(
+        _recycle_provider(), server, _recycle_request()
     ) is True
 
 
 @TestScenario
-def recyclable_type_mismatch(self):
-    server = _recyclable_server(type_name="cx22")
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx32",
-        server_location="nbg1",
-        server_volumes=[],
-        server_net_config=_net(),
-        ssh_key=_ssh_key("mykey"),
+def recyclable_provider_attributes_must_match(self):
+    provider = _recycle_provider()
+    server = _recyclable_server()
+    assert recyclable_server_matches(
+        provider, server, _recycle_request(type_name="cx32")
     ) is False
-
-
-@TestScenario
-def recyclable_location_mismatch(self):
-    server = _recyclable_server(location_name="nbg1")
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="fsn1",
-        server_volumes=[],
-        server_net_config=_net(),
-        ssh_key=_ssh_key("mykey"),
+    assert recyclable_server_matches(
+        provider, server, _recycle_request(location_name="fsn1")
     ) is False
-
-
-@TestScenario
-def recyclable_none_location_skips_check(self):
-    server = _recyclable_server(location_name="nbg1")
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location=None,
-        server_volumes=[],
-        server_net_config=_net(),
-        ssh_key=_ssh_key("mykey"),
+    assert recyclable_server_matches(
+        provider, server, _recycle_request(location_name=None)
     ) is True
 
 
 @TestScenario
 def recyclable_volume_mismatch(self):
     server = _recyclable_server(volume_names=["data"])
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="nbg1",
-        server_volumes=[_vol("other")],
-        server_net_config=_net(),
-        ssh_key=_ssh_key("mykey"),
+    assert recyclable_server_matches(
+        _recycle_provider(), server, _recycle_request(volume_names=["other"])
     ) is False
 
 
 @TestScenario
-def recyclable_ipv4_required_but_missing(self):
-    server = _recyclable_server(ipv4=False)
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="nbg1",
-        server_volumes=[],
-        server_net_config=_net(ipv4=True),
-        ssh_key=_ssh_key("mykey"),
+def recyclable_image_must_match_without_rebuild(self):
+    server = _recyclable_server()
+    request = _recycle_request()
+    request.labels[recycle_image_label] = "different-image"
+    assert recyclable_server_matches(
+        _recycle_provider(), server, request
     ) is False
 
 
 @TestScenario
-def recyclable_ipv4_not_required_but_present(self):
-    server = _recyclable_server(ipv4=True)
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="nbg1",
-        server_volumes=[],
-        server_net_config=_net(ipv4=False),
-        ssh_key=_ssh_key("mykey"),
+def recyclable_network_and_key_must_match(self):
+    provider = _recycle_provider()
+    assert recyclable_server_matches(
+        provider, _recyclable_server(ipv4=False), _recycle_request(ipv4=True)
     ) is False
-
-
-@TestScenario
-def recyclable_ipv6_required_but_missing(self):
-    server = _recyclable_server(ipv4=True, ipv6=False)
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="nbg1",
-        server_volumes=[],
-        server_net_config=_net(ipv4=True, ipv6=True),
-        ssh_key=_ssh_key("mykey"),
+    assert recyclable_server_matches(
+        provider, _recyclable_server(ipv6=True), _recycle_request(ipv6=False)
     ) is False
-
-
-@TestScenario
-def recyclable_ipv6_not_required_but_present(self):
-    server = _recyclable_server(ipv4=True, ipv6=True)
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="nbg1",
-        server_volumes=[],
-        server_net_config=_net(ipv4=True, ipv6=False),
-        ssh_key=_ssh_key("mykey"),
-    ) is False
-
-
-@TestScenario
-def recyclable_ssh_key_mismatch(self):
     server = _recyclable_server(ssh_key_label="oldkey")
-    assert recyclable_server_match(
-        server=server,
-        server_type="cx22",
-        server_location="nbg1",
-        server_volumes=[],
-        server_net_config=_net(),
-        ssh_key=_ssh_key("newkey"),
+    assert recyclable_server_matches(
+        provider, server, _recycle_request(ssh_key_name="newkey")
     ) is False
 
 
 # ---------------------------------------------------------------------------
-# server_setup: provider release_claim hook is always invoked
+# server_setup: generic post-setup hook is always invoked
 # ---------------------------------------------------------------------------
 
 
 @TestScenario
-def server_setup_releases_claim_on_success(self):
-    """On a successful setup, server_setup releases the claim with succeeded=True."""
+def server_setup_reports_success_to_provider(self):
     provider = MagicMock()
     server = MagicMock()
     with patch.object(scale_up_mod, "_run_server_setup"):
@@ -675,13 +635,14 @@ def server_setup_releases_claim_on_success(self):
             github_repository="owner/repo",
             runner_labels="self-hosted",
         )
-    provider.release_claim.assert_called_once_with(server, succeeded=True)
+    provider.after_server_setup.assert_called_once()
+    setup_server, error = provider.after_server_setup.call_args.args
+    assert setup_server is server
+    assert error is None
 
 
 @TestScenario
-def server_setup_releases_claim_on_failure(self):
-    """On a failed setup, server_setup releases with succeeded=False and the
-    exception still propagates."""
+def server_setup_reports_original_failure_to_provider(self):
     provider = MagicMock()
     server = MagicMock()
     boom = RuntimeError("setup blew up")
@@ -700,7 +661,72 @@ def server_setup_releases_claim_on_failure(self):
         except RuntimeError as e:
             raised = e
     assert raised is boom, "setup exception must propagate"
-    provider.release_claim.assert_called_once_with(server, succeeded=False)
+    provider.after_server_setup.assert_called_once()
+    setup_server, error = provider.after_server_setup.call_args.args
+    assert setup_server is server
+    assert error is boom
+
+
+@TestScenario
+def post_setup_hook_failure_does_not_mask_setup_outcome(self):
+    provider = MagicMock()
+    provider.name = "broken"
+    provider.after_server_setup.side_effect = RuntimeError("hook failed")
+    server = MagicMock()
+    setup_error = RuntimeError("setup failed")
+
+    with patch.object(scale_up_mod, "_run_server_setup", side_effect=setup_error):
+        try:
+            server_setup(
+                provider=provider,
+                server=server,
+                setup_script="setup.sh",
+                startup_script="startup.sh",
+                github_token="token",
+                github_repository="owner/repo",
+                runner_labels="self-hosted",
+            )
+        except RuntimeError as raised:
+            assert raised is setup_error
+        else:
+            assert False, "setup failure must propagate"
+
+    with patch.object(scale_up_mod, "_run_server_setup"):
+        server_setup(
+            provider=provider,
+            server=server,
+            setup_script="setup.sh",
+            startup_script="startup.sh",
+            github_token="token",
+            github_repository="owner/repo",
+            runner_labels="self-hosted",
+        )
+    assert provider.after_server_setup.call_count == 2
+
+
+@TestScenario
+def post_setup_base_exception_does_not_mask_setup_failure(self):
+    provider = MagicMock()
+    provider.name = "broken"
+    provider.after_server_setup.side_effect = KeyboardInterrupt()
+    server = MagicMock()
+    setup_error = RuntimeError("setup failed")
+
+    with patch.object(scale_up_mod, "_run_server_setup", side_effect=setup_error):
+        try:
+            server_setup(
+                provider=provider,
+                server=server,
+                setup_script="setup.sh",
+                startup_script="startup.sh",
+                github_token="token",
+                github_repository="owner/repo",
+                runner_labels="self-hosted",
+            )
+        except RuntimeError as raised:
+            assert raised is setup_error
+        else:
+            assert False, "setup failure must remain primary"
 
 
 # ---------------------------------------------------------------------------

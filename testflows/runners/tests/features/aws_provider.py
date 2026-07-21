@@ -248,14 +248,6 @@ def name_is_aws(self):
 
 
 @TestScenario
-def supports_recycling_is_false(self):
-    with Given("an AWS provider"):
-        _, provider = aws_provider()
-    with Then("supports_recycling is False"):
-        assert provider.supports_recycling is False
-
-
-@TestScenario
 def rebuild_raises_not_implemented(self):
     with Given("an AWS provider"):
         _, provider = aws_provider()

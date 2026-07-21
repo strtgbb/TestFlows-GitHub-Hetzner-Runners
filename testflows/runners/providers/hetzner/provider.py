@@ -76,10 +76,6 @@ class HetznerCloudProvider(CloudProvider):
         return "hetzner"
 
     @property
-    def supports_recycling(self) -> bool:
-        return True
-
-    @property
     def supports_volumes(self) -> bool:
         return True
 
@@ -102,7 +98,6 @@ class HetznerCloudProvider(CloudProvider):
         ssh_keys: list,
         labels: dict[str, str],
         volumes: list = None,
-        automount: bool = False,
         public_net=None,
     ) -> ProviderServer:
         """Create a server and return a ProviderServer wrapping the BoundServer."""
@@ -116,7 +111,8 @@ class HetznerCloudProvider(CloudProvider):
             ssh_keys=ssh_keys,
             labels=labels,
             volumes=volumes or [],
-            automount=automount,
+            # Volumes are mounted by the setup/startup scripts, not at boot.
+            automount=False,
             public_net=public_net,
         )
         bound_server: BoundServer = response.server
@@ -188,16 +184,12 @@ class HetznerCloudProvider(CloudProvider):
     def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
         return self._claim_matching_recycled_server(
             request,
-            lambda server, req: recyclable_server_matches(self, server, req),
+            lambda server, req: recyclable_server_matches(
+                self, server, req,
+                # A rebuild reimages the server, so its old image need not match.
+                require_image_match=not self._recycle_with_rebuild,
+            ),
         )
-
-    @property
-    def recycled_server_uses_cleanup(self) -> bool:
-        return not self._recycle_with_rebuild
-
-    @property
-    def recycled_server_requires_image_match(self) -> bool:
-        return not self._recycle_with_rebuild
 
     def is_runner_label_tag(self, key: str) -> bool:
         return key.startswith("github-hetzner-runner-label")

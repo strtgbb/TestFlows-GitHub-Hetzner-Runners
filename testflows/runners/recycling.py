@@ -20,9 +20,19 @@ from .constants import (
 
 
 def recyclable_server_matches(
-    provider: CloudProvider, server: ProviderServer, request: RecycleRequest
+    provider: CloudProvider,
+    server: ProviderServer,
+    request: RecycleRequest,
+    *,
+    require_image_match: bool = True,
 ) -> bool:
-    """Return whether a provider server satisfies a recycle request."""
+    """Return whether a provider server satisfies a recycle request.
+
+    ``require_image_match`` is False only for providers that reimage the server
+    on activation (the reused disk is overwritten, so its original image is
+    irrelevant). The provider decides this and passes it in; it is not part of
+    the public provider interface.
+    """
     if not provider.is_recycled_server(server):
         return False
     if server.status != CloudProvider.STATUS_OFF:
@@ -37,7 +47,7 @@ def recyclable_server_matches(
         return False
     if not provider.has_matching_ssh_key(server, set(request.ssh_key_names)):
         return False
-    if provider.recycled_server_requires_image_match:
+    if require_image_match:
         if provider.get_server_tag(server, recycle_image_label) != request.labels.get(
             recycle_image_label
         ):
@@ -89,7 +99,6 @@ def activate_recycled_server(
         provider.update_server(server, name=request.name, labels=labels)
         return AcquiredServer(
             server=server,
-            reused=True,
             use_recycle_script=not rebuild,
         )
     except Exception:

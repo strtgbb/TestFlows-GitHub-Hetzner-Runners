@@ -245,7 +245,6 @@ def factory_builds_scaleway_provider(self):
         assert provider._project_id == "proj-123"
         assert provider._zone == "nl-ams-1"
         assert provider._default_image == "ubuntu_jammy"
-        assert provider.supports_recycling is True
 
 
 @TestScenario

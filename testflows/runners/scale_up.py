@@ -905,7 +905,6 @@ def create_server(
                                 server_type=server_type,
                                 location=server_location,
                                 volumes=server_bound_volumes,
-                                automount=False,
                                 image=server_image,
                                 ssh_keys=ssh_keys,
                                 labels=server_labels,
@@ -965,11 +964,12 @@ def recycle_server(
     claim: RecycleClaim,
     provider: CloudProvider,
     setup_worker_pool: ThreadPoolExecutor,
+    scripts: str,
     labels: list[str],
+    label_prefix: str,
     name: str,
     startup_script: str,
     setup_script: str,
-    recycle_script: str,
     github_token: str,
     github_repository: str,
     timeout=60,
@@ -980,7 +980,13 @@ def recycle_server(
     if acquired is None:
         raise CanceledServerCreation(f"recycled server for {name} is no longer available")
     if acquired.use_recycle_script:
-        setup_script = recycle_script
+        # Resolve (and validate) the cleanup script only when it will actually
+        # run — the same lazy, at-point-of-use handling as the setup/startup
+        # scripts. Reimaging providers never set use_recycle_script, so they are
+        # never required to ship a recycle.sh.
+        setup_script = get_recycle_script(
+            scripts=scripts, labels=labels, label_prefix=label_prefix
+        )
 
     setup_worker_pool.submit(
         server_setup,
@@ -1333,25 +1339,17 @@ def scale_up(
                         continue
 
                     try:
-                        recycle_script = (
-                            get_recycle_script(
-                                scripts=scripts,
-                                labels=labels,
-                                label_prefix=label_prefix,
-                            )
-                            if resolved_provider.recycled_server_uses_cleanup
-                            else None
-                        )
                         future = worker_pool.submit(
                             recycle_server,
                             claim=claim,
                             provider=resolved_provider,
                             setup_worker_pool=setup_worker_pool,
+                            scripts=scripts,
                             labels=labels,
+                            label_prefix=label_prefix,
                             name=name,
                             startup_script=startup_script,
                             setup_script=setup_script,
-                            recycle_script=recycle_script,
                             github_token=github_token,
                             github_repository=github_repository,
                             timeout=max_server_ready_time,

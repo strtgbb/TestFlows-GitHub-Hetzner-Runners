@@ -82,14 +82,6 @@ def name_is_hetzner(self):
 
 
 @TestScenario
-def supports_recycling_is_true(self):
-    with Given("a Hetzner provider"):
-        _, provider = hetzner_provider()
-    with Then("supports_recycling is True"):
-        assert provider.supports_recycling is True
-
-
-@TestScenario
 def owns_global_config_defaults_is_true(self):
     """Hetzner owns the top-level config.default_* (legacy), unlike other providers.
 
@@ -194,7 +186,6 @@ def create_server_passes_args(self):
             ssh_keys=ssh_keys,
             labels=labels,
             volumes=[],
-            automount=False,
             public_net=public_net,
         )
     with Then("hclient.servers.create is called with those args"):

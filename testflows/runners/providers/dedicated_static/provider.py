@@ -135,10 +135,6 @@ class DedicatedStaticCloudProvider(CloudProvider):
     def name(self) -> str:
         return "dedicated_static"
 
-    @property
-    def supports_recycling(self) -> bool:
-        return True
-
     def setup_script_name(self, labels: list[str], label_prefix: str = "") -> str:
         # Static hosts are provisioned out of band, so the setup-step is cleanup,
         # never provisioning: it defaults to recycle.sh and is selected by a
@@ -266,10 +262,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
         ssh_keys: list,
         labels: dict[str, str],
         volumes: list = None,
-        automount: bool = False,
         public_net: object = None,
     ) -> ProviderServer | None:
-        del image, ssh_keys, labels, volumes, automount, public_net
+        del image, ssh_keys, labels, volumes, public_net
         requested_type = server_type.name
         requested_location = location.name if hasattr(location, "name") else location
 

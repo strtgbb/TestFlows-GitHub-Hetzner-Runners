@@ -95,7 +95,6 @@ class AcquiredServer:
     """Server returned by a provider acquisition transition."""
 
     server: ProviderServer
-    reused: bool
     use_recycle_script: bool
 
 
@@ -174,14 +173,6 @@ class CloudProvider(ABC):
         """Human-readable provider name, e.g. 'hetzner' or 'aws'."""
 
     @property
-    def supports_recycling(self) -> bool:
-        """Compatibility indicator for providers that reuse runner capacity.
-
-        Lifecycle orchestration must use the acquire/retire methods instead.
-        """
-        return False
-
-    @property
     def supports_volumes(self) -> bool:
         """True if this provider supports persistent volume operations.
 
@@ -243,7 +234,6 @@ class CloudProvider(ABC):
         ssh_keys: list,
         labels: dict[str, str],
         volumes: list = None,
-        automount: bool = False,
         public_net: Any = None,
     ) -> "ProviderServer | None":
         """Create a new server and return a ProviderServer descriptor.
@@ -326,16 +316,6 @@ class CloudProvider(ABC):
         """
         del request
         return None
-
-    @property
-    def recycled_server_uses_cleanup(self) -> bool:
-        """Whether pooled activation requires a recycle cleanup script."""
-        return False
-
-    @property
-    def recycled_server_requires_image_match(self) -> bool:
-        """Whether restart recycling requires the original image to match."""
-        return True
 
     def recycle_image_id(self, image: Any) -> str:
         """Return a stable image identifier stored on recyclable servers."""

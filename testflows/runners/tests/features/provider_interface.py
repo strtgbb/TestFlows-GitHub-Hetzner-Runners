@@ -25,11 +25,6 @@ def name_is_non_empty_string(self, provider):
 
 
 @TestScenario
-def supports_recycling_is_bool(self, provider):
-    assert isinstance(provider.supports_recycling, bool)
-
-
-@TestScenario
 def status_constants_defined(self, provider):
     for attr in (
         "STATUS_RUNNING",
@@ -125,7 +120,6 @@ def get_server_arch_returns_known_value(self, provider, sample_server_type):
 
 _SHARED_SCENARIOS = [
     name_is_non_empty_string,
-    supports_recycling_is_bool,
     status_constants_defined,
     list_runner_servers_callable,
     list_servers_callable,

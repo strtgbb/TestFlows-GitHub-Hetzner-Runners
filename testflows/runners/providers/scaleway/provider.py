@@ -117,10 +117,6 @@ class ScalewayCloudProvider(CloudProvider):
     def currency(self) -> str:
         return "EUR"
 
-    @property
-    def supports_recycling(self) -> bool:
-        return True
-
     def get_prices(self) -> dict[str, dict[str, float]]:
         from .estimate import check_prices
 
@@ -159,7 +155,6 @@ class ScalewayCloudProvider(CloudProvider):
         ssh_keys: list,
         labels: dict,
         volumes: list = None,
-        automount: bool = False,
         public_net=None,
     ) -> ProviderServer:
         """Create a Scaleway Instance from a pre-created boot volume, power it on.
@@ -171,8 +166,8 @@ class ScalewayCloudProvider(CloudProvider):
 
         ``ssh_keys`` is accepted for interface compatibility but not passed to
         the API: Scaleway injects the project's registered SSH keys at boot
-        (see ``get_or_create_ssh_key``).  ``volumes``/``automount``/``public_net``
-        are ignored (the boot volume is derived from the image).
+        (see ``get_or_create_ssh_key``).  ``volumes``/``public_net`` are ignored
+        (the boot volume is derived from the image).
         """
         from scaleway.instance.v1 import (
             ServerAction,
@@ -180,7 +175,7 @@ class ScalewayCloudProvider(CloudProvider):
             VolumeVolumeType,
         )
 
-        del ssh_keys, volumes, automount, public_net
+        del ssh_keys, volumes, public_net
 
         zone = location or self._zone
         commercial_type = native_type(server_type.name)
@@ -451,12 +446,10 @@ class ScalewayCloudProvider(CloudProvider):
                     enable_ipv4=bool(server.public_ipv4),
                     enable_ipv6=bool(server.public_ipv6),
                 ),
+                # Scaleway never reimages on recycle, so the image must match.
+                require_image_match=True,
             ),
         )
-
-    @property
-    def recycled_server_uses_cleanup(self) -> bool:
-        return True
 
     def is_runner_label_tag(self, key: str) -> bool:
         return key.startswith(_RUNNER_LABEL_TAG_PREFIX)

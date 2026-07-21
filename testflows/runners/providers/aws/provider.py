@@ -22,7 +22,7 @@ class AWSCloudProvider(CloudProvider):
     """AWS EC2 implementation of CloudProvider.
 
     Uses ``boto3`` (optional dependency: ``pip install testflows.runners[aws]``).
-    Recycling is not supported (``supports_recycling = False``).
+    Recycling uses the default create/delete lifecycle (no reusable pool).
     Volume operations raise ``NotImplementedError`` (inherited from base class).
     """
 
@@ -101,10 +101,6 @@ class AWSCloudProvider(CloudProvider):
     def currency(self) -> str:
         return "USD"
 
-    @property
-    def supports_recycling(self) -> bool:
-        return False
-
     def get_prices(self) -> dict[str, dict[str, float]]:
         from .estimate import check_prices
         return check_prices(self._region, session=self._session)
@@ -122,7 +118,6 @@ class AWSCloudProvider(CloudProvider):
         ssh_keys: list,
         labels: dict,
         volumes: list = None,
-        automount: bool = False,
         public_net=None,
     ) -> ProviderServer:
         """Launch an EC2 instance and return a ProviderServer wrapping it.

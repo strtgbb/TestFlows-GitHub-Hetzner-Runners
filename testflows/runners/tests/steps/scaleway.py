@@ -56,8 +56,19 @@ def mock_scaleway_sdk(self):
         instance_mod.VolumeVolumeType = VolumeVolumeType
 
         class VolumeServerTemplate:
-            def __init__(self, **kwargs):
-                self.__dict__.update(kwargs)
+            # Mirror the real SDK defaults (notably size=0, NOT None) so tests
+            # catch sending size alongside an existing-volume id, which the API
+            # rejects ("cannot specify 'id' and 'size'").
+            def __init__(
+                self, *, volume_type, id=None, boot=False, name=None,
+                size=0, base_snapshot=None,
+            ):
+                self.volume_type = volume_type
+                self.id = id
+                self.boot = boot
+                self.name = name
+                self.size = size
+                self.base_snapshot = base_snapshot
 
         instance_mod.VolumeServerTemplate = VolumeServerTemplate
 

@@ -200,11 +200,15 @@ class ScalewayCloudProvider(CloudProvider):
             tags=dict_to_tags(labels),
             project=self._project_id,
             volumes={
+                # Attach the pre-created boot volume by id. size/name are
+                # create-time fields; the SDK defaults size to 0 (not None), and
+                # sending it alongside id makes Scaleway reject the request
+                # ("cannot specify 'id' and 'size'"), so size must be None here.
                 "0": VolumeServerTemplate(
                     id=boot_volume_id,
                     boot=True,
                     volume_type=VolumeVolumeType.SBS_VOLUME,
-                    name=boot_volume_name,
+                    size=None,
                 )
             },
         )

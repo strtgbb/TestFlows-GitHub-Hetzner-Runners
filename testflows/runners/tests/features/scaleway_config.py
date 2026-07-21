@@ -375,6 +375,9 @@ def create_server_builds_tagged_boot_volume(self):
         template = skw["volumes"]["0"]
         assert template.id == "vol-boot", template
         assert template.boot is True, template
+        # Attaching by id must not send size (SDK default 0) — the API rejects
+        # 'id' + 'size' together.
+        assert template.size is None, template.size
 
 
 @TestScenario

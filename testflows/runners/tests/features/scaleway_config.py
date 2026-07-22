@@ -647,6 +647,58 @@ def stopped_in_place_space_form_maps_to_off(self):
         assert utils.state_key(srv.state) in utils._ACTIVE_STATES
 
 
+_FAKE_PUBKEY = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterial"
+
+
+def _fake_iam(provider):
+    """Return the faked IamV1Alpha1API instance the provider will construct."""
+    import sys
+
+    return sys.modules["scaleway.iam.v1alpha1"].IamV1Alpha1API.return_value
+
+
+@TestScenario
+def ssh_key_reused_by_name_despite_pubkey_string_drift(self):
+    """An existing key is reused via its (deterministic) name even when Scaleway
+    returns the public_key string with a trailing comment — so we don't create a
+    duplicate every startup and exhaust the IamSshKeys quota.
+    """
+    import hashlib
+
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("an existing key named by the MD5 whose stored pubkey has a comment"):
+        key_name = hashlib.md5(_FAKE_PUBKEY.encode()).hexdigest()
+        iam = _fake_iam(provider)
+        iam.list_ssh_keys_all.return_value = [
+            SimpleNamespace(
+                name=key_name,
+                id="key-1",
+                public_key=_FAKE_PUBKEY + " runner@host",  # drift the API adds
+            )
+        ]
+    with When("get_or_create_ssh_key runs"):
+        result = provider.get_or_create_ssh_key(_FAKE_PUBKEY, is_file=False)
+    with Then("the existing key is reused and none is created"):
+        assert result.id == "key-1", result
+        iam.create_ssh_key.assert_not_called()
+
+
+@TestScenario
+def ssh_key_created_only_when_absent(self):
+    """With no matching key present, exactly one key is created."""
+    with Given("a scaleway provider with no existing keys"):
+        provider = scaleway_provider()
+        iam = _fake_iam(provider)
+        iam.list_ssh_keys_all.return_value = []
+        iam.create_ssh_key.return_value = SimpleNamespace(name="k", id="key-new")
+    with When("get_or_create_ssh_key runs"):
+        result = provider.get_or_create_ssh_key(_FAKE_PUBKEY, is_file=False)
+    with Then("a single key is created and returned"):
+        iam.create_ssh_key.assert_called_once()
+        assert result.id == "key-new", result
+
+
 @TestScenario
 def get_server_ssh_key_name_round_trips(self):
     """get_server_ssh_key_name reads back the key name build_server_labels stored.

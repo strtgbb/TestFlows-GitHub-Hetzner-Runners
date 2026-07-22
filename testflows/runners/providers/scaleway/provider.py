@@ -636,8 +636,17 @@ class ScalewayCloudProvider(CloudProvider):
         key_name = hashlib.md5(public_key_str.encode("utf-8")).hexdigest()
         iam = IamV1Alpha1API(self._client)
 
+        # Reuse an existing key rather than create a duplicate. Match on our
+        # deterministic name (MD5 of the public key) FIRST — comparing the raw
+        # public_key string is fragile because Scaleway may return it with a
+        # different trailing comment/whitespace, and a failed match here creates
+        # a new key with the same name every startup, exhausting the org-wide
+        # IamSshKeys quota. Fall back to the public-key comparison for keys
+        # registered out of band under a different name.
         for existing in iam.list_ssh_keys_all(project_id=self._project_id) or []:
-            if (existing.public_key or "").strip() == public_key_str:
+            if existing.name == key_name or (
+                (existing.public_key or "").strip() == public_key_str
+            ):
                 return ScalewaySSHKey(name=existing.name, id=existing.id)
 
         with Action(f"Creating Scaleway SSH key {key_name}", stacklevel=3):

@@ -349,17 +349,59 @@ def delete_server_stopped_uses_delete_endpoint(self):
 
 @TestScenario
 def delete_server_falls_back_to_delete_on_stale_running_status(self):
-    """If terminate is rejected (412) because status was stale, fall back to DELETE."""
+    """A stale running status: terminate is rejected, so fall back to DELETE."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     from scaleway_core.api import ScalewayException
 
     with And("terminate is rejected with a precondition error"):
-        provider._instance.server_action.side_effect = ScalewayException(status_code=412)
+        provider._instance.server_action.side_effect = ScalewayException(
+            status_code=412, error_type="precondition_failed"
+        )
     with When("delete_server is called with a (stale) running status"):
         provider.delete_server(_scaleway_server(CloudProvider.STATUS_RUNNING))
     with Then("it falls back to the DELETE endpoint"):
         provider._instance.delete_server.assert_called_once()
+
+
+@TestScenario
+def delete_server_falls_back_to_terminate_when_off_still_in_use(self):
+    """A pooled server mapped OFF but not fully powered off: DELETE is rejected
+    ('instance should be powered off'), so fall back to terminate."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    from scaleway_core.api import ScalewayException
+
+    with And("DELETE is rejected with a precondition error"):
+        provider._instance.delete_server.side_effect = ScalewayException(
+            status_code=412, error_type="precondition_failed"
+        )
+    with When("delete_server is called on an OFF (in-place-stopped) instance"):
+        provider.delete_server(_scaleway_server(CloudProvider.STATUS_OFF))
+    with Then("it falls back to terminate"):
+        provider._instance.server_action.assert_called_once()
+        _, kwargs = provider._instance.server_action.call_args
+        assert str(kwargs["action"]) == "terminate", kwargs["action"]
+
+
+@TestScenario
+def delete_server_reraises_non_precondition_error(self):
+    """A non-precondition error (e.g. quota) is not retried — it propagates."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    from scaleway_core.api import ScalewayException
+
+    with And("DELETE fails with a non-precondition error"):
+        provider._instance.delete_server.side_effect = ScalewayException(
+            status_code=403, error_type="quotas_exceeded"
+        )
+    with Then("delete_server re-raises and does not fall back to terminate"):
+        try:
+            provider.delete_server(_scaleway_server(CloudProvider.STATUS_OFF))
+            assert False, "expected the non-precondition error to propagate"
+        except ScalewayException:
+            pass
+        provider._instance.server_action.assert_not_called()
 
 
 def _running_native(name="github-runner-1-0"):

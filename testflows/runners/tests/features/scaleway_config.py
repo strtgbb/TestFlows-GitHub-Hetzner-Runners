@@ -476,8 +476,12 @@ def create_server_cross_project_snapshot_raises_helpful_error(self):
                 root_volume=SimpleNamespace(id="snap-x", volume_type="sbs_snapshot")
             )
         )
-        provider._block.get_snapshot.side_effect = ScalewayException(status_code=403)
-        provider._block.create_volume.side_effect = ScalewayException(status_code=403)
+        provider._block.get_snapshot.side_effect = ScalewayException(
+            status_code=403, error_type="permissions_denied"
+        )
+        provider._block.create_volume.side_effect = ScalewayException(
+            status_code=403, error_type="permissions_denied"
+        )
     with Then("create_server raises ImageError mentioning the project"):
         try:
             provider.create_server(
@@ -487,6 +491,42 @@ def create_server_cross_project_snapshot_raises_helpful_error(self):
             assert False, "expected ImageError for a cross-project snapshot"
         except ImageError as exc:
             assert "project" in str(exc), exc
+
+
+@TestScenario
+def create_server_quota_exceeded_propagates_not_image_error(self):
+    """A 403 quotas_exceeded is a transient capacity failure, not an image problem.
+
+    Regression: quota exhaustion also returns HTTP 403, so keying on the status
+    code alone mislabeled it as 'snapshot not in your project'. It must surface
+    as the original ScalewayException so scale_up treats it as a normal (retryable)
+    create failure while the reaper frees SBS volumes.
+    """
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    from scaleway_core.api import ScalewayException
+
+    with And("an owned SBS image but the SBS volume quota is exhausted"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=120 * 1024**3)
+        provider._block.create_volume.side_effect = ScalewayException(
+            status_code=403, error_type="quotas_exceeded"
+        )
+    with Then("the original ScalewayException propagates (not ImageError)"):
+        try:
+            provider.create_server(
+                name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
+                location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+            )
+            assert False, "expected the quota error to propagate"
+        except ImageError as exc:
+            assert False, f"quota error was mislabeled as ImageError: {exc}"
+        except ScalewayException:
+            pass
 
 
 @TestScenario

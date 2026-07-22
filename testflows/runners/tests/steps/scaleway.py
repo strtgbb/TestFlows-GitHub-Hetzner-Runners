@@ -8,6 +8,7 @@ construct (its ``__init__`` does ``from scaleway import Client`` and
 """
 import sys
 import types
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from testflows.core import *
@@ -95,9 +96,17 @@ def mock_scaleway_sdk(self):
         core_api_mod = types.ModuleType("scaleway_core.api")
 
         class ScalewayException(Exception):
-            def __init__(self, *args, status_code=None, **kwargs):
+            # Mirrors the real exception: status_code comes from the HTTP
+            # response, and the error `type` (quotas_exceeded / permissions_denied)
+            # lives in the response JSON body — the provider reads it via
+            # exc.response.json()["type"] since 403 covers both.
+            def __init__(self, *args, status_code=None, error_type=None, **kwargs):
                 super().__init__(*args)
                 self.status_code = status_code
+                self.response = SimpleNamespace(
+                    status_code=status_code,
+                    json=lambda: {"type": error_type} if error_type else {},
+                )
 
         core_api_mod.ScalewayException = ScalewayException
         core_mod.api = core_api_mod

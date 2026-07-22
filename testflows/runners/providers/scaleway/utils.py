@@ -108,6 +108,23 @@ def dict_to_tags(labels: dict) -> list:
     return tags
 
 
+def _scaleway_error_type(exc) -> str | None:
+    """Return the Scaleway error body's ``type`` (e.g. ``quotas_exceeded``,
+    ``permissions_denied``), or None if it can't be parsed.
+
+    Scaleway reuses HTTP 403 for both permission denials and quota exhaustion,
+    so the response body's ``type`` — not the status code — is what tells them
+    apart. Best-effort: any parsing failure yields None.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    try:
+        return response.json().get("type")
+    except Exception:
+        return None
+
+
 def _server_to_provider(server, ssh_user: str = "root") -> ProviderServer:
     """Convert a Scaleway SDK ``Server`` object to a :class:`ProviderServer`.
 

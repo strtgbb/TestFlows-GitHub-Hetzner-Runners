@@ -47,6 +47,7 @@ from .utils import (
     dict_to_tags,
     state_key,
     _server_to_provider,
+    _scaleway_error_type,
 )
 from .args import _ZONE_RE
 
@@ -342,7 +343,14 @@ class ScalewayCloudProvider(CloudProvider):
                 ),
             )
         except ScalewayException as exc:
-            if getattr(exc, "status_code", None) == 403:
+            # Scaleway returns HTTP 403 for BOTH a cross-project snapshot
+            # (permissions_denied) and a full quota (quotas_exceeded), so the
+            # response body's ``type`` — not the status code — is what tells them
+            # apart. Only a genuine permission denial is an image-config problem;
+            # a quota exhaustion is a transient capacity condition, so let it
+            # propagate as an ordinary create failure (scale_up retries; the
+            # after_scale_down reaper frees SBS volumes to make room).
+            if _scaleway_error_type(exc) == "permissions_denied":
                 raise ImageError(
                     f"Scaleway denied creating a volume from image {image_uuid!r}: "
                     f"its root snapshot is not in your project (a marketplace or "

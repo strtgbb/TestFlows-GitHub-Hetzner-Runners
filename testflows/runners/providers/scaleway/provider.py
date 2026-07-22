@@ -79,6 +79,7 @@ class ScalewayCloudProvider(CloudProvider):
         zone: str = "fr-par-1",
         default_image_spec: str = None,
         default_location_spec: str = None,
+        default_volume_size: int = None,
         ssh_user: str = "root",
         max_runners: int = None,
         end_of_life: int = None,
@@ -101,6 +102,8 @@ class ScalewayCloudProvider(CloudProvider):
         self._zone = zone
         self._default_image = default_image_spec
         self._default_location = default_location_spec
+        # Configured boot-volume size in GB (providers.scaleway.defaults.volume_size).
+        self._default_volume_size = default_volume_size
         self._ssh_user = ssh_user
         self._max_runners = max_runners
         self._end_of_life = end_of_life
@@ -181,11 +184,19 @@ class ScalewayCloudProvider(CloudProvider):
         commercial_type = native_type(server_type.name)
         boot_volume_name = f"{name}-boot"[:60]
 
+        # Grow the boot volume to the configured default size (GB -> bytes;
+        # Scaleway sizes are binary GiB). The snapshot size is the floor.
+        requested_size = (
+            self._default_volume_size * 1024**3
+            if self._default_volume_size
+            else None
+        )
         boot_volume_id = self._create_boot_volume(
             image_uuid=image,
             zone=zone,
             name=boot_volume_name,
             tags=[_RUNNER_VOLUME_TAG],
+            size=requested_size,
         )
 
         # Volume-first create: attach the tagged SBS boot volume by id and omit
@@ -288,19 +299,20 @@ class ScalewayCloudProvider(CloudProvider):
                 f"project (local or marketplace images cannot be used)."
             )
 
-        # root_volume.size is unreliable (reports 0); read the snapshot's real
-        # size when we own it. A cross-project (marketplace) snapshot is not
-        # readable — we fall through with size=None and surface the helpful
-        # error when create_volume is denied below.
-        volume_size = size
-        if volume_size is None:
-            try:
-                snapshot = self._block.get_snapshot(
-                    snapshot_id=root_volume.id, zone=zone
-                )
-                volume_size = getattr(snapshot, "size", None)
-            except ScalewayException:
-                volume_size = None
+        # A from_snapshot volume cannot be smaller than its snapshot, so use the
+        # snapshot size as the floor and grow to the requested ``size`` when it
+        # is larger. root_volume.size is unreliable (reports 0), so read the real
+        # size from the snapshot. A cross-project (marketplace) snapshot is not
+        # readable — fall through and let create_volume surface the 403 below.
+        snapshot_size = None
+        try:
+            snapshot = self._block.get_snapshot(
+                snapshot_id=root_volume.id, zone=zone
+            )
+            snapshot_size = getattr(snapshot, "size", None)
+        except ScalewayException:
+            snapshot_size = None
+        volume_size = max([s for s in (size, snapshot_size) if s], default=None)
 
         try:
             volume = self._block.create_volume(

@@ -118,6 +118,7 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 zone=scaleway_cfg.defaults.location or "fr-par-1",
                 default_image_spec=scaleway_cfg.defaults.image,
                 default_location_spec=scaleway_cfg.defaults.location,
+                default_volume_size=scaleway_cfg.defaults.volume_size,
                 ssh_user=scaleway_cfg.ssh_user,
                 max_runners=scaleway_cfg.max_runners,
                 end_of_life=scaleway_cfg.end_of_life,

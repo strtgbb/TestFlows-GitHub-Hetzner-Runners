@@ -381,6 +381,35 @@ def create_server_builds_tagged_boot_volume(self):
 
 
 @TestScenario
+def create_server_sizes_boot_volume_to_configured_default(self):
+    """The boot volume grows to the configured default size, floored at the snapshot."""
+    with Given("a scaleway provider with a 200 GB configured default volume size"):
+        provider = scaleway_provider()
+        provider._default_volume_size = 200
+    with And("an SBS image whose snapshot is 120 GiB"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=120 * 1024**3)
+        provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+        provider._wait_for_state = lambda *a, **k: _running_native()
+    with When("create_server runs"):
+        provider.create_server(
+            name="github-runner-1-0",
+            server_type=ProviderServerType(name="basic2-a16c-32g"),
+            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+        )
+    with Then("the boot volume is created at the configured 200 GiB, above the snapshot floor"):
+        ckw = provider._block.create_volume.call_args.kwargs
+        assert ckw["from_snapshot"].size == 200 * 1024**3, ckw["from_snapshot"].size
+
+
+@TestScenario
 def create_server_local_snapshot_raises_helpful_error(self):
     """A local (l_ssd) root volume yields a helpful error and creates no volume."""
     with Given("a scaleway provider"):

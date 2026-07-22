@@ -19,6 +19,7 @@ from testflows.runners.config.config import (
 from types import SimpleNamespace
 
 from testflows.runners.cloud_provider import (
+    CloudProvider,
     ProviderServer,
     ProviderServerType,
 )
@@ -305,31 +306,60 @@ def get_server_arch_defaults_x64_without_sdk_type(self):
         assert provider.get_server_arch(ProviderServerType(name="basic2.a8c.16g")) == "x64"
 
 
-@TestScenario
-def delete_server_terminates_only(self):
-    """delete_server issues a single terminate; volumes are reaped out of band.
+def _scaleway_server(status):
+    return ProviderServer(
+        id="srv-1", name="github-runner-1-0-dev1.s", status=status,
+        public_ipv4=None, private_ipv4=None, labels={},
+        server_type="dev1.s", location="fr-par-1", created=None,
+    )
 
-    terminate detaches (does not delete) SBS boot volumes; deleting them inline
-    is neither atomic nor crash-safe, so the boot volume is tagged at create and
-    reclaimed later by reap_orphaned_volumes.
+
+@TestScenario
+def delete_server_terminates_running(self):
+    """A running instance is removed with terminate; volumes reaped out of band."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with When("delete_server is called on a running instance"):
+        provider.delete_server(_scaleway_server(CloudProvider.STATUS_RUNNING))
+    with Then("it terminates and never deletes the instance resource or volumes"):
+        _, kwargs = provider._instance.server_action.call_args
+        assert str(kwargs["action"]) == "terminate", kwargs["action"]
+        provider._instance.delete_server.assert_not_called()
+        provider._block.delete_volume.assert_not_called()
+
+
+@TestScenario
+def delete_server_stopped_uses_delete_endpoint(self):
+    """A stopped instance can't be terminated, so it's removed via DELETE.
+
+    Regression: terminate on a stopped (pooled/recycled) server is rejected with
+    'resource_not_usable: invalid state stopped for the action terminate'.
     """
     with Given("a scaleway provider"):
         provider = scaleway_provider()
-    with And("a server with an SBS boot volume"):
-        native = SimpleNamespace(volumes={
-            "0": SimpleNamespace(id="vol-sbs", volume_type="sbs_volume", boot=True),
-        })
-        server = ProviderServer(
-            id="srv-1", name="github-runner-1-0-dev1.s", status="off",
-            public_ipv4=None, private_ipv4=None, labels={},
-            server_type="dev1.s", location="fr-par-1", created=None, _native=native,
-        )
-    with When("delete_server is called"):
-        provider.delete_server(server)
-    with Then("it terminates and does not delete volumes inline"):
-        _, kwargs = provider._instance.server_action.call_args
-        assert str(kwargs["action"]) == "terminate", kwargs["action"]
+    with When("delete_server is called on a stopped instance"):
+        provider.delete_server(_scaleway_server(CloudProvider.STATUS_OFF))
+    with Then("it uses the DELETE endpoint and does not attempt terminate"):
+        provider._instance.delete_server.assert_called_once()
+        _, dkwargs = provider._instance.delete_server.call_args
+        assert dkwargs["server_id"] == "srv-1", dkwargs
+        provider._instance.server_action.assert_not_called()
         provider._block.delete_volume.assert_not_called()
+
+
+@TestScenario
+def delete_server_falls_back_to_delete_on_stale_running_status(self):
+    """If terminate is rejected (412) because status was stale, fall back to DELETE."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    from scaleway_core.api import ScalewayException
+
+    with And("terminate is rejected with a precondition error"):
+        provider._instance.server_action.side_effect = ScalewayException(status_code=412)
+    with When("delete_server is called with a (stale) running status"):
+        provider.delete_server(_scaleway_server(CloudProvider.STATUS_RUNNING))
+    with Then("it falls back to the DELETE endpoint"):
+        provider._instance.delete_server.assert_called_once()
 
 
 def _running_native(name="github-runner-1-0"):

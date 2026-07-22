@@ -31,6 +31,7 @@ def regression(self):
     Feature(run=load("testflows.runners.tests.features.scale_up_labels", "feature"))
     Feature(run=load("testflows.runners.tests.features.scale_down_recycle", "feature"))
     Feature(run=load("testflows.runners.tests.features.recycling_lifecycle", "feature"))
+    Feature(run=load("testflows.runners.tests.features.metrics_cost", "feature"))
 
 
 if main():

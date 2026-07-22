@@ -535,10 +535,12 @@ def update_servers(servers, server_prices=None, ipv4_price=0.0008, ipv6_price=0.
     """
     from .providers.hetzner.estimate import get_server_price as hetzner_get_price
     from .providers.aws.estimate import get_server_price as aws_get_price
+    from .providers.scaleway.estimate import get_server_price as scaleway_get_price
 
     _provider_fns = {
         "hetzner": hetzner_get_price,
         "aws": aws_get_price,
+        "scaleway": scaleway_get_price,
     }
 
     # Clear all existing server metrics
@@ -600,12 +602,16 @@ def update_servers(servers, server_prices=None, ipv4_price=0.0008, ipv6_price=0.
                             ipv4_price=server_ipv4_cost,
                             ipv6_price=server_ipv6_cost,
                         )
-                    else:
-                        # Prices are keyed by region; location may be an AZ
+                    elif provider_name == "aws":
+                        # AWS prices are keyed by region; location may be an AZ.
                         from .providers.aws.utils import _az_to_region
                         total_cost = price_fn(
                             prices, server_type, _az_to_region(location)
                         )
+                    else:
+                        # Scaleway (and any future provider) keys prices by the
+                        # location as-is (zone); no region translation.
+                        total_cost = price_fn(prices, server_type, location)
 
                     if total_cost is not None:
                         COST_ESTIMATE.labels(

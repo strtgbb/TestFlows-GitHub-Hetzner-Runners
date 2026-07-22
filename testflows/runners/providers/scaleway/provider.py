@@ -48,6 +48,7 @@ from .utils import (
     state_key,
     _server_to_provider,
     _scaleway_error_type,
+    normalize_public_key,
 )
 from .args import _ZONE_RE
 
@@ -649,16 +650,19 @@ class ScalewayCloudProvider(CloudProvider):
         key_name = hashlib.md5(public_key_str.encode("utf-8")).hexdigest()
         iam = IamV1Alpha1API(self._client)
 
-        # Reuse an existing key rather than create a duplicate. Match on our
-        # deterministic name (MD5 of the public key) FIRST — comparing the raw
-        # public_key string is fragile because Scaleway may return it with a
-        # different trailing comment/whitespace, and a failed match here creates
-        # a new key with the same name every startup, exhausting the org-wide
-        # IamSshKeys quota. Fall back to the public-key comparison for keys
-        # registered out of band under a different name.
+        # Reuse an existing key rather than create a duplicate, matching on key
+        # *identity* (type + base64 blob), not name or the raw string. A raw
+        # compare trips on a differing trailing comment, and the name won't match
+        # a key registered out of band under another name (e.g. a human's
+        # personal key with the same material) — either miss creates a duplicate
+        # every startup and exhausts the org-wide IamSshKeys quota. The
+        # normalized blob is the same identity a fingerprint hashes, so it
+        # matches the same key regardless of comment or registered name.
+        target_identity = normalize_public_key(public_key_str)
         for existing in iam.list_ssh_keys_all(project_id=self._project_id) or []:
-            if existing.name == key_name or (
-                (existing.public_key or "").strip() == public_key_str
+            if (
+                existing.name == key_name
+                or normalize_public_key(existing.public_key) == target_identity
             ):
                 return ScalewaySSHKey(name=existing.name, id=existing.id)
 

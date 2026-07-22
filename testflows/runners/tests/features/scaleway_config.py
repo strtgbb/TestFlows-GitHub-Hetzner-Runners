@@ -700,29 +700,27 @@ def _fake_iam(provider):
 
 
 @TestScenario
-def ssh_key_reused_by_name_despite_pubkey_string_drift(self):
-    """An existing key is reused via its (deterministic) name even when Scaleway
-    returns the public_key string with a trailing comment — so we don't create a
-    duplicate every startup and exhaust the IamSshKeys quota.
+def ssh_key_reused_by_identity_despite_name_and_comment(self):
+    """An existing key with the SAME material is reused even when it is
+    registered under a different name and its stored public_key carries a
+    trailing comment (the real duplicate-accumulation case: a human's key like
+    'sgibb' with the same fingerprint as the controller's configured key).
     """
-    import hashlib
-
     with Given("a scaleway provider"):
         provider = scaleway_provider()
-    with And("an existing key named by the MD5 whose stored pubkey has a comment"):
-        key_name = hashlib.md5(_FAKE_PUBKEY.encode()).hexdigest()
+    with And("an existing key under a human name whose pubkey has a comment"):
         iam = _fake_iam(provider)
         iam.list_ssh_keys_all.return_value = [
             SimpleNamespace(
-                name=key_name,
-                id="key-1",
-                public_key=_FAKE_PUBKEY + " runner@host",  # drift the API adds
+                name="sgibb",  # not our MD5 name
+                id="key-human",
+                public_key=_FAKE_PUBKEY + " sgibb@laptop",  # same blob, comment added
             )
         ]
-    with When("get_or_create_ssh_key runs"):
+    with When("get_or_create_ssh_key runs with the same key material"):
         result = provider.get_or_create_ssh_key(_FAKE_PUBKEY, is_file=False)
-    with Then("the existing key is reused and none is created"):
-        assert result.id == "key-1", result
+    with Then("the existing key is reused by identity and none is created"):
+        assert result.id == "key-human", result
         iam.create_ssh_key.assert_not_called()
 
 

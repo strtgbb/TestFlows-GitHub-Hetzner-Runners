@@ -108,6 +108,20 @@ def dict_to_tags(labels: dict) -> list:
     return tags
 
 
+def normalize_public_key(public_key: str) -> str:
+    """Return an SSH public key's identity: ``<type> <base64-blob>``, no comment.
+
+    Two entries for the same key can differ only by their trailing comment (e.g.
+    ``... user@host``) or surrounding whitespace, which is what a raw-string
+    compare trips on. The type+blob is the key's canonical identity — the same
+    bytes a fingerprint is hashed from — so comparing it matches the same key
+    regardless of comment or the name it was registered under. Falls back to the
+    stripped input for anything that isn't a standard two-plus-field key.
+    """
+    parts = (public_key or "").split()
+    return " ".join(parts[:2]) if len(parts) >= 2 else (public_key or "").strip()
+
+
 def _scaleway_error_type(exc) -> str | None:
     """Return the Scaleway error body's ``type`` (e.g. ``quotas_exceeded``,
     ``permissions_denied``), or None if it can't be parsed.

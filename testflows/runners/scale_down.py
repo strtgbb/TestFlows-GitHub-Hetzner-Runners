@@ -259,7 +259,7 @@ def recycle_server(
 ):
     """Delegate the retirement transition to the owning provider."""
     try:
-        return provider.retire_runner_server(
+        result = provider.retire_runner_server(
             server,
             reason=reason,
             recycle_enabled=recycle_enabled,
@@ -288,6 +288,27 @@ def recycle_server(
         ):
             raise
         return RetirementResult("failed", server.name)
+
+    if result.action == "unmanaged":
+        # A server this controller does not own by SSH key is left untouched
+        # (never renamed/recycled/deleted). That is normal for other controllers'
+        # servers in a shared project, but a FLEET-WIDE unmanaged result means the
+        # controller no longer recognizes its own servers (e.g. its resolved SSH
+        # key name drifted from what the servers were tagged with) — which silently
+        # strands them and, on Scaleway, leaks their SBS volumes until quota fills.
+        # Log the mismatch at DEBUG so that failure mode is diagnosable instead of
+        # silent (kept at DEBUG to avoid noise from legitimately-foreign servers).
+        with Action(
+            f"Not retiring {reason} server {server.name}: unmanaged "
+            f"(stored ssh-key {provider.get_server_ssh_key_name(server)!r} not in "
+            f"this controller's owned keys {sorted(ssh_key_names)})",
+            level=logging.DEBUG,
+            ignore_fail=True,
+            server_name=server.name,
+        ):
+            pass
+
+    return result
 
 
 def scale_down(

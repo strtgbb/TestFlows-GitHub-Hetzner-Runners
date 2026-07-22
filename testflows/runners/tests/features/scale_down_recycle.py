@@ -120,6 +120,58 @@ def retirement_failure_records_metric(self):
 
 
 @TestScenario
+def unmanaged_retirement_is_logged(self):
+    """An unmanaged (unowned) retirement emits a diagnostic naming the mismatch.
+
+    Regression guard: a silent 'unmanaged' result is what turned a fleet-wide
+    ownership break into an invisible SBS-quota deadlock. The wrapper must log
+    the stored ssh-key vs the controller's owned keys.
+    """
+    provider = _provider(stored_ssh_key_name="theirkey")
+    provider.retire_runner_server.return_value = RetirementResult("unmanaged", "server")
+    provider.get_server_ssh_key_name.return_value = "theirkey"
+    server = _server("github-runner-1-0-cx22")
+    with When("the provider reports the server unmanaged"), patch(
+        "testflows.runners.scale_down.Action"
+    ) as action:
+        result = recycle_server(
+            reason="powered_off",
+            server=server,
+            provider=provider,
+            ssh_key_names={"mykey"},
+            end_of_life=60,
+            recycle_grace_period=0,
+        )
+    with Then("it returns unmanaged and logs the stored key vs owned keys"):
+        assert result.action == "unmanaged"
+        messages = " ".join(str(c.args[0]) for c in action.call_args_list if c.args)
+        assert "unmanaged" in messages, messages
+        assert "theirkey" in messages, messages  # server's stored ssh-key
+        assert "mykey" in messages, messages  # controller's owned keys
+
+
+@TestScenario
+def managed_retirement_is_not_logged_as_unmanaged(self):
+    """A normal (owned) retirement does not emit the unmanaged diagnostic."""
+    provider = _provider(stored_ssh_key_name="mykey")  # default result is "pooled"
+    server = _server("github-runner-1-0-cx22")
+    with When("recycle_server runs on an owned server"), patch(
+        "testflows.runners.scale_down.Action"
+    ) as action:
+        recycle_server(
+            reason="powered_off",
+            server=server,
+            provider=provider,
+            ssh_key_names={"mykey"},
+            end_of_life=60,
+            recycle_grace_period=0,
+        )
+    with Then("no unmanaged diagnostic is logged"):
+        messages = " ".join(str(c.args[0]) for c in action.call_args_list if c.args)
+        assert "unmanaged" not in messages, messages
+
+
+@TestScenario
 def delete_recyclable_resolves_provider_per_server(self):
     """delete_recyclable_server deletes the picked server via its own provider."""
     provider = MagicMock()

@@ -208,11 +208,12 @@ def provider_type_deduplicates(self):
 
 @TestScenario
 def hetzner_token_not_read_from_env(self):
-    """An ambient HETZNER_TOKEN must not populate config.hetzner_token.
+    """An ambient HETZNER_TOKEN must not configure Hetzner.
 
-    Hetzner must be configured explicitly (--hetzner-token, config file
-    hetzner_token, or providers.hetzner.token); a stray env var must not
-    silently create a Hetzner provider.
+    Hetzner must be configured explicitly (--hetzner-token or
+    providers.hetzner.token); a stray env var must not silently create a
+    Hetzner provider. config.hetzner_token is a read-only accessor derived from
+    providers.hetzner.token, so with no provider it resolves to None.
     """
     from testflows.runners.config.config import Config
 

@@ -221,11 +221,6 @@ class Config:
 
     github_token: str = os.getenv("GITHUB_TOKEN")
     github_repository: str = os.getenv("GITHUB_REPOSITORY")
-    # Not read from the environment: an ambient HETZNER_TOKEN must not silently
-    # configure Hetzner. Set it explicitly via --hetzner-token, the config file
-    # (hetzner_token or providers.hetzner.token). Backfilled from
-    # providers.hetzner.token below for legacy internal readers.
-    hetzner_token: str = None
 
     # Multi-provider configuration
     providers: provider_list = dataclasses.field(default_factory=provider_list)
@@ -274,15 +269,20 @@ class Config:
     server_prices: dict[str, dict[str, float]] = None
     config_file: str = None
 
-    def __post_init__(self):
-        # Normalise: if the flat hetzner_token field is unset but the new-style
-        # providers.hetzner.token is set, promote it so that legacy code paths
-        # (cloud.py, servers.py, volumes.py, etc.) that read config.hetzner_token
-        # see the correct value without needing to be updated individually.
-        if not self.hetzner_token and self.providers and self.providers.hetzner:
-            if self.providers.hetzner.token:
-                self.hetzner_token = self.providers.hetzner.token
+    @property
+    def hetzner_token(self):
+        """Hetzner API token, derived from providers.hetzner.token.
 
+        Read-only accessor for Hetzner-specific internal readers (images.py,
+        volumes.py, servers.py, the systemd HETZNER_TOKEN env, ...). The token's
+        sole source of truth is providers.hetzner.token; there is no top-level
+        token field and it is never read from the environment.
+        """
+        if self.providers is not None and self.providers.hetzner is not None:
+            return self.providers.hetzner.token
+        return None
+
+    def __post_init__(self):
         if self.with_label is None:
             self.with_label = ["self-hosted"]
 
@@ -366,9 +366,8 @@ class Config:
                     )
                     sys.exit(1)
             # Check that at least one provider is configured.
-            has_hetzner = self.hetzner_token or (
-                self.providers.hetzner is not None
-                and bool(self.providers.hetzner.token)
+            has_hetzner = self.providers.hetzner is not None and bool(
+                self.providers.hetzner.token
             )
             has_aws = (
                 self.providers.aws is not None

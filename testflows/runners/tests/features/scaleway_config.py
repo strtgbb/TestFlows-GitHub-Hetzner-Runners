@@ -317,30 +317,6 @@ def scaleway_recycle_rejects_non_boolean(self):
             assert "providers.scaleway.recycle" in str(exc), exc
 
 
-@TestScenario
-def ambient_hetzner_token_does_not_override_scaleway(self):
-    """An ambient hetzner_token must not auto-wire Hetzner when scaleway is set.
-
-    Reproduces the case where HETZNER_TOKEN is present in the environment but the
-    user has explicitly configured providers.scaleway: the factory must build
-    only the scaleway provider, not a surprise Hetzner one.
-    """
-    with Given("a faked scaleway SDK"):
-        mock_scaleway_sdk()
-    with And("a config with explicit scaleway and an ambient hetzner_token"):
-        cfg = Config(github_token="t", github_repository="o/r")
-        cfg.hetzner_token = "ambient-hetzner-token"
-        cfg.providers = provider_list(
-            scaleway=scaleway_provider_config(
-                access_key="AK", secret_key="SK", project_id="pid"
-            )
-        )
-    with When("I build providers"):
-        providers = provider_factory(cfg)
-    with Then("only the scaleway provider is constructed"):
-        assert [p.name for p in providers] == ["scaleway"], [p.name for p in providers]
-
-
 # ---------------------------------------------------------------------------
 # get_server_arch: authoritative SDK arch, with a name fallback
 # ---------------------------------------------------------------------------

@@ -1,67 +1,19 @@
 """Provider factory: construct CloudProvider instances from Config."""
 
-import dataclasses
-import logging
-
-from .config import (
-    Config,
-    hetzner_provider as HetznerProviderConfig,
-    aws_provider as AWSProviderConfig,
-)
+from .config import Config
 from ..cloud_provider import CloudProvider
-
-logger = logging.getLogger("testflows.runners")
 
 
 def provider_factory(config: Config) -> list[CloudProvider]:
     """Construct and return all configured CloudProvider instances.
 
-    Handles the backwards-compatible ``hetzner_token`` flat field: if it is
-    set and no ``providers.hetzner.token`` has been supplied, the token is
-    synced into ``config.providers.hetzner`` with a deprecation warning.
-
     Args:
         config: Populated Config object.
 
     Returns:
-        List of CloudProvider instances in configuration order.
+        List of CloudProvider instances in configuration (precedence) order.
     """
     from ..providers.hetzner.provider import HetznerCloudProvider
-
-    # Backwards compat: hetzner_token → providers.hetzner.token
-    # Only auto-wire if the user has not configured another provider via the new
-    # providers block. If they have (e.g. providers.aws or providers.scaleway),
-    # the env var HETZNER_TOKEN is ambient noise and should not silently create
-    # a Hetzner provider.
-    if config.hetzner_token:
-        if config.providers.hetzner is None or not config.providers.hetzner.token:
-            has_explicit_aws = config.providers.aws is not None and bool(
-                config.providers.aws.access_key_id
-            )
-            has_explicit_scaleway = config.providers.scaleway is not None and bool(
-                config.providers.scaleway.access_key
-            )
-            has_explicit_dedicated_static = (
-                config.providers.dedicated_static is not None
-                and bool(config.providers.dedicated_static.groups)
-            )
-            has_explicit_provider = (
-                has_explicit_aws
-                or has_explicit_scaleway
-                or has_explicit_dedicated_static
-            )
-            if not has_explicit_provider:
-                logger.warning(
-                    "hetzner_token is deprecated; use providers.hetzner.token instead"
-                )
-                if config.providers.hetzner is None:
-                    config.providers.hetzner = HetznerProviderConfig(
-                        token=config.hetzner_token
-                    )
-                else:
-                    config.providers.hetzner = dataclasses.replace(
-                        config.providers.hetzner, token=config.hetzner_token
-                    )
 
     providers: list[CloudProvider] = []
 

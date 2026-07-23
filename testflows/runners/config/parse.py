@@ -480,17 +480,11 @@ def parse_config(filename: str):
     if doc.get("embedded_mode") is not None:
         assert False, "config.embedded_mode: should not be defined"
 
-    # Backwards compat: top-level hetzner_token → providers.hetzner.token
     if doc.get("hetzner_token") is not None:
-        logger.warning(
-            "config.hetzner_token is deprecated; use config.providers.hetzner.token instead"
+        assert False, (
+            "config.hetzner_token: is not supported; "
+            "use config.providers.hetzner.token instead"
         )
-        if doc.get("providers") is None:
-            doc["providers"] = {}
-        if doc["providers"].get("hetzner") is None:
-            doc["providers"]["hetzner"] = {"token": doc["hetzner_token"]}
-        elif not doc["providers"]["hetzner"].get("token"):
-            doc["providers"]["hetzner"]["token"] = doc["hetzner_token"]
 
     if doc.get("providers") is not None:
         _p = doc["providers"]

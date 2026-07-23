@@ -1998,7 +1998,13 @@ if __name__ == "__main__":
         if "github_token" in project_config:
             config.github_token = project_config["github_token"]
         if "hetzner_token" in project_config:
-            config.hetzner_token = project_config["hetzner_token"]
+            from testflows.runners.config.config import hetzner_provider
+
+            _project_token = project_config["hetzner_token"]
+            if config.providers.hetzner is None:
+                config.providers.hetzner = hetzner_provider(token=_project_token)
+            else:
+                config.providers.hetzner.token = _project_token
         if "github_repository" in project_config:
             config.github_repository = project_config["github_repository"]
         if "config_file" in project_config:

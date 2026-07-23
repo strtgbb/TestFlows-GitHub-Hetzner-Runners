@@ -1198,6 +1198,13 @@ def scale_up(
     debug: bool = config.debug
     standby_runners: list[StandbyRunner] = config.standby_runners
     recycle: bool = config.recycle
+
+    def _effective_recycle(provider):
+        """Provider recycle toggle if set, otherwise the global default."""
+        if provider is not None and provider.recycle is not None:
+            return provider.recycle
+        return recycle
+
     with_label: list[str] = config.with_label
     label_prefix: str = config.label_prefix
     meta_label: dict[str, set[str]] = config.meta_label
@@ -1286,8 +1293,12 @@ def scale_up(
                 )
             )
 
-        if recycle:
+        # Recycling is decided per provider (global default + per-provider override)
+        # so it can be off for one provider (e.g. Scaleway) and on for another.
+        if any(_effective_recycle(rp) for _, rp, _, _, _ in resolved):
             for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
+                if not _effective_recycle(resolved_provider):
+                    continue
                 provider_ssh_keys = ssh_keys.get(resolved_provider.name, [])
                 for loc_name in _expand_locations(server_locations, resolved_provider):
                     effective_loc = loc_name if loc_name is not None else resolved_provider.default_location

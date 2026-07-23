@@ -336,6 +336,18 @@ def scale_down(
         if provider is not None and provider.end_of_life is not None:
             return provider.end_of_life
         return end_of_life
+
+    def _effective_recycle(provider):
+        """Return the provider's recycle toggle if set, otherwise the global value."""
+        if provider is not None and provider.recycle is not None:
+            return provider.recycle
+        return recycle
+
+    def _effective_recycle_grace(provider):
+        """Return the provider's recycle grace period if set, otherwise the global value."""
+        if provider is not None and provider.recycle_grace_period is not None:
+            return provider.recycle_grace_period
+        return recycle_grace_period
     max_powered_off_time: int = config.max_powered_off_time
     max_unused_runner_time: int = config.max_unused_runner_time
     max_runner_registration_time: int = config.max_runner_registration_time
@@ -426,7 +438,7 @@ def scale_down(
                     if ps.status == CloudProvider.STATUS_OFF:
                         if ps.name.startswith(recycle_server_name_prefix):
                             _sp = server_providers.get(ps.name)
-                            if recycle and _sp is not None and _sp.is_recycled_server(ps):
+                            if _sp is not None and _effective_recycle(_sp) and _sp.is_recycled_server(ps):
                                 if ps.name not in recyclable_servers:
                                     recyclable_servers[ps.name] = (ps, _sp)
 
@@ -613,8 +625,8 @@ def scale_down(
                                     provider=_sp,
                                     ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
                                     end_of_life=_effective_end_of_life(_sp),
-                                    recycle_grace_period=recycle_grace_period,
-                                    recycle_enabled=recycle,
+                                    recycle_grace_period=_effective_recycle_grace(_sp),
+                                    recycle_enabled=_effective_recycle(_sp),
                                 )
                                 if result.action == "deleted":
                                     metrics.record_server_deletion(
@@ -665,8 +677,8 @@ def scale_down(
                                     provider=_sp,
                                     ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
                                     end_of_life=_effective_end_of_life(_sp),
-                                    recycle_grace_period=recycle_grace_period,
-                                    recycle_enabled=recycle,
+                                    recycle_grace_period=_effective_recycle_grace(_sp),
+                                    recycle_enabled=_effective_recycle(_sp),
                                 )
                                 if result.action == "deleted":
                                     metrics.record_server_deletion(
@@ -764,8 +776,8 @@ def scale_down(
                                         runner_server_provider.name, set()
                                     ),
                                     end_of_life=_effective_end_of_life(runner_server_provider),
-                                    recycle_grace_period=recycle_grace_period,
-                                    recycle_enabled=recycle,
+                                    recycle_grace_period=_effective_recycle_grace(runner_server_provider),
+                                    recycle_enabled=_effective_recycle(runner_server_provider),
                                 )
                                 if result.action == "deleted":
                                         metrics.record_server_deletion(
@@ -811,7 +823,8 @@ def scale_down(
                             recyclable_provider.name, set()
                         ),
                         end_of_life=_effective_end_of_life(recyclable_provider),
-                        recycle_grace_period=recycle_grace_period,
+                        recycle_grace_period=_effective_recycle_grace(recyclable_provider),
+                        recycle_enabled=_effective_recycle(recyclable_provider),
                     )
                     recyclable_servers.pop(server_name)
 

@@ -219,6 +219,21 @@ class CloudProvider(ABC):
         return getattr(self, "_end_of_life", None)
 
     @property
+    def recycle(self) -> bool | None:
+        """Per-provider recycle toggle, or None to use the global setting.
+
+        Lets recycling be turned off for one provider (e.g. Scaleway, where the
+        billing model can make pooling a cost loss) while leaving it on for
+        others. Providers with no reusable pool (AWS) ignore it in practice.
+        """
+        return getattr(self, "_recycle", None)
+
+    @property
+    def recycle_grace_period(self) -> int | None:
+        """Per-provider recycle grace period in seconds, or None for the global setting."""
+        return getattr(self, "_recycle_grace_period", None)
+
+    @property
     def currency(self) -> str:
         """ISO 4217 currency code for this provider's prices (e.g. 'EUR', 'USD')."""
         return "EUR"

@@ -524,6 +524,18 @@ def parse_config(filename: str):
                     "config.providers.hetzner.end_of_life: must be an integer > 0 and < 60"
                 )
                 _hetzner_kwargs["end_of_life"] = v
+            if h.get("recycle") is not None:
+                v = h["recycle"]
+                assert isinstance(v, bool), (
+                    "config.providers.hetzner.recycle: is not a boolean"
+                )
+                _hetzner_kwargs["recycle"] = v
+            if h.get("recycle_grace_period") is not None:
+                v = h["recycle_grace_period"]
+                assert isinstance(v, int) and v >= 0, (
+                    "config.providers.hetzner.recycle_grace_period: must be an integer >= 0"
+                )
+                _hetzner_kwargs["recycle_grace_period"] = v
             _hetzner = hetzner_provider(**_hetzner_kwargs)
 
         _aws = None
@@ -565,6 +577,18 @@ def parse_config(filename: str):
                     "config.providers.aws.end_of_life: must be an integer > 0 and < 60"
                 )
                 _aws_kwargs["end_of_life"] = v
+            if a.get("recycle") is not None:
+                v = a["recycle"]
+                assert isinstance(v, bool), (
+                    "config.providers.aws.recycle: is not a boolean"
+                )
+                _aws_kwargs["recycle"] = v
+            if a.get("recycle_grace_period") is not None:
+                v = a["recycle_grace_period"]
+                assert isinstance(v, int) and v >= 0, (
+                    "config.providers.aws.recycle_grace_period: must be an integer >= 0"
+                )
+                _aws_kwargs["recycle_grace_period"] = v
             _aws_defaults_raw = a.get("defaults")
             if _aws_defaults_raw is not None:
                 assert isinstance(
@@ -622,6 +646,18 @@ def parse_config(filename: str):
                     "config.providers.scaleway.end_of_life: must be an integer > 0 and < 60"
                 )
                 _scaleway_kwargs["end_of_life"] = v
+            if s.get("recycle") is not None:
+                v = s["recycle"]
+                assert isinstance(v, bool), (
+                    "config.providers.scaleway.recycle: is not a boolean"
+                )
+                _scaleway_kwargs["recycle"] = v
+            if s.get("recycle_grace_period") is not None:
+                v = s["recycle_grace_period"]
+                assert isinstance(v, int) and v >= 0, (
+                    "config.providers.scaleway.recycle_grace_period: must be an integer >= 0"
+                )
+                _scaleway_kwargs["recycle_grace_period"] = v
             _scaleway_defaults_raw = s.get("defaults")
             if _scaleway_defaults_raw is not None:
                 assert isinstance(

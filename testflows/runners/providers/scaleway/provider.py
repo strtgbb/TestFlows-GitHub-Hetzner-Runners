@@ -85,6 +85,8 @@ class ScalewayCloudProvider(CloudProvider):
         ssh_user: str = "root",
         max_runners: int = None,
         end_of_life: int = None,
+        recycle: bool = None,
+        recycle_grace_period: int = None,
     ):
         from scaleway import Client
         from scaleway.instance.v1 import InstanceV1API
@@ -109,6 +111,8 @@ class ScalewayCloudProvider(CloudProvider):
         self._ssh_user = ssh_user
         self._max_runners = max_runners
         self._end_of_life = end_of_life
+        self._recycle = recycle
+        self._recycle_grace_period = recycle_grace_period
 
     # ---------------------------------------------------------------------------
     # Identity

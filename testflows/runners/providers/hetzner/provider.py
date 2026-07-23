@@ -45,6 +45,8 @@ class HetznerCloudProvider(CloudProvider):
         default_image=None,
         max_runners: int = None,
         end_of_life: int = None,
+        recycle: bool = None,
+        recycle_grace_period: int = None,
         recycle_with_rebuild: bool = False,
     ):
         """Initialise the provider.
@@ -65,6 +67,8 @@ class HetznerCloudProvider(CloudProvider):
         self._default_image = default_image
         self._max_runners = max_runners
         self._end_of_life = end_of_life
+        self._recycle = recycle
+        self._recycle_grace_period = recycle_grace_period
         self._recycle_with_rebuild = recycle_with_rebuild
 
     # ---------------------------------------------------------------------------

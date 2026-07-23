@@ -93,6 +93,8 @@ class hetzner_provider:
     token: str = None
     max_runners: int = None
     end_of_life: int = None
+    recycle: bool = None
+    recycle_grace_period: int = None
     recycle_with_rebuild: bool = False
     defaults: provider_defaults = dataclasses.field(
         default_factory=lambda: provider_defaults(
@@ -117,6 +119,8 @@ class aws_provider:
     ssh_user: str = "ubuntu"
     max_runners: int = None
     end_of_life: int = None
+    recycle: bool = None
+    recycle_grace_period: int = None
     defaults: provider_defaults = dataclasses.field(
         default_factory=lambda: provider_defaults(
             image="resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
@@ -145,6 +149,8 @@ class scaleway_provider:
     ssh_user: str = "root"
     max_runners: int = None
     end_of_life: int = None
+    recycle: bool = None
+    recycle_grace_period: int = None
     defaults: provider_defaults = dataclasses.field(
         default_factory=lambda: provider_defaults(
             image="ubuntu_jammy",

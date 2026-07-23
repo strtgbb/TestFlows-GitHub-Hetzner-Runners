@@ -249,6 +249,75 @@ def factory_builds_scaleway_provider(self):
 
 
 @TestScenario
+def scaleway_recycle_override_parses_and_propagates(self):
+    """providers.scaleway.recycle / recycle_grace_period parse and reach the provider,
+    so recycling can be disabled per-provider (e.g. off for Scaleway)."""
+    with Given("a faked scaleway SDK"):
+        mock_scaleway_sdk()
+    with And("a config that disables recycling for scaleway with a custom grace"):
+        path = write_config(yaml_text="""\
+            ssh_key: /dev/null
+            providers:
+              scaleway:
+                access_key: AK
+                secret_key: SK
+                project_id: proj-123
+                recycle: false
+                recycle_grace_period: 300
+        """)
+    with When("I parse and build providers"):
+        cfg = parse_config(path)
+        provider = [p for p in provider_factory(cfg) if p.name == "scaleway"][0]
+    with Then("the per-provider recycle override is applied"):
+        assert cfg.providers.scaleway.recycle is False
+        assert provider.recycle is False
+        assert provider.recycle_grace_period == 300
+
+
+@TestScenario
+def scaleway_recycle_defaults_to_none_for_global_fallback(self):
+    """Unset per-provider recycle stays None so the global default applies."""
+    with Given("a faked scaleway SDK"):
+        mock_scaleway_sdk()
+    with And("a config with no per-provider recycle settings"):
+        path = write_config(yaml_text="""\
+            ssh_key: /dev/null
+            providers:
+              scaleway:
+                access_key: AK
+                secret_key: SK
+                project_id: proj-123
+        """)
+    with When("I parse and build providers"):
+        cfg = parse_config(path)
+        provider = [p for p in provider_factory(cfg) if p.name == "scaleway"][0]
+    with Then("recycle/grace are None (global default applies at runtime)"):
+        assert provider.recycle is None
+        assert provider.recycle_grace_period is None
+
+
+@TestScenario
+def scaleway_recycle_rejects_non_boolean(self):
+    """A non-boolean providers.scaleway.recycle is rejected at parse."""
+    with Given("a config with a non-boolean recycle value"):
+        path = write_config(yaml_text="""\
+            ssh_key: /dev/null
+            providers:
+              scaleway:
+                access_key: AK
+                secret_key: SK
+                project_id: proj-123
+                recycle: "yes"
+        """)
+    with Then("parsing rejects the non-boolean recycle"):
+        try:
+            parse_config(path)
+            assert False, "expected AssertionError for non-boolean recycle"
+        except AssertionError as exc:
+            assert "providers.scaleway.recycle" in str(exc), exc
+
+
+@TestScenario
 def ambient_hetzner_token_does_not_override_scaleway(self):
     """An ambient hetzner_token must not auto-wire Hetzner when scaleway is set.
 

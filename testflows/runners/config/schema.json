@@ -54,6 +54,15 @@
                                     "minimum": 1,
                                     "maximum": 59
                                 },
+                                "recycle": {
+                                    "description": "Enable recycling for this provider (overrides the global recycle setting).",
+                                    "type": "boolean"
+                                },
+                                "recycle_grace_period": {
+                                    "description": "Per-provider recycle grace period in seconds (overrides the global setting).",
+                                    "type": "integer",
+                                    "minimum": 0
+                                },
                                 "defaults": {
                                     "description": "Default server specifications for Hetzner",
                                     "type": "object",
@@ -150,6 +159,15 @@
                                     "type": "integer",
                                     "minimum": 1,
                                     "maximum": 59
+                                },
+                                "recycle": {
+                                    "description": "Enable recycling for this provider (overrides the global recycle setting).",
+                                    "type": "boolean"
+                                },
+                                "recycle_grace_period": {
+                                    "description": "Per-provider recycle grace period in seconds (overrides the global setting).",
+                                    "type": "integer",
+                                    "minimum": 0
                                 },
                                 "defaults": {
                                     "description": "Default server specifications for AWS",
@@ -253,6 +271,15 @@
                                     "type": "integer",
                                     "minimum": 1,
                                     "maximum": 59
+                                },
+                                "recycle": {
+                                    "description": "Enable recycling for this provider (overrides the global recycle setting).",
+                                    "type": "boolean"
+                                },
+                                "recycle_grace_period": {
+                                    "description": "Per-provider recycle grace period in seconds (overrides the global setting).",
+                                    "type": "integer",
+                                    "minimum": 0
                                 },
                                 "defaults": {
                                     "description": "Default server specifications for Scaleway",

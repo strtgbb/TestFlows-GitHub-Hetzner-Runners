@@ -40,6 +40,8 @@ class AWSCloudProvider(CloudProvider):
         root_volume_type: str = "gp3",
         max_runners: int = None,
         end_of_life: int = None,
+        recycle: bool = None,
+        recycle_grace_period: int = None,
     ):
         """Initialise the provider.
 
@@ -79,6 +81,8 @@ class AWSCloudProvider(CloudProvider):
         self._root_volume_type = root_volume_type
         self._max_runners = max_runners
         self._end_of_life = end_of_life
+        self._recycle = recycle
+        self._recycle_grace_period = recycle_grace_period
 
         # Build subnet → AZ mapping from describe_subnets.
         # This is a single API call at init time; the result is cached for the

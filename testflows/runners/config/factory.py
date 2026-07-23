@@ -78,32 +78,9 @@ def provider_factory(config: Config) -> list[CloudProvider]:
             )
         )
 
-    aws_cfg = config.providers.aws
-    if aws_cfg and aws_cfg.access_key_id and aws_cfg.secret_access_key:
-        from ..providers.aws.provider import AWSCloudProvider
-        from ..providers.aws.utils import _az_to_region
-
-        location = aws_cfg.defaults.location or "us-east-1a"
-        region = _az_to_region(location)
-        providers.append(
-            AWSCloudProvider(
-                access_key_id=aws_cfg.access_key_id,
-                secret_access_key=aws_cfg.secret_access_key,
-                region=region,
-                security_group=aws_cfg.security_group,
-                subnets=aws_cfg.subnets,
-                default_image_spec=aws_cfg.defaults.image,
-                default_location_spec=aws_cfg.defaults.location,
-                ssh_user=aws_cfg.ssh_user,
-                root_volume_size=aws_cfg.defaults.volume_size,
-                root_volume_type=aws_cfg.defaults.volume_type,
-                max_runners=aws_cfg.max_runners,
-                end_of_life=aws_cfg.end_of_life,
-                recycle=aws_cfg.recycle,
-                recycle_grace_period=aws_cfg.recycle_grace_period,
-            )
-        )
-
+    # Provider precedence (Scaleway ahead of AWS, matching provider_list field
+    # order): the first configured provider seeds default type/location/volume
+    # for jobs with no type/location label.
     scaleway_cfg = config.providers.scaleway
     if (
         scaleway_cfg
@@ -128,6 +105,32 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 end_of_life=scaleway_cfg.end_of_life,
                 recycle=scaleway_cfg.recycle,
                 recycle_grace_period=scaleway_cfg.recycle_grace_period,
+            )
+        )
+
+    aws_cfg = config.providers.aws
+    if aws_cfg and aws_cfg.access_key_id and aws_cfg.secret_access_key:
+        from ..providers.aws.provider import AWSCloudProvider
+        from ..providers.aws.utils import _az_to_region
+
+        location = aws_cfg.defaults.location or "us-east-1a"
+        region = _az_to_region(location)
+        providers.append(
+            AWSCloudProvider(
+                access_key_id=aws_cfg.access_key_id,
+                secret_access_key=aws_cfg.secret_access_key,
+                region=region,
+                security_group=aws_cfg.security_group,
+                subnets=aws_cfg.subnets,
+                default_image_spec=aws_cfg.defaults.image,
+                default_location_spec=aws_cfg.defaults.location,
+                ssh_user=aws_cfg.ssh_user,
+                root_volume_size=aws_cfg.defaults.volume_size,
+                root_volume_type=aws_cfg.defaults.volume_type,
+                max_runners=aws_cfg.max_runners,
+                end_of_life=aws_cfg.end_of_life,
+                recycle=aws_cfg.recycle,
+                recycle_grace_period=aws_cfg.recycle_grace_period,
             )
         )
 

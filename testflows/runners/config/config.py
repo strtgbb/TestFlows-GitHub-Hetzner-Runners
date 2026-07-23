@@ -190,9 +190,12 @@ class dedicated_static_provider:
 class provider_list:
     """Multi-provider configuration."""
 
+    # Field order is the provider precedence used when a job carries no type/
+    # location label: the first *configured* provider seeds the default server
+    # type/location/volume. Scaleway is ahead of AWS deliberately.
     hetzner: hetzner_provider = None
-    aws: aws_provider = None
     scaleway: scaleway_provider = None
+    aws: aws_provider = None
     dedicated_static: dedicated_static_provider = None
 
 

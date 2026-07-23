@@ -380,46 +380,61 @@ def parse_config(filename: str):
             assert isinstance(
                 doc["cloud"]["server_name"], str
             ), "config.cloud.server_name: is not a string"
-        if doc["cloud"].get("deploy") is not None:
-            if doc["cloud"]["deploy"].get("server_type") is not None:
+
+        cloud_provider = doc["cloud"].get("provider") or "hetzner"
+        assert cloud_provider in ("hetzner", "aws", "scaleway"), (
+            "config.cloud.provider: must be one of 'hetzner', 'aws', 'scaleway' "
+            f"(got {cloud_provider!r}); dedicated_static cannot host the controller"
+        )
+
+        raw_deploy = doc["cloud"].get("deploy") or {}
+        if cloud_provider == "hetzner":
+            # Hetzner deploy specs are hcloud-typed; coerce + keep the cx23/ubuntu
+            # defaults from deploy_ when omitted.
+            for field, factory in (
+                ("server_type", server_type),
+                ("image", image),
+                ("location", location),
+            ):
+                if raw_deploy.get(field) is not None:
+                    try:
+                        raw_deploy[field] = factory(raw_deploy[field])
+                    except Exception as e:
+                        assert False, f"config.cloud.deploy.{field}: {e}"
+            if raw_deploy.get("setup_script") is not None:
                 try:
-                    doc["cloud"]["deploy"]["server_type"] = server_type(
-                        doc["cloud"]["deploy"]["server_type"]
-                    )
-                except Exception as e:
-                    assert False, f"config.cloud.deploy.server_type: {e}"
-            if doc["cloud"]["deploy"].get("image") is not None:
-                try:
-                    doc["cloud"]["deploy"]["image"] = image(
-                        doc["cloud"]["deploy"]["image"]
-                    )
-                except Exception as e:
-                    assert False, f"config.cloud.deploy.image: {e}"
-            if doc["cloud"]["deploy"].get("location") is not None:
-                try:
-                    doc["cloud"]["deploy"]["location"] = location(
-                        doc["cloud"]["deploy"]["location"]
-                    )
-                except Exception as e:
-                    assert False, f"config.cloud.deploy.location: {e}"
-            if doc["cloud"]["deploy"].get("setup_script") is not None:
-                try:
-                    doc["cloud"]["deploy"]["setup_script"] = path(
-                        doc["cloud"]["deploy"]["setup_script"]
-                    )
+                    raw_deploy["setup_script"] = path(raw_deploy["setup_script"])
                 except Exception as e:
                     assert False, f"config.cloud.deploy.setup_script: {e}"
-
-        if doc["cloud"].get("server_name"):
-            doc["cloud"] = cloud(
-                doc["cloud"]["server_name"],
-                host=doc["cloud"].get("host"),
-                deploy=deploy_(**doc["cloud"].get("deploy", {})),
-            )
+            deploy_obj = deploy_(**raw_deploy)
         else:
-            doc["cloud"] = cloud(
-                deploy=deploy_(**doc["cloud"].get("deploy", {})),
-            )
+            # Non-Hetzner: keep specs as raw provider-native strings (validated at
+            # deploy time via the provider's get_image/get_server_type/get_location);
+            # do NOT inherit the Hetzner-shaped deploy_ defaults, so unset fields
+            # fall back to the provider's own defaults in cloud.deploy.
+            for field in ("server_type", "image", "location"):
+                if raw_deploy.get(field) is not None:
+                    assert isinstance(
+                        raw_deploy[field], str
+                    ), f"config.cloud.deploy.{field}: is not a string"
+            deploy_kwargs = {
+                "server_type": raw_deploy.get("server_type"),
+                "image": raw_deploy.get("image"),
+                "location": raw_deploy.get("location"),
+            }
+            if raw_deploy.get("setup_script") is not None:
+                try:
+                    deploy_kwargs["setup_script"] = path(raw_deploy["setup_script"])
+                except Exception as e:
+                    assert False, f"config.cloud.deploy.setup_script: {e}"
+            deploy_obj = deploy_(**deploy_kwargs)
+
+        doc["cloud"] = cloud(
+            provider=cloud_provider,
+            server_name=doc["cloud"].get("server_name") or cloud().server_name,
+            host=doc["cloud"].get("host"),
+            deploy=deploy_obj,
+        )
 
     if doc.get("standby_runners"):
         assert isinstance(

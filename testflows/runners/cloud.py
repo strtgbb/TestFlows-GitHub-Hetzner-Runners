@@ -17,83 +17,117 @@ import tempfile
 import webbrowser
 import time
 
-from hcloud.ssh_keys.domain import SSHKey
-from hcloud.servers.client import BoundServer
-from hcloud.servers.domain import Server
 from .actions import Action
 from .config import Config, write as write_config, read as read_config
-from .providers.hetzner.config import (
-    check_image,
-    check_location,
-    check_server_type,
-    check_ssh_key,
-)
+from .config.factory import provider_factory
+from .cloud_provider import CloudProvider, ProviderServer
 from . import __version__
 
-from .server import wait_ready, wait_ssh, ssh, scp, ip_address, ssh_tunnel, MockServer
+from .server import wait_ssh, ssh, scp, ip_address, ssh_tunnel
 from .servers import ssh_client as server_ssh_client
 from .servers import ssh_client_command as server_ssh_client_command
 from .service import command_options
-from .hclient import HClient as Client
 
 current_dir = os.path.dirname(__file__)
 deploy_scripts_folder = "/home/ubuntu/.tfs-runners/scripts/"
 deploy_configs_folder = "/home/ubuntu/.tfs-runners/"
 
+# The deployed controller service runs as this Linux user (created by setup.sh on
+# images that don't already have it) and its home holds the deploy folders above.
+service_user = "ubuntu"
 
-def get_server(config: Config) -> Server:
-    """Get server instance either from direct host or Hetzner Cloud API.
+
+def deploy_provider(config: Config) -> CloudProvider:
+    """Resolve the CloudProvider that hosts the controller for cloud deploy.
+
+    Selected by ``config.cloud.provider`` (default 'hetzner'). All provisioning
+    (create/get/delete server, image/location/type/ssh-key resolution) routes
+    through this provider's CloudProvider interface, so cloud deploy is not tied
+    to any one cloud.
+    """
+    name = getattr(config.cloud, "provider", None) or "hetzner"
+    for provider in provider_factory(config):
+        if provider.name == name:
+            return provider
+    raise ValueError(
+        f"cloud.provider {name!r} is not configured; add its credentials under "
+        f"providers.{name} (or set config.cloud.provider)"
+    )
+
+
+def as_service_user(server: ProviderServer, inner: str) -> str:
+    """Wrap a command so it runs as the service user (``ubuntu``).
+
+    When we already log in as that user (e.g. AWS Ubuntu AMIs) run it directly
+    to avoid a ``su`` self-switch; otherwise (root login, e.g. Hetzner) drop into
+    the service user. Returns a shell-quoted argument for ``ssh``.
+    """
+    if server.ssh_user == service_user:
+        return f"'{inner}'"
+    return f"\"su - {service_user} -c '{inner}'\""
+
+
+def sudo_if_needed(server: ProviderServer, cmd: str) -> str:
+    """Prefix ``sudo`` when the login user is not root (e.g. AWS 'ubuntu')."""
+    return cmd if server.ssh_user == "root" else f"sudo {cmd}"
+
+
+def get_server(config: Config, provider: CloudProvider = None) -> ProviderServer:
+    """Get the deploy host as a ProviderServer, from a direct host or the provider API.
 
     Args:
-        config: Configuration object
-        server_name: Name of the server to get
+        config: Configuration object.
+        provider: Deploy provider (resolved from config.cloud.provider if omitted).
 
     Returns:
-        Server instance (either MockServer or BoundServer)
+        A ProviderServer for the deploy host.
 
     Raises:
-        ValueError: If server not found when using Hetzner Cloud API
+        ValueError: If the server is not found via the provider API.
     """
+    if provider is None:
+        provider = deploy_provider(config)
+
     server_name = config.cloud.server_name
     server_host = config.cloud.host
 
     if server_host:
-        # If host is specified, create a mock server object with the host
-        return MockServer(name=server_name, public_net={"ipv4": {"ip": server_host}})
-    else:
-        # Otherwise use Hetzner Cloud API
-        config.check("hetzner_token")
-        with Action("Logging in to Hetzner Cloud"):
-            client = Client(token=config.hetzner_token)
+        # Direct host: address it by IP, logging in as the provider's SSH user.
+        return ProviderServer(
+            id=server_name,
+            name=server_name,
+            status=CloudProvider.STATUS_RUNNING,
+            public_ipv4=server_host,
+            private_ipv4=None,
+            labels={},
+            server_type="",
+            location="",
+            created=None,
+            ssh_user=provider.ssh_user,
+        )
 
-        with Action(f"Getting server {server_name}"):
-            server = client.servers.get_by_name(server_name)
-            if not server:
-                raise ValueError(f"server {server_name} not found")
-            return server
+    with Action(f"Getting server {server_name}"):
+        server = provider.get_server(server_name)
+        if not server:
+            raise ValueError(f"server {server_name} not found")
+        return server
 
 
 def deploy(args, config: Config, redeploy=False):
-    """Deploy or redeploy tfs-runners as a service to a
-    new Hetzner server instance."""
-    config.check("hetzner_token")
+    """Deploy or redeploy tfs-runners as a service to a cloud server instance."""
     version = args.version or __version__
     server_name = config.cloud.server_name
-    ssh_keys: list[SSHKey] = []
+    provider = deploy_provider(config)
 
-    with Action("Logging in to Hetzner Cloud"):
-        client = Client(token=config.hetzner_token)
-
-    with Action(f"Checking if SSH key exists"):
-        ssh_keys.append(check_ssh_key(client, config.ssh_key))
-
+    with Action(f"Checking if SSH key exists ({provider.name})"):
+        ssh_keys = [provider.get_or_create_ssh_key(config.ssh_key, is_file=True)]
         if config.additional_ssh_keys:
             for key in config.additional_ssh_keys:
-                ssh_keys.append(check_ssh_key(client, key, is_file=False))
+                ssh_keys.append(provider.get_or_create_ssh_key(key, is_file=False))
 
     if redeploy:
         with Action(f"Getting server {server_name}"):
-            server: BoundServer = client.servers.get_by_name(server_name)
+            server = provider.get_server(server_name)
             if not server:
                 raise ValueError(f"server {server_name} not found")
 
@@ -114,71 +148,67 @@ def deploy(args, config: Config, redeploy=False):
             with Action(
                 f"Checking if server {server_name} already exists", ignore_fail=True
             ):
-                server: BoundServer = client.servers.get_by_name(server_name)
+                server = provider.get_server(server_name)
                 if server is not None:
                     with Action(f"Deleting server {server_name}"):
-                        server.delete()
+                        provider.delete_server(server)
 
-        with Action("Checking if default image exists"):
-            config.default_image = check_image(
-                client=client, image=config.default_image
+        # Resolve the deploy host's image/type/location through the provider.
+        # Each provider's get_* accepts its own spec form (Hetzner also accepts
+        # its native objects); fall back to the provider's own defaults when the
+        # cloud.deploy.* fields are unset (e.g. a non-Hetzner deploy).
+        with Action(f"Resolving deploy server spec ({provider.name})"):
+            if not config.cloud.deploy.server_type:
+                raise ValueError(
+                    f"cloud.deploy.server_type is required for provider "
+                    f"{provider.name!r}"
+                )
+            image = provider.get_image(
+                config.cloud.deploy.image or provider.default_image
+            )
+            server_type = provider.get_server_type(config.cloud.deploy.server_type)
+            location = provider.get_location(
+                config.cloud.deploy.location or provider.default_location
             )
 
-        with Action("Checking if default location exists"):
-            config.default_location = check_location(client, config.default_location)
-
-        with Action("Checking if default server type exists"):
-            config.default_server_type = check_server_type(
-                client, config.default_server_type
-            )
-
-        with Action("Checking if cloud service server type exists"):
-            config.cloud.deploy.server_type = check_server_type(
-                client=client, server_type=config.cloud.deploy.server_type
-            )
-
-        with Action("Checking if cloud service server image exists"):
-            config.cloud.deploy.image = check_image(
-                client=client, image=config.cloud.deploy.image
-            )
-
-        with Action("Checking if cloud service server location exists"):
-            config.cloud.deploy.location = check_location(
-                client=client, location=config.cloud.deploy.location
-            )
-
-        with Action(f"Creating new server"):
-            response = client.servers.create(
+        with Action(f"Creating new server ({provider.name})"):
+            # create_server blocks until the instance is running and returns a
+            # ProviderServer with its public IP + ssh_user, so no separate
+            # wait-for-ready is needed (only wait-for-SSH below).
+            server = provider.create_server(
                 name=server_name,
-                server_type=config.cloud.deploy.server_type,
-                image=config.cloud.deploy.image,
-                location=config.cloud.deploy.location,
+                server_type=server_type,
+                location=location,
+                image=image,
                 ssh_keys=ssh_keys,
-            )
-            server: BoundServer = response.server
-
-        with Action(f"Waiting for server to be ready") as action:
-            wait_ready(
-                server=server, timeout=config.max_server_ready_time, action=action
+                labels=provider.build_server_labels(
+                    [], ssh_keys[0].name if ssh_keys else None
+                ),
             )
 
         with Action("Wait for SSH connection to be ready"):
             wait_ssh(server=server, timeout=config.max_server_ready_time)
 
         with Action("Executing setup.sh script"):
-            ssh(server, f"bash -s  < {deploy_setup_script}", stacklevel=4)
+            # setup.sh needs root (apt-get, adduser, sudoers); sudo when the login
+            # user isn't root (e.g. AWS 'ubuntu'). The `< file` redirection is local
+            # (pipes the script into ssh stdin), so it stays outside the remote cmd.
+            ssh(
+                server,
+                f"{sudo_if_needed(server, 'bash -s')}  < {deploy_setup_script}",
+                stacklevel=4,
+            )
 
     with Action(f"Installing tfs-runners {version}"):
-        command = (
-            f"'sudo -u ubuntu pip3 install testflows.runners=={version}'"
+        pip_spec = (
+            "testflows.runners"
+            if version.strip().lower() == "latest"
+            else f"testflows.runners=={version}"
         )
-
-        if version.strip().lower() == "latest":
-            command = f"'sudo -u ubuntu pip3 install testflows.runners'"
-            if redeploy:
-                command = command.replace("pip3 install", "pip3 install --upgrade")
-
-        ssh(server, command, stacklevel=4)
+        pip_cmd = "pip3 install"
+        if version.strip().lower() == "latest" and redeploy:
+            pip_cmd = "pip3 install --upgrade"
+        ssh(server, as_service_user(server, f"{pip_cmd} {pip_spec}"), stacklevel=4)
 
     with Action("Copying any custom scripts"):
         ip = ip_address(server)
@@ -187,13 +217,19 @@ def deploy(args, config: Config, redeploy=False):
             with Action(f"Copying custom scripts {config.scripts}"):
                 scp(
                     source=os.path.join(config.scripts, "*.sh"),
-                    destination=f"root@{ip}:{deploy_scripts_folder}.",
+                    destination=f"{server.ssh_user}@{ip}:{deploy_scripts_folder}.",
                     server=server,
                 )
                 config.scripts = deploy_scripts_folder
 
     with Action("Fixing ownership of any copied scripts"):
-        ssh(server, f"chown -R ubuntu:ubuntu {deploy_scripts_folder}", stacklevel=4)
+        ssh(
+            server,
+            sudo_if_needed(
+                server, f"chown -R {service_user}:{service_user} {deploy_scripts_folder}"
+            ),
+            stacklevel=4,
+        )
         ssh(
             server,
             f'"find {deploy_scripts_folder} -type f -exec chmod +rx {{}} \;"',
@@ -214,7 +250,11 @@ def deploy(args, config: Config, redeploy=False):
                 additional_ssh_keys = raw_config["config"].get(
                     "additional_ssh_keys", []
                 )
-                additional_ssh_keys.append(ssh_keys[0].public_key)
+                # Read the deploy public key material from the local key file
+                # (provider key objects don't uniformly expose it — AWS key pairs
+                # carry only a name), so the deployed controller trusts this key.
+                with open(config.ssh_key, "r", encoding="utf-8") as key_file:
+                    additional_ssh_keys.append(key_file.read().strip())
                 raw_config["config"]["additional_ssh_keys"] = list(
                     set(additional_ssh_keys)
                 )
@@ -222,7 +262,7 @@ def deploy(args, config: Config, redeploy=False):
                 file.flush()
             scp(
                 source=file.name,
-                destination=f"root@{ip}:{deploy_configs_folder}config.yaml",
+                destination=f"{server.ssh_user}@{ip}:{deploy_configs_folder}config.yaml",
                 server=server,
             )
             config.config_file = os.path.join(
@@ -231,7 +271,13 @@ def deploy(args, config: Config, redeploy=False):
             )
 
     with Action("Fixing ownership of any copied configs"):
-        ssh(server, f"chown -R ubuntu:ubuntu {deploy_configs_folder}", stacklevel=4)
+        ssh(
+            server,
+            sudo_if_needed(
+                server, f"chown -R {service_user}:{service_user} {deploy_configs_folder}"
+            ),
+            stacklevel=4,
+        )
 
     install(args, config=config, server=server)
 
@@ -241,26 +287,26 @@ def redeploy(args, config: Config):
     deploy(args=args, config=config, redeploy=True)
 
 
-def install(args, config: Config, server: BoundServer = None):
+def install(args, config: Config, server: ProviderServer = None):
     """Install service on a cloud instance."""
     if server is None:
         server = get_server(config)
 
     with Action("Installing service"):
-        command = f"\"su - ubuntu -c '"
-        command += "tfs-runners"
-        command += command_options(
-            config,
-            github_token=config.github_token,
-            github_repository=config.github_repository,
-            hetzner_token=config.hetzner_token,
+        inner = (
+            "tfs-runners"
+            + command_options(
+                config,
+                github_token=config.github_token,
+                github_repository=config.github_repository,
+                hetzner_token=config.hetzner_token,
+            )
+            + " service install -f"
         )
-        command += " service install -f'\""
-
-        ssh(server, command)
+        ssh(server, as_service_user(server, inner))
 
 
-def upgrade(args, config: Config, server: BoundServer = None):
+def upgrade(args, config: Config, server: ProviderServer = None):
     """Upgrade tfs-runners application on a cloud instance."""
     if server is None:
         server = get_server(config)
@@ -273,62 +319,69 @@ def upgrade(args, config: Config, server: BoundServer = None):
         with Action(f"Upgrading tfs-runners to version {upgrade_version}"):
             ssh(
                 server,
-                f"'sudo -u ubuntu pip3 install testflows.runners=={upgrade_version}'",
+                as_service_user(
+                    server, f"pip3 install testflows.runners=={upgrade_version}"
+                ),
                 stacklevel=4,
             )
     else:
         with Action(f"Upgrading tfs-runners the latest version"):
             ssh(
                 server,
-                f"'sudo -u ubuntu pip3 install --upgrade testflows.runners'",
+                as_service_user(server, "pip3 install --upgrade testflows.runners"),
                 stacklevel=4,
             )
 
     start(args, config=config, server=server)
 
 
-def uninstall(args, config: Config, server: BoundServer = None):
+def uninstall(args, config: Config, server: ProviderServer = None):
     """Uninstall tfs-runners service from a cloud instance."""
     if server is None:
         server = get_server(config)
 
     with Action("Uninstalling service"):
-        command = f"\"su - ubuntu -c 'tfs-runners service uninstall'\""
-        ssh(server, command, stacklevel=4)
+        ssh(
+            server,
+            as_service_user(server, "tfs-runners service uninstall"),
+            stacklevel=4,
+        )
 
 
-def delete(args, config: Config, server: BoundServer = None):
-    """Delete tfs-runners service running
-    on Hetzner server instance by stopping the service
-    and deleting the server."""
+def delete(args, config: Config, server: ProviderServer = None):
+    """Delete the tfs-runners service host: uninstall the service then delete the
+    cloud server."""
+    provider = deploy_provider(config)
     if server is None:
-        server = get_server(config)
+        server = get_server(config, provider)
 
     with Action("Uninstalling service", ignore_fail=True):
-        command = f"\"su - ubuntu -c 'tfs-runners service uninstall'\""
-        ssh(server, command, stacklevel=4)
+        ssh(
+            server,
+            as_service_user(server, "tfs-runners service uninstall"),
+            stacklevel=4,
+        )
 
     with Action(f"Deleting server {server.name}"):
-        server.delete()
+        provider.delete_server(server)
 
 
-def log(args, config: Config, server: BoundServer = None):
+def log(args, config: Config, server: ProviderServer = None):
     """Get cloud server service log."""
     if server is None:
         server = get_server(config)
 
-    command = (
-        f"\"su - ubuntu -c 'tfs-runners service log"
+    inner = (
+        "tfs-runners service log"
         + (" -f" if args.follow else "")
         + (f" -c {args.columns.value}" if args.columns else "")
         + (f" -n {args.lines}" if args.lines else "")
         + (" --raw" if args.raw else "")
-        + "'\""
     )
-    ssh(server, command, use_logger=False, stacklevel=4)
+    ssh(server, as_service_user(server, inner), use_logger=False, stacklevel=4)
 
 
-def download_log(args, config: Config, server: BoundServer = None):
+def download_log(args, config: Config, server: ProviderServer = None):
     """Download cloud server service log."""
     if server is None:
         server = get_server(config)
@@ -336,52 +389,53 @@ def download_log(args, config: Config, server: BoundServer = None):
     ip = ip_address(server)
     with Action(f"Downloading log from {server.name} to {args.output}"):
         scp(
-            source=f"root@{ip}:{os.path.join(tempfile.gettempdir(), 'tfs-runners.log')}",
+            source=f"{server.ssh_user}@{ip}:{os.path.join(tempfile.gettempdir(), 'tfs-runners.log')}",
             destination=args.output,
             server=server,
         )
 
 
-def delete_log(args, config: Config, server: BoundServer = None):
+def delete_log(args, config: Config, server: ProviderServer = None):
     """Delete cloud server service log."""
     if server is None:
         server = get_server(config)
 
-    command = f"\"su - ubuntu -c 'tfs-runners service log delete'\""
-    ssh(server, command, use_logger=False, stacklevel=4)
+    ssh(
+        server,
+        as_service_user(server, "tfs-runners service log delete"),
+        use_logger=False,
+        stacklevel=4,
+    )
 
 
-def status(args, config: Config, server: BoundServer = None):
+def status(args, config: Config, server: ProviderServer = None):
     """Get cloud server service status."""
     if server is None:
         server = get_server(config)
 
     with Action("Getting status"):
-        command = f"\"su - ubuntu -c 'tfs-runners service status'\""
-        ssh(server, command, stacklevel=4)
+        ssh(server, as_service_user(server, "tfs-runners service status"), stacklevel=4)
 
 
-def start(args, config: Config, server: BoundServer = None):
+def start(args, config: Config, server: ProviderServer = None):
     """Start cloud server service."""
     if server is None:
         server = get_server(config)
 
     with Action("Starting service"):
-        command = f"\"su - ubuntu -c 'tfs-runners service start'\""
-        ssh(server, command, stacklevel=4)
+        ssh(server, as_service_user(server, "tfs-runners service start"), stacklevel=4)
 
 
-def stop(args, config: Config, server: BoundServer = None):
+def stop(args, config: Config, server: ProviderServer = None):
     """Stop cloud server service."""
     if server is None:
         server = get_server(config)
 
     with Action("Stopping service"):
-        command = f"\"su - ubuntu -c 'tfs-runners service stop'\""
-        ssh(server, command, stacklevel=4)
+        ssh(server, as_service_user(server, "tfs-runners service stop"), stacklevel=4)
 
 
-def ssh_client(args, config: Config, server: BoundServer = None):
+def ssh_client(args, config: Config, server: ProviderServer = None):
     """Open ssh client to tfs-runners service running
     on Hetzner server instance.
     """
@@ -391,7 +445,7 @@ def ssh_client(args, config: Config, server: BoundServer = None):
     server_ssh_client(args=args, config=config, server_name=server.name, server=server)
 
 
-def ssh_client_command(args, config: Config, server: BoundServer = None):
+def ssh_client_command(args, config: Config, server: ProviderServer = None):
     """Return ssh command to connect to tfs-runners service running
     on Hetzner server instance.
     """
@@ -403,7 +457,7 @@ def ssh_client_command(args, config: Config, server: BoundServer = None):
     )
 
 
-def cloud_dashboard(args, config: Config, server: BoundServer = None):
+def cloud_dashboard(args, config: Config, server: ProviderServer = None):
     """Open dashboard through SSH tunnel to cloud service."""
     local_port = args.local_port
     remote_port = args.remote_port if args.remote_port else config.dashboard_port

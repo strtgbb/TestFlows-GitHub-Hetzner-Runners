@@ -37,3 +37,8 @@ fi
 echo "Create scripts folder"
 mkdir -p /home/ubuntu/.tfs-runners/scripts
 mkdir -p /home/ubuntu/.tfs-runners/configs
+
+# Ensure the deploy tree is owned by the service user so the controller can scp
+# scripts/config in as that user afterwards (on images where the login user is
+# 'ubuntu', e.g. AWS, it cannot write into a root-created directory otherwise).
+chown -R ubuntu:ubuntu /home/ubuntu/.tfs-runners

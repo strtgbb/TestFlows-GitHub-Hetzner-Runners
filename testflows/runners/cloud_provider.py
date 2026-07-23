@@ -149,6 +149,17 @@ class CloudProvider(ABC):
         """
         return getattr(self, "_default_location", None)
 
+    @property
+    def ssh_user(self) -> str:
+        """Login user for SSH into this provider's servers (e.g. 'root', 'ubuntu').
+
+        Matches the ``ssh_user`` stamped onto the ``ProviderServer`` this provider
+        creates. Used by cloud-deploy host mode, where there is no created server
+        object to read it from. Defaults to the provider's configured ``_ssh_user``
+        or 'root'.
+        """
+        return getattr(self, "_ssh_user", "root")
+
     def setup_script_name(self, labels: "list[str]", label_prefix: str = "") -> str:
         """Filename of the setup-step script run before each runner registers.
 

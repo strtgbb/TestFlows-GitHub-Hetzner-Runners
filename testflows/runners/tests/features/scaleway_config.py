@@ -452,6 +452,116 @@ def create_server_builds_tagged_boot_volume(self):
         assert template.size is None, template.size
 
 
+def _local_type(name="dev1.s", l_ssd_max=50 * 1024**3):
+    """A local-storage-capable ProviderServerType (l_ssd.max_size > 0)."""
+    return ProviderServerType(
+        name=name,
+        _native=SimpleNamespace(
+            per_volume_constraint=SimpleNamespace(
+                l_ssd=SimpleNamespace(max_size=l_ssd_max)
+            ),
+            arch="x86_64",
+        ),
+    )
+
+
+@TestScenario
+def create_server_local_mode_uses_image_not_boot_volume(self):
+    """A local-capable type boots via image= (instance-provisioned local disk),
+    with no pre-created/tagged SBS volume."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("a running instance is created and reached"):
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+        provider._wait_for_state = lambda *a, **k: _running_native()
+    with When("create_server runs on a local-capable type"):
+        result = provider.create_server(
+            name="tfs-controller",
+            server_type=_local_type(),
+            location="fr-par-1", image="img-local", ssh_keys=[],
+            labels={"role": "controller"},
+        )
+    with Then("it launches with image= and no volumes, and creates no SBS volume"):
+        skw = provider._instance._create_server.call_args.kwargs
+        assert skw.get("image") == "img-local", skw
+        assert skw.get("volumes") is None, skw
+        provider._block.create_volume.assert_not_called()
+    with And("it returns a ProviderServer with the Scaleway ssh_user"):
+        assert result.ssh_user == "root", result.ssh_user
+
+
+@TestScenario
+def create_server_sbs_mode_for_sbs_only_native(self):
+    """An SBS-only type (l_ssd max_size 0) takes the pre-created tagged SBS path."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("an SBS-only type and stubbed SBS/instance calls"):
+        sbs_only = ProviderServerType(
+            name="basic2.a16c.32g",
+            _native=SimpleNamespace(
+                per_volume_constraint=SimpleNamespace(
+                    l_ssd=SimpleNamespace(max_size=0)
+                ),
+                arch="arm64",
+            ),
+        )
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=120 * 1024**3)
+        provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+        provider._wait_for_state = lambda *a, **k: _running_native()
+    with When("create_server runs"):
+        provider.create_server(
+            name="github-runner-1-0", server_type=sbs_only,
+            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+        )
+    with Then("it pre-creates the tagged SBS volume and attaches it (no image=)"):
+        provider._block.create_volume.assert_called_once()
+        skw = provider._instance._create_server.call_args.kwargs
+        assert skw.get("image") is None, skw
+        assert skw["volumes"]["0"].id == "vol-boot", skw
+
+
+@TestScenario
+def create_server_local_mode_power_on_failure_terminates(self):
+    """Local-mode boot failure terminates the instance and creates no SBS volume."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("the instance is created but never reaches running"):
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+
+        def _boom(*a, **k):
+            raise RuntimeError("boot timeout")
+
+        provider._wait_for_state = _boom
+    with Then("it best-effort terminates and touches no block volume"):
+        try:
+            provider.create_server(
+                name="tfs-controller", server_type=_local_type(),
+                location="fr-par-1", image="img-local", ssh_keys=[], labels={},
+            )
+            assert False, "expected the boot failure to propagate"
+        except RuntimeError:
+            pass
+        actions = [
+            str(c.kwargs.get("action"))
+            for c in provider._instance.server_action.call_args_list
+        ]
+        assert "terminate" in actions, actions
+        provider._block.create_volume.assert_not_called()
+        provider._block.delete_volume.assert_not_called()
+
+
 @TestScenario
 def create_server_sizes_boot_volume_to_configured_default(self):
     """The boot volume grows to the configured default size, floored at the snapshot."""
@@ -895,6 +1005,8 @@ def provider_sdk_calls_match_real_signatures(self):
 
     calls = [
         (InstanceV1API, "_create_server", dict(zone="z", name="n", commercial_type="t", dynamic_ip_required=True, protected=False, tags=[], project="p", volumes={})),
+        # LOCAL boot mode: image= form (no volumes) must also bind to the real signature.
+        (InstanceV1API, "_create_server", dict(zone="z", name="n", commercial_type="t", dynamic_ip_required=True, protected=False, tags=[], project="p", image="i")),
         (InstanceV1API, "server_action", dict(server_id="s", zone="z", action="terminate")),
         (InstanceV1API, "_update_server", dict(server_id="s", zone="z", name="n", tags=[])),
         (InstanceV1API, "get_server", dict(server_id="s", zone="z")),

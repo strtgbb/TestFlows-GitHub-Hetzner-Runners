@@ -162,70 +162,116 @@ class ScalewayCloudProvider(CloudProvider):
         volumes: list = None,
         public_net=None,
     ) -> ProviderServer:
-        """Create a Scaleway Instance from a pre-created boot volume, power it on.
+        """Create a Scaleway Instance and power it on, in one of two boot modes.
 
-        The SBS boot volume is created from the image's root snapshot and tagged
-        *before* the instance exists (see ``_create_boot_volume``), so the
-        ``after_scale_down`` reaper can reclaim it on every failure path — there
-        is no untagged window to compensate for.
+        The mode is auto-detected from the instance type's storage capability
+        (see ``_is_local_bootable``); there is no config flag, because one
+        provider instance serves both runner orchestration and the controller
+        deploy, so the choice must be per-call:
+
+        * **LOCAL** (local-storage-capable types, e.g. a small controller host):
+          launch with ``image=`` and no volumes so the instance API provisions a
+          local ``l_ssd`` boot volume — included in the instance price, deleted
+          on terminate, no block storage. Used by ``cloud deploy`` for the
+          controller (small local type + marketplace image).
+        * **SBS** (SBS-only types, e.g. ARM/BASIC2 runners): pre-create a tagged
+          SBS boot volume from the image's root snapshot and attach it by id, so
+          the ``after_scale_down`` reaper can reclaim it (there is no untagged
+          window). This is the runner path and the default for a bare
+          ``ProviderServerType`` (no ``_native``).
 
         ``ssh_keys`` is accepted for interface compatibility but not passed to
-        the API: Scaleway injects the project's registered SSH keys at boot
-        (see ``get_or_create_ssh_key``).  ``volumes``/``public_net`` are ignored
-        (the boot volume is derived from the image).
+        the API (Scaleway injects the project's registered SSH keys at boot; see
+        ``get_or_create_ssh_key``).  ``volumes``/``public_net`` are ignored (the
+        boot volume is derived from the image).
         """
-        from scaleway.instance.v1 import (
-            ServerAction,
-            VolumeServerTemplate,
-            VolumeVolumeType,
-        )
-
         del ssh_keys, volumes, public_net
 
         zone = location or self._zone
         commercial_type = native_type(server_type.name)
-        boot_volume_name = f"{name}-boot"[:60]
 
-        # Grow the boot volume to the configured default size (GB -> bytes;
-        # Scaleway sizes are binary GiB). The snapshot size is the floor.
-        requested_size = (
-            self._default_volume_size * 1024**3
-            if self._default_volume_size
-            else None
-        )
-        boot_volume_id = self._create_boot_volume(
-            image_uuid=image,
-            zone=zone,
-            name=boot_volume_name,
-            tags=[_RUNNER_VOLUME_TAG],
-            size=requested_size,
-        )
+        if self._is_local_bootable(server_type):
+            # LOCAL boot: let the instance API provision the (local) boot volume
+            # from the image. No block pre-create, no reaper tag, and marketplace
+            # images work here (the block-API SBS-from-marketplace path 403s).
+            created = self._instance._create_server(
+                zone=zone,
+                name=name,
+                commercial_type=commercial_type,
+                dynamic_ip_required=True,
+                protected=False,
+                tags=dict_to_tags(labels),
+                project=self._project_id,
+                image=image,
+            )
+        else:
+            from scaleway.instance.v1 import VolumeServerTemplate, VolumeVolumeType
 
-        # Volume-first create: attach the tagged SBS boot volume by id and omit
-        # ``image`` (the boot volume already carries the image contents). The
-        # SDK exposes this as the single-underscore ``_create_server``.
-        created = self._instance._create_server(
-            zone=zone,
-            name=name,
-            commercial_type=commercial_type,
-            dynamic_ip_required=True,
-            protected=False,
-            tags=dict_to_tags(labels),
-            project=self._project_id,
-            volumes={
-                # Attach the pre-created boot volume by id. size/name are
-                # create-time fields; the SDK defaults size to 0 (not None), and
-                # sending it alongside id makes Scaleway reject the request
-                # ("cannot specify 'id' and 'size'"), so size must be None here.
-                "0": VolumeServerTemplate(
-                    id=boot_volume_id,
-                    boot=True,
-                    volume_type=VolumeVolumeType.SBS_VOLUME,
-                    size=None,
-                )
-            },
-        )
-        server = created.server
+            boot_volume_name = f"{name}-boot"[:60]
+            # Grow the boot volume to the configured default size (GB -> bytes;
+            # Scaleway sizes are binary GiB). The snapshot size is the floor.
+            requested_size = (
+                self._default_volume_size * 1024**3
+                if self._default_volume_size
+                else None
+            )
+            boot_volume_id = self._create_boot_volume(
+                image_uuid=image,
+                zone=zone,
+                name=boot_volume_name,
+                tags=[_RUNNER_VOLUME_TAG],
+                size=requested_size,
+            )
+            # Volume-first create: attach the tagged SBS boot volume by id and
+            # omit ``image`` (the volume already carries the image contents).
+            created = self._instance._create_server(
+                zone=zone,
+                name=name,
+                commercial_type=commercial_type,
+                dynamic_ip_required=True,
+                protected=False,
+                tags=dict_to_tags(labels),
+                project=self._project_id,
+                volumes={
+                    # size/name are create-time fields; the SDK defaults size to
+                    # 0 (not None), and sending it alongside id makes Scaleway
+                    # reject the request ("cannot specify 'id' and 'size'"), so
+                    # size must be None here.
+                    "0": VolumeServerTemplate(
+                        id=boot_volume_id,
+                        boot=True,
+                        volume_type=VolumeVolumeType.SBS_VOLUME,
+                        size=None,
+                    )
+                },
+            )
+
+        server = self._power_on_and_wait(created.server, zone, name)
+        return _server_to_provider(server, ssh_user=self._ssh_user)
+
+    @staticmethod
+    def _is_local_bootable(server_type) -> bool:
+        """Whether *server_type* has local (l_ssd) storage for a local boot volume.
+
+        SBS-only types report ``per_volume_constraint.l_ssd.max_size == 0`` (or no
+        l_ssd constraint). A bare ``ProviderServerType`` with no ``_native`` (the
+        orchestrator's default and the test default) is treated as SBS, so the
+        SBS path stays the default and only an explicitly local-capable type (from
+        ``get_server_type``) selects local boot.
+        """
+        native = getattr(server_type, "_native", None)
+        pvc = getattr(native, "per_volume_constraint", None)
+        l_ssd = getattr(pvc, "l_ssd", None) if pvc else None
+        return bool(getattr(l_ssd, "max_size", 0) or 0)
+
+    def _power_on_and_wait(self, server, zone, name):
+        """Power on *server* and wait until running; terminate it on failure.
+
+        On any failure the partial instance is best-effort terminated. In SBS mode
+        its boot volume is tagged, so the reaper reclaims it regardless; in LOCAL
+        mode the boot volume dies with the terminated instance.
+        """
+        from scaleway.instance.v1 import ServerAction
 
         try:
             self._instance.server_action(
@@ -236,8 +282,6 @@ class ScalewayCloudProvider(CloudProvider):
                     server.id, zone, states={"running"}, timeout=300
                 )
         except Exception:
-            # Best-effort terminate of the partial instance; the boot volume is
-            # tagged, so the reaper reclaims it no matter how this is stranded.
             try:
                 self._instance.server_action(
                     server_id=server.id, zone=zone, action=ServerAction.TERMINATE
@@ -246,7 +290,7 @@ class ScalewayCloudProvider(CloudProvider):
                 pass
             raise
 
-        return _server_to_provider(server, ssh_user=self._ssh_user)
+        return server
 
     def delete_server(self, server: ProviderServer) -> None:
         """Remove the Instance; the tagged SBS boot volume is reaped out of band.

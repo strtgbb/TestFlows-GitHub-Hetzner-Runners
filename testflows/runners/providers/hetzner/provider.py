@@ -98,6 +98,12 @@ class HetznerCloudProvider(CloudProvider):
     def supports_volumes(self) -> bool:
         return True
 
+    def fixed_root_disk(self, server_type) -> int | None:
+        """Hetzner's root disk is fixed by the server type (hcloud ``disk``, GB)."""
+        native = getattr(server_type, "_native", None)
+        disk = getattr(native, "disk", None)
+        return int(disk) if disk else None
+
     # ---------------------------------------------------------------------------
     # Server lifecycle
     # ---------------------------------------------------------------------------
@@ -112,8 +118,15 @@ class HetznerCloudProvider(CloudProvider):
         labels: dict[str, str],
         volumes: list = None,
         public_net=None,
+        root_disk_size: int = None,
     ) -> ProviderServer:
-        """Create a server and return a ProviderServer wrapping the BoundServer."""
+        """Create a server and return a ProviderServer wrapping the BoundServer.
+
+        ``root_disk_size`` is ignored: Hetzner's root disk is fixed by the server
+        type. The scale-up loop already verified (via ``fixed_root_disk``) that
+        the type's disk meets any requested minimum before reaching here.
+        """
+        del root_disk_size
         response = self._client.servers.create(
             name=name,
             # Unwrap ProviderServerType; accept raw ServerType for callers that

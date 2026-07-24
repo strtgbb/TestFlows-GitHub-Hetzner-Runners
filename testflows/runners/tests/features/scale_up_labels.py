@@ -16,6 +16,8 @@ from testflows.runners.scale_up import (
     get_server_types,
     get_server_image,
     get_server_volumes,
+    get_server_disk_size,
+    get_server_provider,
     parse_volume_size,
 )
 from testflows.runners.cloud_provider import ProviderServerType
@@ -493,6 +495,100 @@ def resolve_provider_non_servertype_error_propagates(self):
         assert False, "expected ConnectionError"
     except ConnectionError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# get_server_disk_size  (disk- minimum root-disk label)
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def disk_size_absent_returns_none(self):
+    assert get_server_disk_size(["self-hosted", "type-cx22"]) is None
+
+
+@TestScenario
+def disk_size_plain_integer(self):
+    assert get_server_disk_size(["self-hosted", "disk-100"]) == 100
+
+
+@TestScenario
+def disk_size_gb_suffix(self):
+    assert get_server_disk_size(["disk-100GB"]) == 100
+    assert get_server_disk_size(["disk-100gb"]) == 100
+
+
+@TestScenario
+def disk_size_multiple_takes_max(self):
+    """A minimum: the largest requested disk wins."""
+    assert get_server_disk_size(["disk-40", "disk-200", "disk-80"]) == 200
+
+
+@TestScenario
+def disk_size_invalid_ignored(self):
+    assert get_server_disk_size(["disk-notanumber"]) is None
+
+
+@TestScenario
+def disk_size_respects_label_prefix(self):
+    assert get_server_disk_size(["acme-disk-120"], label_prefix="acme") == 120
+    # Without the prefix the bare disk- label does not match.
+    assert get_server_disk_size(["disk-120"], label_prefix="acme") is None
+
+
+# ---------------------------------------------------------------------------
+# get_server_provider  (provider- pin label)
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def provider_label_absent_returns_none(self):
+    assert get_server_provider(["self-hosted", "type-cx22"]) is None
+
+
+@TestScenario
+def provider_label_returns_name(self):
+    assert get_server_provider(["self-hosted", "provider-aws"]) == "aws"
+
+
+@TestScenario
+def provider_label_last_wins(self):
+    assert get_server_provider(["provider-hetzner", "provider-scaleway"]) == "scaleway"
+
+
+@TestScenario
+def provider_label_respects_prefix(self):
+    assert get_server_provider(["acme-provider-aws"], label_prefix="acme") == "aws"
+    assert get_server_provider(["provider-aws"], label_prefix="acme") is None
+
+
+# ---------------------------------------------------------------------------
+# fixed_root_disk  (provider capability used by the disk- resolution gate)
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def hetzner_fixed_root_disk_from_type(self):
+    """Hetzner reports the server type's bundled disk (hcloud .disk, GB)."""
+    provider = HetznerCloudProvider(token="tok")
+    st = ProviderServerType(name="cx22", _native=ServerType(name="cx22", disk=80))
+    assert provider.fixed_root_disk(st) == 80
+
+
+@TestScenario
+def hetzner_fixed_root_disk_none_when_unknown(self):
+    provider = HetznerCloudProvider(token="tok")
+    st = ProviderServerType(name="cx22", _native=None)
+    assert provider.fixed_root_disk(st) is None
+
+
+@TestScenario
+def base_fixed_root_disk_defaults_none(self):
+    """Providers with a resizable/unknown root disk are never gated."""
+    p = MagicMock(spec=[])
+    from testflows.runners.cloud_provider import CloudProvider
+
+    assert CloudProvider.fixed_root_disk(p, MagicMock()) is None
 
 
 # ---------------------------------------------------------------------------

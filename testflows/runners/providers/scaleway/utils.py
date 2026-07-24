@@ -167,6 +167,22 @@ def _server_to_provider(server, ssh_user: str = "root") -> ProviderServer:
     state = state_key(getattr(server, "state", ""))
     zone = str(getattr(server, "zone", "") or "")
 
+    # Root/boot disk size (GB) from the SDK server's volumes mapping: prefer the
+    # volume flagged boot, else index "0". Sizes are bytes. None if unknown.
+    root_disk_size = None
+    server_volumes = getattr(server, "volumes", None) or {}
+    if isinstance(server_volumes, dict) and server_volumes:
+        boot_vol = None
+        for vol in server_volumes.values():
+            if getattr(vol, "boot", False):
+                boot_vol = vol
+                break
+        if boot_vol is None:
+            boot_vol = server_volumes.get("0")
+        boot_size = getattr(boot_vol, "size", None) if boot_vol is not None else None
+        if isinstance(boot_size, (int, float)) and boot_size:
+            root_disk_size = int(boot_size // (1024**3))
+
     return ProviderServer(
         id=server.id,
         name=server.name,
@@ -180,5 +196,6 @@ def _server_to_provider(server, ssh_user: str = "root") -> ProviderServer:
         created=getattr(server, "creation_date", None) or datetime.now(timezone.utc),
         volumes=[],
         ssh_user=ssh_user,
+        root_disk_size=root_disk_size,
         _native=server,
     )

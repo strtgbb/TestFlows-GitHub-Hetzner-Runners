@@ -61,6 +61,10 @@ class ProviderServer:
     # Action performed when the ephemeral runner process exits.
     # Supported values: "poweroff" (default) and "reboot".
     runner_on_exit: str = "poweroff"
+    # Root/boot disk size in GB, when the provider can determine it cheaply
+    # (e.g. from the server type or the boot volume). None when unknown. Used to
+    # decide whether a pooled server satisfies a job's minimum-disk request.
+    root_disk_size: int | None = None
     # Underlying provider object (e.g. hcloud BoundServer). Internal use only.
     _native: Any = field(default=None, repr=False)
 
@@ -80,6 +84,9 @@ class RecycleRequest:
     enable_ipv4: bool = True
     enable_ipv6: bool = True
     timeout: int = 60
+    # Minimum root/boot disk in GB the job requires (from a ``disk-`` label), or
+    # None. A pooled server is only reused when its disk is known to satisfy it.
+    min_disk: int | None = None
 
 
 @dataclass(frozen=True)
@@ -192,6 +199,18 @@ class CloudProvider(ABC):
         """
         return False
 
+    def fixed_root_disk(self, server_type: Any) -> int | None:
+        """Fixed root/boot disk size in GB for *server_type*, or None.
+
+        Return an int when the root disk is fixed by the server type and cannot
+        be resized per job (Hetzner's bundled disk; Scaleway local-boot types),
+        so the scale-up loop can reject a type whose fixed disk is smaller than a
+        job's ``disk-`` minimum. Return None when the root disk is resizable or
+        the size is unknown (AWS, Scaleway SBS, dedicated_static) — such
+        providers are never gated on the minimum and instead provision it.
+        """
+        return None
+
     @property
     def default_server_type(self) -> Any:
         """Default server-type spec for this provider (None if not configured).
@@ -266,8 +285,14 @@ class CloudProvider(ABC):
         labels: dict[str, str],
         volumes: list = None,
         public_net: Any = None,
+        root_disk_size: int = None,
     ) -> "ProviderServer | None":
         """Create a new server and return a ProviderServer descriptor.
+
+        ``root_disk_size`` (GB), when given, is the job's requested minimum root
+        disk (from a ``disk-`` label). Providers with a resizable root disk
+        provision at least this size; providers with a fixed root disk ignore it
+        (the caller already verified the fixed disk is large enough).
 
         The call should block until the server object is created (though not
         necessarily until it is running). The caller is responsible for waiting

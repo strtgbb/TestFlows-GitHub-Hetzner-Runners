@@ -497,6 +497,113 @@ def create_server_builds_tagged_boot_volume(self):
         assert template.size is None, template.size
 
 
+@TestScenario
+def create_server_root_disk_size_sizes_boot_volume(self):
+    """A per-job root_disk_size grows the SBS boot volume above the snapshot floor."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("an SBS custom image (120 GiB snapshot) and stubbed calls"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=120 * 1024**3)
+        provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+        provider._wait_for_state = lambda *a, **k: _running_native()
+    with When("create_server runs with root_disk_size=200"):
+        provider.create_server(
+            name="github-runner-1-0",
+            server_type=ProviderServerType(name="basic2-a16c-32g"),
+            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+            root_disk_size=200,
+        )
+    with Then("the boot volume is requested at 200 GiB (above the snapshot floor)"):
+        ckw = provider._block.create_volume.call_args.kwargs
+        assert ckw["from_snapshot"].size == 200 * 1024**3, ckw["from_snapshot"].size
+
+
+@TestScenario
+def create_server_root_disk_below_snapshot_uses_snapshot_floor(self):
+    """A minimum smaller than the image snapshot is floored at the snapshot size."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with And("an SBS custom image (120 GiB snapshot) and stubbed calls"):
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=120 * 1024**3)
+        provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=SimpleNamespace(id="srv-1")
+        )
+        provider._wait_for_state = lambda *a, **k: _running_native()
+    with When("create_server runs with root_disk_size=50 (below the 120 GiB snapshot)"):
+        provider.create_server(
+            name="github-runner-1-0",
+            server_type=ProviderServerType(name="basic2-a16c-32g"),
+            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+            root_disk_size=50,
+        )
+    with Then("the boot volume is floored at the 120 GiB snapshot size"):
+        ckw = provider._block.create_volume.call_args.kwargs
+        assert ckw["from_snapshot"].size == 120 * 1024**3, ckw["from_snapshot"].size
+
+
+@TestScenario
+def scaleway_fixed_root_disk_local_vs_sbs(self):
+    """fixed_root_disk returns the local SSD cap (GB) for local types, None for SBS."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with Then("a local-bootable type reports its l_ssd cap in GB"):
+        assert provider.fixed_root_disk(_local_type(l_ssd_max=50 * 1024**3)) == 50
+    with And("an SBS-only type (l_ssd max 0) is resizable -> None"):
+        sbs = ProviderServerType(
+            name="basic2.a16c.32g",
+            _native=SimpleNamespace(
+                per_volume_constraint=SimpleNamespace(
+                    l_ssd=SimpleNamespace(max_size=0)
+                )
+            ),
+        )
+        assert provider.fixed_root_disk(sbs) is None
+    with And("a bare type with no _native is resizable -> None"):
+        assert provider.fixed_root_disk(ProviderServerType(name="x")) is None
+
+
+@TestScenario
+def server_to_provider_reads_boot_volume_size(self):
+    """_server_to_provider surfaces the boot volume size (GB) for recycle matching."""
+    with Given("a native server with a 160 GiB boot volume and a data volume"):
+        srv = SimpleNamespace(
+            id="i", name="github-runner-1-0", state="running", zone="fr-par-1",
+            commercial_type="basic2-a16c-32g",
+            public_ips=[], public_ip=None, private_ip=None, tags=[], creation_date=None,
+            volumes={
+                "0": SimpleNamespace(boot=True, size=160 * 1024**3),
+                "1": SimpleNamespace(boot=False, size=50 * 1024**3),
+            },
+        )
+    with Then("root_disk_size is the boot volume size in GB"):
+        ps = utils._server_to_provider(srv)
+        assert ps.root_disk_size == 160, ps.root_disk_size
+
+
+@TestScenario
+def server_to_provider_root_disk_none_without_volumes(self):
+    """No volumes mapping -> root_disk_size is None (unknown)."""
+    with Given("a native server with no volumes"):
+        srv = _running_native()
+    with Then("root_disk_size is None"):
+        ps = utils._server_to_provider(srv)
+        assert ps.root_disk_size is None, ps.root_disk_size
+
+
 def _local_type(name="dev1.s", l_ssd_max=50 * 1024**3):
     """A local-storage-capable ProviderServerType (l_ssd.max_size > 0)."""
     return ProviderServerType(

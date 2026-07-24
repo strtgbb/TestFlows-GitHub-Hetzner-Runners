@@ -167,6 +167,7 @@ class ScalewayCloudProvider(CloudProvider):
         labels: dict,
         volumes: list = None,
         public_net=None,
+        root_disk_size: int = None,
     ) -> ProviderServer:
         """Create a Scaleway Instance and power it on, in one of two boot modes.
 
@@ -189,7 +190,11 @@ class ScalewayCloudProvider(CloudProvider):
         ``ssh_keys`` is accepted for interface compatibility but not passed to
         the API (Scaleway injects the project's registered SSH keys at boot; see
         ``get_or_create_ssh_key``).  ``volumes``/``public_net`` are ignored (the
-        boot volume is derived from the image).
+        boot volume is derived from the image). ``root_disk_size`` (GB), when
+        given, sizes the SBS boot volume for this server instead of the
+        configured default; it does not apply to LOCAL boot (the local disk is
+        provisioned by the instance API — the caller already verified the type's
+        local capacity via ``fixed_root_disk``).
         """
         del ssh_keys, volumes, public_net
 
@@ -214,13 +219,11 @@ class ScalewayCloudProvider(CloudProvider):
             from scaleway.instance.v1 import VolumeServerTemplate, VolumeVolumeType
 
             boot_volume_name = f"{name}-boot"[:60]
-            # Grow the boot volume to the configured default size (GB -> bytes;
-            # Scaleway sizes are binary GiB). The snapshot size is the floor.
-            requested_size = (
-                self._default_volume_size * 1024**3
-                if self._default_volume_size
-                else None
-            )
+            # Grow the boot volume to the job's requested minimum (disk- label)
+            # or the configured default size (GB -> bytes; Scaleway sizes are
+            # binary GiB). The image snapshot size is the floor.
+            _boot_gb = root_disk_size or self._default_volume_size
+            requested_size = _boot_gb * 1024**3 if _boot_gb else None
             boot_volume_id = self._create_boot_volume(
                 image_uuid=image,
                 zone=zone,
@@ -254,6 +257,23 @@ class ScalewayCloudProvider(CloudProvider):
 
         server = self._power_on_and_wait(created.server, zone, name)
         return _server_to_provider(server, ssh_user=self._ssh_user)
+
+    def fixed_root_disk(self, server_type) -> int | None:
+        """Local-boot types have a fixed local disk capped by ``l_ssd.max_size``.
+
+        For a local-bootable type the root disk is the local SSD, whose size is
+        bounded by the type's ``per_volume_constraint.l_ssd.max_size`` (bytes) —
+        returned here in GB so a ``disk-`` minimum larger than the type can hold
+        rejects it during resolution. SBS types have a user-sized boot volume
+        (resizable), so return None for them.
+        """
+        native = getattr(server_type, "_native", None)
+        pvc = getattr(native, "per_volume_constraint", None)
+        l_ssd = getattr(pvc, "l_ssd", None) if pvc else None
+        max_size = getattr(l_ssd, "max_size", 0) or 0
+        if not max_size:
+            return None
+        return int(max_size // (1024**3))
 
     @staticmethod
     def _is_local_bootable(server_type) -> bool:

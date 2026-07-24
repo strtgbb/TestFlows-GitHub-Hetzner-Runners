@@ -112,6 +112,20 @@ def name_is_string(self):
         assert isinstance(provider.name, str)
 
 
+@TestScenario
+def server_to_provider_populates_root_disk_size(self):
+    """_server_to_provider reads the bundled root disk (GB) from the server type."""
+    from testflows.runners.providers.hetzner.utils import _server_to_provider
+
+    with Given("a bound server whose type reports an 80 GB disk"):
+        bound = _make_bound_server()
+        bound.server_type.disk = 80
+    with When("converting it to a ProviderServer"):
+        ps = _server_to_provider(bound)
+    with Then("root_disk_size reflects the type's disk"):
+        assert ps.root_disk_size == 80, ps.root_disk_size
+
+
 # ---------------------------------------------------------------------------
 # list_runner_servers
 # ---------------------------------------------------------------------------

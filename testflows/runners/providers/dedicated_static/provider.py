@@ -263,8 +263,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
         labels: dict[str, str],
         volumes: list = None,
         public_net: object = None,
+        root_disk_size: int = None,
     ) -> ProviderServer | None:
-        del image, ssh_keys, labels, volumes, public_net
+        del image, ssh_keys, labels, volumes, public_net, root_disk_size
         requested_type = server_type.name
         requested_location = location.name if hasattr(location, "name") else location
 

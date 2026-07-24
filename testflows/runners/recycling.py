@@ -39,6 +39,12 @@ def recyclable_server_matches(
         return False
     if server.server_type != request.server_type:
         return False
+    if request.min_disk:
+        # Reuse only when the pooled server's disk is known to satisfy the
+        # requested minimum. Unknown size (None) is not known-safe, so the job
+        # falls through to a fresh, correctly-sized create.
+        if server.root_disk_size is None or server.root_disk_size < request.min_disk:
+            return False
     if request.location and server.location != request.location:
         return False
     if bool(server.public_ipv4) != request.enable_ipv4:

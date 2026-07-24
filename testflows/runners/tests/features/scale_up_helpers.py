@@ -502,6 +502,7 @@ def _recyclable_server(
     ipv4=True,
     ipv6=False,
     ssh_key_label="mykey",
+    disk_size=None,
 ):
     return ProviderServer(
         id="recycled-1",
@@ -514,6 +515,7 @@ def _recyclable_server(
         server_type=type_name,
         location=location_name,
         created=MagicMock(),
+        root_disk_size=disk_size,
         volumes=[
             ProviderVolume(
                 id=name,
@@ -534,6 +536,7 @@ def _recycle_request(
     ipv4=True,
     ipv6=False,
     ssh_key_name="mykey",
+    min_disk=None,
 ):
     return RecycleRequest(
         name="github-runner-new",
@@ -545,6 +548,7 @@ def _recycle_request(
         volume_names=frozenset(volume_names or []),
         enable_ipv4=ipv4,
         enable_ipv6=ipv6,
+        min_disk=min_disk,
     )
 
 
@@ -614,6 +618,43 @@ def recyclable_network_and_key_must_match(self):
     assert recyclable_server_matches(
         provider, server, _recycle_request(ssh_key_name="newkey")
     ) is False
+
+
+@TestScenario
+def recyclable_min_disk_reuses_only_known_safe(self):
+    """A disk- minimum reuses a pooled server only when its disk is known >= it."""
+    provider = _recycle_provider()
+    with When("no minimum is requested"):
+        with Then("a pooled server with unknown disk still matches (today's behavior)"):
+            assert recyclable_server_matches(
+                provider, _recyclable_server(disk_size=None), _recycle_request()
+            ) is True
+    with When("the pooled server's disk is known to meet the minimum"):
+        with Then("it matches"):
+            assert recyclable_server_matches(
+                provider,
+                _recyclable_server(disk_size=160),
+                _recycle_request(min_disk=100),
+            ) is True
+            assert recyclable_server_matches(
+                provider,
+                _recyclable_server(disk_size=100),
+                _recycle_request(min_disk=100),
+            ) is True
+    with When("the pooled server's disk is smaller than the minimum"):
+        with Then("it does not match"):
+            assert recyclable_server_matches(
+                provider,
+                _recyclable_server(disk_size=40),
+                _recycle_request(min_disk=100),
+            ) is False
+    with When("the pooled server's disk is unknown but a minimum is requested"):
+        with Then("it is not known-safe, so it does not match"):
+            assert recyclable_server_matches(
+                provider,
+                _recyclable_server(disk_size=None),
+                _recycle_request(min_disk=100),
+            ) is False
 
 
 # ---------------------------------------------------------------------------

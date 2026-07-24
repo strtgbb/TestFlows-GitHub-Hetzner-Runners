@@ -40,6 +40,13 @@ def _server_to_provider(server: BoundServer) -> ProviderServer:
                 private_ipv4 = net.ip
                 break
 
+    # Root disk is bundled with the server type; its size (GB) rides along on
+    # the BoundServer's server_type, so no extra API call is needed.
+    root_disk = None
+    _disk = getattr(server.server_type, "disk", None) if server.server_type else None
+    if isinstance(_disk, (int, float)) and _disk:
+        root_disk = int(_disk)
+
     return ProviderServer(
         id=server.id,
         name=server.name,
@@ -56,6 +63,7 @@ def _server_to_provider(server: BoundServer) -> ProviderServer:
         ),
         created=server.created,
         volumes=[_volume_to_provider(v) for v in (server.volumes or [])],
+        root_disk_size=root_disk,
         _native=server,
     )
 

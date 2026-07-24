@@ -126,10 +126,13 @@ class AWSCloudProvider(CloudProvider):
         labels: dict,
         volumes: list = None,
         public_net=None,
+        root_disk_size: int = None,
     ) -> ProviderServer:
         """Launch an EC2 instance and return a ProviderServer wrapping it.
 
-        ``public_net`` and ``volumes`` are ignored for AWS.
+        ``public_net`` and ``volumes`` are ignored for AWS. ``root_disk_size``
+        (GB), when given, sizes the EBS root volume for this instance instead of
+        the provider's configured default.
         """
         tag_specs = [{"Key": "Name", "Value": name}] + [
             {"Key": k, "Value": v} for k, v in labels.items()
@@ -184,7 +187,10 @@ class AWSCloudProvider(CloudProvider):
             if location:
                 kwargs["Placement"] = {"AvailabilityZone": location}
 
-        ebs = {"VolumeSize": self._root_volume_size, "DeleteOnTermination": True}
+        ebs = {
+            "VolumeSize": root_disk_size or self._root_volume_size,
+            "DeleteOnTermination": True,
+        }
         if self._root_volume_type:
             ebs["VolumeType"] = self._root_volume_type
         kwargs["BlockDeviceMappings"] = [{"DeviceName": "/dev/sda1", "Ebs": ebs}]

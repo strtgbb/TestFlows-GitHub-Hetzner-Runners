@@ -411,6 +411,49 @@ def create_server_correct_run_instances_args(self):
 
 
 @TestScenario
+def create_server_root_disk_size_overrides_default(self):
+    """A per-job root_disk_size sizes the EBS root volume for this instance."""
+    with Given("an AWS provider (default root volume 20 GB)"):
+        ec2, provider = aws_provider()
+    with When("I call create_server with root_disk_size=100"):
+        instance = _make_instance()
+        _setup_create(ec2, instance)
+        provider.create_server(
+            name="test-runner",
+            server_type=ProviderServerType(name="t3.medium"),
+            location="us-east-1a",
+            image="ami-12345",
+            ssh_keys=[],
+            labels={},
+            root_disk_size=100,
+        )
+    with Then("BlockDeviceMappings root volume is 100 GB"):
+        ebs = ec2.run_instances.call_args[1]["BlockDeviceMappings"][0]["Ebs"]
+        assert ebs["VolumeSize"] == 100, ebs
+
+
+@TestScenario
+def create_server_root_disk_defaults_when_unset(self):
+    """With no root_disk_size the provider's configured default (20) is used."""
+    with Given("an AWS provider"):
+        ec2, provider = aws_provider()
+    with When("I call create_server without root_disk_size"):
+        instance = _make_instance()
+        _setup_create(ec2, instance)
+        provider.create_server(
+            name="test-runner",
+            server_type=ProviderServerType(name="t3.medium"),
+            location="us-east-1a",
+            image="ami-12345",
+            ssh_keys=[],
+            labels={},
+        )
+    with Then("BlockDeviceMappings root volume is the default 20 GB"):
+        ebs = ec2.run_instances.call_args[1]["BlockDeviceMappings"][0]["Ebs"]
+        assert ebs["VolumeSize"] == 20, ebs
+
+
+@TestScenario
 def create_server_waits_for_running(self):
     """create_server must wait for the instance to reach running state so
     that the re-describe can capture the public IP address."""

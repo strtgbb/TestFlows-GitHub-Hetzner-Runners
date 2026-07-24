@@ -471,6 +471,61 @@ def get_server_volumes(labels: list[str], default: int = 10, label_prefix: str =
     return list(volumes.values())
 
 
+def get_server_disk_size(labels: list[str], label_prefix: str = "") -> int | None:
+    """Get the minimum root/boot disk size (GB) requested for the job.
+
+    Parsed from a ``disk-<N>`` label (e.g. ``disk-100`` or ``disk-100GB``). This
+    is the size of the server's own root disk, distinct from the ``volume-``
+    label which attaches a separate cache block volume. The value is a
+    **minimum**: resizable providers (AWS, Scaleway SBS) provision it directly,
+    while fixed-disk providers (Hetzner, Scaleway local-boot) are checked against
+    it during resolution.
+
+    Multiple ``disk-`` labels take the largest value (a minimum, so the biggest
+    request wins). Returns None when no ``disk-`` label is present, meaning the
+    provider uses its configured default boot disk.
+
+    Example labels:
+        disk-100
+        disk-100GB
+    """
+    if label_prefix and not label_prefix.endswith("-"):
+        label_prefix += "-"
+    label_prefix += "disk-"
+    label_prefix = label_prefix.lower()
+
+    sizes: list[int] = []
+    for label in labels:
+        label = label.lower()
+        if label.startswith(label_prefix):
+            value = label.split(label_prefix, 1)[-1]
+            sizes.append(parse_volume_size(value, 0))
+
+    sizes = [s for s in sizes if s > 0]
+    return max(sizes) if sizes else None
+
+
+def get_server_provider(labels: list[str], label_prefix: str = "") -> str | None:
+    """Get the provider a job is pinned to via a ``provider-<name>`` label.
+
+    Pins resolution to a single configured provider (e.g. ``provider-aws``)
+    instead of the default first-match-wins across all providers. Returns the
+    lowercased provider name, or None when no ``provider-`` label is present.
+    The name is validated against the configured providers by the caller.
+    """
+    if label_prefix and not label_prefix.endswith("-"):
+        label_prefix += "-"
+    label_prefix += "provider-"
+    label_prefix = label_prefix.lower()
+
+    name = None
+    for label in labels:
+        label = label.lower()
+        if label.startswith(label_prefix):
+            name = label.split(label_prefix, 1)[-1]
+    return name or None
+
+
 def get_recycle_script(
     scripts: str, labels: list[str], default: str = "recycle.sh", label_prefix: str = ""
 ):
@@ -833,6 +888,7 @@ def create_server(
     semaphore: threading.Semaphore = None,
     active_attempt: list[int] = None,
     attempt: int = 0,
+    root_disk_size: int = None,
 ):
     """Create specified number of server instances."""
     start_time = time.time()
@@ -909,6 +965,7 @@ def create_server(
                                 ssh_keys=ssh_keys,
                                 labels=server_labels,
                                 public_net=server_net_config,
+                                root_disk_size=root_disk_size,
                             )
 
                     except Exception as e:
@@ -1296,6 +1353,8 @@ def scale_up(
         server_net_config = get_server_net_config(
             labels=labels, label_prefix=label_prefix
         )
+        # Minimum root/boot disk (GB) requested via a ``disk-`` label, or None.
+        min_disk = get_server_disk_size(labels=labels, label_prefix=label_prefix)
 
         # Resolve provider and validate type for each requested server type.
         # get_server_image and the setup-step script are resolved per type since
@@ -1303,11 +1362,49 @@ def scale_up(
         # the script from the provider's own label/default rules).
         # Keep-warm pins to one provider (resolve only against it); else all.
         candidate_providers = [provider] if provider is not None else cycle_providers
+        # A ``provider-<name>`` label pins the job to one configured provider
+        # (only when not already pinned by the internal provider= kwarg, which
+        # dedicated_static maintenance uses). An unknown/unconfigured name leaves
+        # no candidates, so the job simply doesn't place (logged below).
+        pinned_provider = get_server_provider(labels=labels, label_prefix=label_prefix)
+        if provider is None and pinned_provider is not None:
+            candidate_providers = [
+                p for p in candidate_providers if p.name == pinned_provider
+            ]
+            if not candidate_providers:
+                with Action(
+                    f"Skipping {name}: no configured provider named "
+                    f"{pinned_provider!r} for provider- label",
+                    level=logging.DEBUG,
+                    server_name=name,
+                ):
+                    pass
         resolved = []
         for type_name in server_types:
-            try:
-                rp, vt = _resolve_provider(type_name, candidate_providers)
-            except ServerTypeError:
+            # First provider that recognizes the type wins (precedence order).
+            # When a disk- minimum is set, skip a provider whose root disk is
+            # fixed (Hetzner, Scaleway local-boot) and smaller than the minimum,
+            # trying the next provider that knows the type instead.
+            rp = vt = None
+            for cand in candidate_providers:
+                try:
+                    cand_type = cand.get_server_type(type_name)
+                except ServerTypeError:
+                    continue
+                if min_disk:
+                    fixed = cand.fixed_root_disk(cand_type)
+                    if fixed is not None and fixed < min_disk:
+                        with Action(
+                            f"Skipping provider {cand.name} for {name}: {type_name} "
+                            f"root disk {fixed}GB < requested minimum {min_disk}GB",
+                            level=logging.DEBUG,
+                            server_name=name,
+                        ):
+                            pass
+                        continue
+                rp, vt = cand, cand_type
+                break
+            if rp is None:
                 continue
             provider_default_image = (
                 rp.default_image if rp.default_image is not None else default_image
@@ -1380,6 +1477,7 @@ def scale_up(
                         enable_ipv4=server_net_config.enable_ipv4,
                         enable_ipv6=server_net_config.enable_ipv6,
                         timeout=max_server_ready_time,
+                        min_disk=min_disk,
                     )
                     claim = resolved_provider.claim_recycled_server(recycle_request)
                     if claim is None:
@@ -1586,6 +1684,7 @@ def scale_up(
                     semaphore=create_server_semaphore,
                     active_attempt=create_server_active_attempt,
                     attempt=create_server_attempt,
+                    root_disk_size=min_disk,
                 )
                 set_future_attributes(
                     future, name, validated_type, server_location, server_volumes, labels,

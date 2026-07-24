@@ -1181,15 +1181,54 @@ def scale_up(
     """Scale up service."""
     github_token: str = config.github_token
     github_repository: str = config.github_repository
-    default_server_type: ServerType = config.default_server_type
-    default_volume_size: int = config.default_volume_size
+
+    if providers is None:
+        # Direct/embedded invocation without a prebuilt provider list: fall back
+        # to a Hetzner provider seeded from its configured defaults so unlabeled
+        # jobs still resolve a default type/location/image.
+        from .providers.hetzner.provider import HetznerCloudProvider
+
+        _hdef = (
+            config.providers.hetzner.defaults if config.providers.hetzner else None
+        )
+        providers = [
+            HetznerCloudProvider(
+                token=config.hetzner_token,
+                default_image=_hdef.image if _hdef else None,
+                default_server_type=_hdef.server_type if _hdef else None,
+                default_location=_hdef.location if _hdef else None,
+                default_volume_size=_hdef.volume_size if _hdef else None,
+                default_volume_location=_hdef.volume_location if _hdef else None,
+            )
+        ]
+
+    # Defaults for jobs that carry no type-/in-/volume- label are seeded from
+    # the first configured provider (precedence order hetzner -> scaleway ->
+    # aws -> dedicated_static). Each provider validated/resolved its own
+    # defaults at startup, so these are provider-native values.
+    def _spec_name(v):
+        return v.name if hasattr(v, "name") else v
+
+    seed_provider = providers[0] if providers else None
+    default_server_type = (
+        seed_provider.default_server_type if seed_provider is not None else None
+    )
+    default_volume_size: int = (
+        seed_provider.default_volume_size
+        if seed_provider is not None and seed_provider.default_volume_size is not None
+        else 10
+    )
     default_volume_location: str | None = (
-        config.default_volume_location.name if config.default_volume_location else None
+        _spec_name(seed_provider.default_volume_location)
+        if seed_provider is not None
+        else None
     )
     default_location: str | None = (
-        config.default_location.name if config.default_location else None
+        _spec_name(seed_provider.default_location)
+        if seed_provider is not None
+        else None
     )
-    default_image = config.default_image
+    default_image = seed_provider.default_image if seed_provider is not None else None
     interval_period: int = config.scale_up_interval
     max_servers: int = config.max_runners
     max_servers_for_label: list[tuple[set[str], int]] = config.max_runners_for_label
@@ -1213,9 +1252,6 @@ def scale_up(
         config.server_prices = {}
     interval: int = -1
 
-    if providers is None:
-        from .providers.hetzner.provider import HetznerCloudProvider
-        providers = [HetznerCloudProvider(token=config.hetzner_token)]
     cycle_providers = providers
 
     def create_runner_server(

@@ -58,13 +58,27 @@ def command_options(
             else ""
         )
     command += f" --workers {config.workers}"
-    command += f" --default-type {config.default_server_type.name}"
-    command += (
-        f" --default-location {config.default_location.name}"
-        if config.default_location
-        else ""
-    )
-    command += f" --default-image {config.default_image.architecture}:{config.default_image.type}:{config.default_image.name or config.default_image.description}"
+    if hetzner_config is not None:
+        hd = hetzner_config.defaults
+        command += (
+            f" --hetzner-default-server-type {hd.server_type}"
+            if hd.server_type
+            else ""
+        )
+        command += (
+            f" --hetzner-default-location {hd.location}" if hd.location else ""
+        )
+        command += f" --hetzner-default-image {hd.image}" if hd.image else ""
+        command += (
+            f" --hetzner-default-volume-size {hd.volume_size}"
+            if hd.volume_size
+            else ""
+        )
+        command += (
+            f" --hetzner-default-volume-location {hd.volume_location}"
+            if hd.volume_location
+            else ""
+        )
     command += f" --max-runners {config.max_runners}" if config.max_runners else ""
     command += (
         f" --max-runners-in-workflow-run {config.max_runners_in_workflow_run}"

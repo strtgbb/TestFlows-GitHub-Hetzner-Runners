@@ -81,6 +81,7 @@ class ScalewayCloudProvider(CloudProvider):
         zone: str = "fr-par-1",
         default_image_spec: str = None,
         default_location_spec: str = None,
+        default_server_type_spec: str = None,
         default_volume_size: int = None,
         ssh_user: str = "root",
         max_runners: int = None,
@@ -106,6 +107,7 @@ class ScalewayCloudProvider(CloudProvider):
         self._zone = zone
         self._default_image = default_image_spec
         self._default_location = default_location_spec
+        self._default_server_type = default_server_type_spec
         # Configured boot-volume size in GB (providers.scaleway.defaults.volume_size).
         self._default_volume_size = default_volume_size
         self._ssh_user = ssh_user

@@ -18,10 +18,16 @@ def provider_factory(config: Config) -> list[CloudProvider]:
     providers: list[CloudProvider] = []
 
     if config.providers.hetzner and config.providers.hetzner.token:
+        hetzner_defaults = config.providers.hetzner.defaults
         providers.append(
             HetznerCloudProvider(
                 token=config.providers.hetzner.token,
                 ssh_key_path=config.ssh_key,
+                default_image=hetzner_defaults.image,
+                default_server_type=hetzner_defaults.server_type,
+                default_location=hetzner_defaults.location,
+                default_volume_size=hetzner_defaults.volume_size,
+                default_volume_location=hetzner_defaults.volume_location,
                 max_runners=config.providers.hetzner.max_runners,
                 end_of_life=config.providers.hetzner.end_of_life,
                 recycle=config.providers.hetzner.recycle,
@@ -51,6 +57,7 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 zone=scaleway_cfg.defaults.location or "fr-par-1",
                 default_image_spec=scaleway_cfg.defaults.image,
                 default_location_spec=scaleway_cfg.defaults.location,
+                default_server_type_spec=scaleway_cfg.defaults.server_type,
                 default_volume_size=scaleway_cfg.defaults.volume_size,
                 ssh_user=scaleway_cfg.ssh_user,
                 max_runners=scaleway_cfg.max_runners,
@@ -76,6 +83,7 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 subnets=aws_cfg.subnets,
                 default_image_spec=aws_cfg.defaults.image,
                 default_location_spec=aws_cfg.defaults.location,
+                default_server_type_spec=aws_cfg.defaults.server_type,
                 ssh_user=aws_cfg.ssh_user,
                 root_volume_size=aws_cfg.defaults.volume_size,
                 root_volume_type=aws_cfg.defaults.volume_type,

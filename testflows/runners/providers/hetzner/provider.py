@@ -43,6 +43,10 @@ class HetznerCloudProvider(CloudProvider):
         token: str,
         ssh_key_path: str = None,
         default_image=None,
+        default_server_type=None,
+        default_location=None,
+        default_volume_size=None,
+        default_volume_location=None,
         max_runners: int = None,
         end_of_life: int = None,
         recycle: bool = None,
@@ -55,9 +59,16 @@ class HetznerCloudProvider(CloudProvider):
             token: Hetzner Cloud API token.
             ssh_key_path: Optional path to a public SSH key file.  When
                 supplied, ``get_or_create_ssh_key`` can accept ``is_file=True``.
-            default_image: Default image to use when no ``image-`` label is
-                present.  Accepts a validated hcloud ``Image`` object (from
-                ``config.default_image``) or a raw spec string.
+            default_image: Default image spec used when no ``image-`` label is
+                present (from ``providers.hetzner.defaults.image``). Resolved to
+                a validated hcloud ``Image`` at startup.
+            default_server_type: Default server-type spec used when no ``type-``
+                label is present. Resolved to a validated type at startup.
+            default_location: Default location spec used when no ``in-`` label is
+                present. Resolved to a validated ``Location`` at startup.
+            default_volume_size: Default volume size in GB.
+            default_volume_location: Default volume-location spec. Resolved at
+                startup.
             max_runners: Per-provider runner cap (overrides global max_runners).
             end_of_life: Per-provider end-of-life in minutes (overrides global).
         """
@@ -65,6 +76,10 @@ class HetznerCloudProvider(CloudProvider):
         self._ssh_key_path = ssh_key_path
         self._client = HClient(token=token)
         self._default_image = default_image
+        self._default_server_type = default_server_type
+        self._default_location = default_location
+        self._default_volume_size = default_volume_size
+        self._default_volume_location = default_volume_location
         self._max_runners = max_runners
         self._end_of_life = end_of_life
         self._recycle = recycle
@@ -81,12 +96,6 @@ class HetznerCloudProvider(CloudProvider):
 
     @property
     def supports_volumes(self) -> bool:
-        return True
-
-    @property
-    def owns_global_config_defaults(self) -> bool:
-        # Hetzner's default image/location/server-type live in the top-level
-        # config.default_* (legacy), not under providers.hetzner.defaults.
         return True
 
     # ---------------------------------------------------------------------------
@@ -379,8 +388,8 @@ class HetznerCloudProvider(CloudProvider):
         Accepts either a plain string name or a ``ServerType`` object.
         Delegates to the existing ``check_server_type`` helper.
         """
-        # Accept a raw ServerType object for backwards compatibility with startup
-        # validation code that stores the validated hcloud object back into config.
+        # Accept either a plain string spec or a ServerType object (the latter
+        # arrives from recycle_server, which carries the validated type).
         native_name = name.name if isinstance(name, ServerType) else name
         native = hetzner_config.check_server_type(self._client, ServerType(name=native_name))
         return ProviderServerType(name=native.name, _native=native)

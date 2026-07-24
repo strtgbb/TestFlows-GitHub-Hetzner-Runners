@@ -311,22 +311,17 @@ def concurrent_claims_only_one_wins(self):
 
 @TestScenario
 def static_owns_no_global_defaults(self):
-    """Static hosts own no default image/location, so startup validation must
-    not feed them the Hetzner-shaped global config.default_*.
+    """Static hosts expose no default image/location of their own, so the
+    per-provider startup validator skips their image/location/type checks.
 
-    Regression: the per-provider startup loop used to fall back to the global
-    default image for any provider without its own, and dedicated_static's
-    get_image rejects foreign specs by design — aborting startup with
-    ImageSpecFormatError. The provider owns no defaults, so a correct validator
-    skips its image/location/type checks entirely.
+    Regression: dedicated_static's get_image rejects foreign (Hetzner-shaped)
+    specs by design. Because the provider owns no defaults, the validator has
+    nothing to hand it and never triggers that rejection at startup.
     """
     from testflows.runners.errors import ImageSpecFormatError
 
     prov = _provider()
-    with Then("the provider does not own the global config defaults"):
-        # So the startup validator never hands it the Hetzner-shaped globals.
-        assert prov.owns_global_config_defaults is False
-    with And("it exposes no default image or location of its own"):
+    with Then("it exposes no default image or location of its own"):
         assert prov.default_image is None, prov.default_image
         assert prov.default_location is None, prov.default_location
     with And("and still hard-rejects a foreign (Hetzner) image spec if asked"):

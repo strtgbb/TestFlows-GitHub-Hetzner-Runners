@@ -7,6 +7,11 @@ config:
             # Default recycling powers the server back on and runs recycle.sh.
             # Opt into full reimaging for stronger isolation.
             recycle_with_rebuild: false
+            # Defaults for jobs that carry no type-/in-/image- label.
+            defaults:
+                image: "x86:system:ubuntu-22.04"
+                server_type: cx23
+                #location: ash
     ssh_key: "~/.ssh/id_rsa.pub"
     #additional_ssh_keys:
     # - additional_key
@@ -26,9 +31,6 @@ config:
     #    - label
     #    - ...
     delete_random: false
-    default_image: "x86:system:ubuntu-22.04"
-    default_server_type: cx23
-    #default_location: ash
     workers: 10
     #scripts:
     max_powered_off_time: 60

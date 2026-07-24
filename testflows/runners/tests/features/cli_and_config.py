@@ -310,6 +310,92 @@ def factory_passes_hetzner_recycle_with_rebuild(self):
 
 
 @TestScenario
+def config_parses_hetzner_defaults(self):
+    """providers.hetzner.defaults is parsed into the Hetzner provider config."""
+    import tempfile
+
+    text = _MINIMAL_BASE + """
+  providers:
+    hetzner:
+      token: token
+      defaults:
+        image: "x86:system:ubuntu-20.04"
+        server_type: cpx31
+        location: fsn1
+        volume_size: 50
+        volume_location: hel1
+"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+        f.write(text)
+        path = f.name
+    try:
+        with When("I parse the Hetzner defaults block"):
+            cfg = parse_config(path)
+        with Then("the values are stored under providers.hetzner.defaults"):
+            d = cfg.providers.hetzner.defaults
+            assert d.image == "x86:system:ubuntu-20.04", d.image
+            assert d.server_type == "cpx31", d.server_type
+            assert d.location == "fsn1", d.location
+            assert d.volume_size == 50, d.volume_size
+            assert d.volume_location == "hel1", d.volume_location
+    finally:
+        os.unlink(path)
+
+
+@TestScenario
+def factory_passes_hetzner_defaults(self):
+    """providers.hetzner.defaults reach the HetznerCloudProvider default_* specs."""
+    cfg = Config(
+        providers=provider_list(
+            hetzner=hetzner_provider(token="token")
+        )
+    )
+    cfg.providers.hetzner.defaults.image = "x86:system:ubuntu-20.04"
+    cfg.providers.hetzner.defaults.server_type = "cpx31"
+    cfg.providers.hetzner.defaults.location = "fsn1"
+    cfg.providers.hetzner.defaults.volume_size = 50
+    cfg.providers.hetzner.defaults.volume_location = "hel1"
+    with When("I construct providers from the config"):
+        provider = provider_factory(cfg)[0]
+    with Then("the Hetzner provider exposes the configured defaults as specs"):
+        assert provider.default_image == "x86:system:ubuntu-20.04"
+        assert provider.default_server_type == "cpx31"
+        assert provider.default_location == "fsn1"
+        assert provider.default_volume_size == 50
+        assert provider.default_volume_location == "hel1"
+
+
+@TestScenario
+def config_rejects_removed_top_level_defaults(self):
+    """Top-level default_image/default_server_type/... are gone; they hard-error."""
+    import tempfile
+
+    for key, value in (
+        ("default_image", "x86:system:ubuntu-22.04"),
+        ("default_server_type", "cx23"),
+        ("default_location", "nbg1"),
+        ("default_volume_location", "nbg1"),
+        ("default_volume_size", 20),
+    ):
+        text = _MINIMAL_BASE + f"  {key}: {value}\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(text)
+            path = f.name
+        try:
+            with When(f"I parse a config with top-level {key}"):
+                try:
+                    parse_config(path)
+                    raised = None
+                except (AssertionError, SystemExit, TypeError) as e:
+                    raised = e
+            with Then("parsing is rejected pointing at providers.hetzner.defaults"):
+                assert raised is not None, f"expected rejection for {key}"
+                assert "providers.hetzner.defaults" in str(raised), str(raised)
+        finally:
+            os.unlink(path)
+
+
+@TestScenario
 def config_rejects_removed_recycle_without_rebuild(self):
     import tempfile
 
@@ -510,6 +596,37 @@ def schema_places_rebuild_setting_under_hetzner(self):
         )
         assert "recycle_with_rebuild" in hetzner_properties
         assert "recycle_without_rebuild" not in config_properties
+
+
+@TestScenario
+def schema_places_hetzner_defaults_under_provider(self):
+    """Default image/type/location/volume live under providers.hetzner.defaults,
+    not as top-level config keys."""
+    with open(_SCHEMA_PATH) as f:
+        schema = json.load(f)
+    config_properties = schema["properties"]["config"]["properties"]
+    with Then("the top-level default_* keys are gone"):
+        for removed in (
+            "default_image",
+            "default_server_type",
+            "default_location",
+            "default_volume_size",
+            "default_volume_location",
+        ):
+            assert removed not in config_properties, removed
+    with And("providers.hetzner.defaults defines them instead"):
+        hetzner_defaults = (
+            config_properties["providers"]["properties"]["hetzner"]["properties"][
+                "defaults"
+            ]["properties"]
+        )
+        assert set(hetzner_defaults.keys()) == {
+            "image",
+            "server_type",
+            "location",
+            "volume_size",
+            "volume_location",
+        }, set(hetzner_defaults.keys())
 
 
 # ---------------------------------------------------------------------------

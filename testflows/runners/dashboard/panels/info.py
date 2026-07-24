@@ -31,6 +31,11 @@ def get_config_data(config: Config):
     Returns:
         list: List of configuration items with label, value, and optional link
     """
+    _hetzner_defaults = (
+        config.providers.hetzner.defaults
+        if config.providers is not None and config.providers.hetzner is not None
+        else None
+    )
     return [
         {"label": "Version", "value": __version__, "link": None},
         {
@@ -160,20 +165,20 @@ def get_config_data(config: Config):
             "link": None,
         },
         {
-            "label": "Default Image (--default-image)",
-            "value": (config.default_image.name if config.default_image else ""),
+            "label": "Hetzner Default Image (--hetzner-default-image)",
+            "value": (_hetzner_defaults.image or "" if _hetzner_defaults else ""),
             "link": None,
         },
         {
-            "label": "Default Server Type (--default-server-type)",
+            "label": "Hetzner Default Server Type (--hetzner-default-server-type)",
             "value": (
-                config.default_server_type.name if config.default_server_type else ""
+                _hetzner_defaults.server_type or "" if _hetzner_defaults else ""
             ),
             "link": None,
         },
         {
-            "label": "Default Location (--default-location)",
-            "value": (config.default_location.name if config.default_location else ""),
+            "label": "Hetzner Default Location (--hetzner-default-location)",
+            "value": (_hetzner_defaults.location or "" if _hetzner_defaults else ""),
             "link": None,
         },
         {

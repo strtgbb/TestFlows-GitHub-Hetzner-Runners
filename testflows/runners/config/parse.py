@@ -176,39 +176,21 @@ def parse_config(filename: str):
             isinstance(v, int) and v > 0
         ), "config.max_runners_in_workflow_run: is not an integer > 0"
 
-    if doc.get("default_image") is not None:
-        try:
-            doc["default_image"] = image(doc["default_image"])
-        except Exception as e:
-            assert False, f"config.default_image: {e}"
-
-    if doc.get("default_server_type") is not None:
-        try:
-            doc["default_server_type"] = server_type(doc["default_server_type"])
-        except Exception as e:
-            assert False, f"config.default_server_type: {e}"
-
-    if doc.get("default_location") is not None:
-        try:
-            v = doc["default_location"]
-            assert isinstance(v, str), "is not a string"
-            doc["default_location"] = location(v)
-        except Exception as e:
-            assert False, f"config.default_location: {e}"
-
-    if doc.get("default_volume_location") is not None:
-        try:
-            v = doc["default_volume_location"]
-            assert isinstance(v, str), "is not a string"
-            doc["default_volume_location"] = location(v)
-        except Exception as e:
-            assert False, f"config.default_volume_location: {e}"
-
-    if doc.get("default_volume_size") is not None:
-        v = doc["default_volume_size"]
-        assert (
-            isinstance(v, int) and v > 0
-        ), "config.default_volume_size: is not an integer > 0"
+    # Hetzner's default image/type/location/volume moved under
+    # providers.hetzner.defaults (uniform with aws/scaleway); the top-level
+    # keys are gone. Hard-error so an old config fails loudly instead of
+    # silently ignoring them.
+    for _removed in (
+        "default_image",
+        "default_server_type",
+        "default_location",
+        "default_volume_location",
+        "default_volume_size",
+    ):
+        assert doc.get(_removed) is None, (
+            f"config.{_removed}: is not supported; use "
+            f"config.providers.hetzner.defaults instead"
+        )
 
     if doc.get("workers") is not None:
         v = doc["workers"]
@@ -530,6 +512,31 @@ def parse_config(filename: str):
                     "config.providers.hetzner.recycle_grace_period: must be an integer >= 0"
                 )
                 _hetzner_kwargs["recycle_grace_period"] = v
+            _hetzner_defaults_raw = h.get("defaults")
+            if _hetzner_defaults_raw is not None:
+                assert isinstance(
+                    _hetzner_defaults_raw, dict
+                ), "config.providers.hetzner.defaults: is not a dictionary"
+                base = hetzner_provider().defaults
+                _hetzner_volume_size = _hetzner_defaults_raw.get(
+                    "volume_size", base.volume_size
+                )
+                assert (
+                    isinstance(_hetzner_volume_size, int) and _hetzner_volume_size > 0
+                ), (
+                    "config.providers.hetzner.defaults.volume_size: must be an integer > 0 (in GB)"
+                )
+                _hetzner_kwargs["defaults"] = provider_defaults(
+                    image=_hetzner_defaults_raw.get("image", base.image),
+                    server_type=_hetzner_defaults_raw.get(
+                        "server_type", base.server_type
+                    ),
+                    location=_hetzner_defaults_raw.get("location", base.location),
+                    volume_size=_hetzner_volume_size,
+                    volume_location=_hetzner_defaults_raw.get(
+                        "volume_location", base.volume_location
+                    ),
+                )
             _hetzner = hetzner_provider(**_hetzner_kwargs)
 
         _aws = None

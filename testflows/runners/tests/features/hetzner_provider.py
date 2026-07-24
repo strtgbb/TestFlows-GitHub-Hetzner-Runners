@@ -82,16 +82,26 @@ def name_is_hetzner(self):
 
 
 @TestScenario
-def owns_global_config_defaults_is_true(self):
-    """Hetzner owns the top-level config.default_* (legacy), unlike other providers.
+def default_specs_are_stored(self):
+    """Default image/type/location/volume specs passed to __init__ are exposed
+    via the provider's default_* properties (seed source for unlabeled jobs)."""
+    from testflows.runners.providers.hetzner.provider import HetznerCloudProvider
 
-    The startup validator uses this to decide which provider the global default
-    image/location/server-type belongs to, instead of matching on provider name.
-    """
-    with Given("a Hetzner provider"):
-        _, provider = hetzner_provider()
-    with Then("it owns the global config defaults"):
-        assert provider.owns_global_config_defaults is True
+    with Given("a Hetzner provider constructed with default specs"):
+        provider = HetznerCloudProvider(
+            token="tok",
+            default_image="x86:system:ubuntu-22.04",
+            default_server_type="cx23",
+            default_location="nbg1",
+            default_volume_size=40,
+            default_volume_location="fsn1",
+        )
+    with Then("each default_* property returns the configured spec"):
+        assert provider.default_image == "x86:system:ubuntu-22.04"
+        assert provider.default_server_type == "cx23"
+        assert provider.default_location == "nbg1"
+        assert provider.default_volume_size == 40
+        assert provider.default_volume_location == "fsn1"
 
 
 @TestScenario

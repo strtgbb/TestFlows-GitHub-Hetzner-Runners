@@ -193,20 +193,25 @@ class CloudProvider(ABC):
         return False
 
     @property
-    def owns_global_config_defaults(self) -> bool:
-        """Whether this provider owns the top-level ``config.default_*`` slots.
+    def default_server_type(self) -> Any:
+        """Default server-type spec for this provider (None if not configured).
 
-        For backward compatibility Hetzner's default image/location/server-type
-        live in the global ``config.default_*`` (read by scale_up, the service
-        install command, cloud deploy, and the dashboard) rather than under
-        ``providers.<name>.defaults`` like every other provider. Exactly one
-        provider may own them; the owner uses them as its defaults and the
-        startup validator writes the resolved values back to ``config``. Every
-        other provider uses only its own provider-level defaults, so it is never
-        handed a foreign (Hetzner-shaped) spec it cannot resolve. Defaults to
-        False; Hetzner overrides to True.
+        Used to seed unlabeled jobs when this provider is the first configured
+        (precedence) provider. Stored in the provider's own native format (set
+        in ``__init__`` from ``providers.<name>.defaults.server_type`` and
+        resolved to a validated object at startup).
         """
-        return False
+        return getattr(self, "_default_server_type", None)
+
+    @property
+    def default_volume_size(self) -> int | None:
+        """Default volume size in GB for this provider, or None if not configured."""
+        return getattr(self, "_default_volume_size", None)
+
+    @property
+    def default_volume_location(self) -> Any:
+        """Default volume-location spec for this provider (None if not configured)."""
+        return getattr(self, "_default_volume_location", None)
 
     @property
     def max_runners(self) -> int | None:

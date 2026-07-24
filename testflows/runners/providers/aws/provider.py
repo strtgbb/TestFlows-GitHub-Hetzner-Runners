@@ -35,6 +35,7 @@ class AWSCloudProvider(CloudProvider):
         subnets: list[str] = None,
         default_image_spec: str = None,
         default_location_spec: str = None,
+        default_server_type_spec: str = None,
         ssh_user: str = "ubuntu",
         root_volume_size: int = 20,
         root_volume_type: str = "gp3",
@@ -76,6 +77,8 @@ class AWSCloudProvider(CloudProvider):
         self._security_group = security_group
         self._default_image = default_image_spec
         self._default_location = default_location_spec
+        self._default_server_type = default_server_type_spec
+        self._default_volume_size = root_volume_size
         self._ssh_user = ssh_user
         self._root_volume_size = root_volume_size
         self._root_volume_type = root_volume_type

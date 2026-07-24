@@ -66,7 +66,7 @@ from github import Auth, Github
 from github.Repository import Repository
 from github.WorkflowRun import WorkflowRun
 from github.SelfHostedActionsRunner import SelfHostedActionsRunner
-from github.GithubException import GithubException
+from github.GithubException import GithubException, UnknownObjectException
 
 from requests.exceptions import RetryError as RequestsRetryError
 
@@ -696,6 +696,23 @@ def raise_exception(exc):
 def get_job_labels(job):
     """Get job labels."""
     return list(dict.fromkeys(label.lower() for label in job.raw_data["labels"]))
+
+
+def get_stolen_runner_labels(repo, runner_id):
+    """Lowercased labels of the self-hosted runner a job is running on, or None.
+
+    Used by the standby-replenishment path: when a queued job steals a standby
+    runner, we recover that runner's labels to recreate an equivalent standby.
+    Returns None when the runner is no longer registered — a race in which it was
+    deregistered (job finished / runner cleaned up) between the jobs snapshot and
+    this lookup — so the caller skips replenishment instead of crashing on the
+    404 (UnknownObjectException).
+    """
+    try:
+        runner = repo.get_self_hosted_runner(runner_id)
+    except UnknownObjectException:
+        return None
+    return list(dict.fromkeys(label["name"].lower() for label in runner.labels))
 
 
 def job_matches_labels(job_labels, with_label):
@@ -1941,14 +1958,20 @@ def scale_up(
                                             server_name=server_name,
                                             interval=interval,
                                         ):
-                                            labels = list(
-                                                dict.fromkeys(
-                                                    label["name"].lower()
-                                                    for label in repo.get_self_hosted_runner(
-                                                        job.raw_data["runner_id"]
-                                                    ).labels
-                                                )
+                                            stolen_labels = get_stolen_runner_labels(
+                                                repo, job.raw_data["runner_id"]
                                             )
+
+                                        if stolen_labels is None:
+                                            with Action(
+                                                f"Runner for {job} is already gone; skipping standby replenishment",
+                                                level=logging.DEBUG,
+                                                server_name=server_name,
+                                                interval=interval,
+                                            ):
+                                                continue
+
+                                        labels = stolen_labels
 
                                     if max_servers_in_workflow_run is not None:
                                         if max_servers_in_workflow_run_reached(

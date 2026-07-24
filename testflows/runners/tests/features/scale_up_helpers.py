@@ -20,12 +20,14 @@ from testflows.runners.scale_up import (
     get_job_labels,
     get_runner_server_type,
     get_server_count_with_labels,
+    get_stolen_runner_labels,
     get_total_server_count,
     get_volume_name,
     job_matches_labels,
     server_setup,
     set_future_attributes,
 )
+from github.GithubException import UnknownObjectException
 from testflows.runners.constants import (
     runner_name_prefix,
     recycle_image_label,
@@ -768,6 +770,42 @@ def post_setup_base_exception_does_not_mask_setup_failure(self):
             assert raised is setup_error
         else:
             assert False, "setup failure must remain primary"
+
+
+# ---------------------------------------------------------------------------
+# get_stolen_runner_labels: standby replenishment survives a deregistered runner
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def stolen_runner_labels_returns_lowercased_deduped(self):
+    """Labels of the runner a job stole are returned lowercased and de-duplicated."""
+    repo = MagicMock()
+    runner = MagicMock()
+    runner.labels = [
+        {"name": "Self-Hosted"},
+        {"name": "type-cx22"},
+        {"name": "self-hosted"},
+    ]
+    repo.get_self_hosted_runner.return_value = runner
+    with When("the runner still exists"):
+        labels = get_stolen_runner_labels(repo, 123)
+    with Then("its labels come back lowercased with duplicates removed"):
+        assert labels == ["self-hosted", "type-cx22"], labels
+        repo.get_self_hosted_runner.assert_called_once_with(123)
+
+
+@TestScenario
+def stolen_runner_labels_none_when_runner_gone(self):
+    """A 404 (runner already deregistered) yields None instead of raising."""
+    repo = MagicMock()
+    repo.get_self_hosted_runner.side_effect = UnknownObjectException(
+        404, {"message": "Not Found"}, None
+    )
+    with When("the runner was deregistered between snapshot and lookup"):
+        labels = get_stolen_runner_labels(repo, 999)
+    with Then("None is returned so the caller can skip replenishment"):
+        assert labels is None, labels
 
 
 # ---------------------------------------------------------------------------

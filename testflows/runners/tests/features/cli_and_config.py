@@ -98,7 +98,9 @@ def hetzner_rebuild_cli_override_updates_nested_config(self):
 
 
 @TestScenario
-def service_command_uses_provider_specific_rebuild_option(self):
+def service_command_omits_provider_specific_flags(self):
+    """Provider config reaches the service through --config, not re-emitted as
+    per-provider flags — uniform across providers."""
     cfg = Config(
         github_token="token",
         github_repository="owner/repo",
@@ -108,9 +110,8 @@ def service_command_uses_provider_specific_rebuild_option(self):
     )
     with When("service command options are rendered"):
         command = command_options(cfg)
-    with Then("the new provider-specific option is rendered"):
-        assert "--hetzner-recycle-with-rebuild on" in command
-        assert "--recycle-without-rebuild" not in command
+    with Then("no --hetzner-* flags are emitted even though Hetzner is configured"):
+        assert "--hetzner" not in command, command
 
 
 @TestScenario

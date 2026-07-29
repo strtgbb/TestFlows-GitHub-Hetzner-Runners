@@ -299,7 +299,6 @@ def install(args, config: Config, server: ProviderServer = None):
                 config,
                 github_token=config.github_token,
                 github_repository=config.github_repository,
-                hetzner_token=config.hetzner_token,
             )
             + " service install -f"
         )

@@ -28,26 +28,22 @@ def command_options(
     config,
     github_token="$GITHUB_TOKEN",
     github_repository="$GITHUB_REPOSITORY",
-    hetzner_token="$HETZNER_TOKEN",
 ):
     """Build service install command options not including:
 
     --github-token
     --github-repository
-    --hetzner-token
     --ssh-key
+
+    Provider configuration (credentials, defaults) is not re-emitted as flags;
+    the service reads it from the ``--config`` file, uniformly for every
+    provider.
     """
     command = ""
     command += f" --github-token {github_token}"
     command += f" --github-repository {github_repository}"
     command += f" --config {config.config_file}" if config.config_file else ""
     command += f" --recycle " + ("on" if config.recycle else "off")
-    hetzner_config = config.providers.hetzner
-    if hetzner_config is not None:
-        command += f" --hetzner-token {hetzner_token}"
-        command += f" --hetzner-recycle-with-rebuild " + (
-            "on" if hetzner_config.recycle_with_rebuild else "off"
-        )
     command += f" --end-of-life {config.end_of_life}" if config.end_of_life else ""
     for l in config.with_label:
         command += f' --with-label "{l}"' if l else ""
@@ -58,27 +54,6 @@ def command_options(
             else ""
         )
     command += f" --workers {config.workers}"
-    if hetzner_config is not None:
-        hd = hetzner_config.defaults
-        command += (
-            f" --hetzner-default-server-type {hd.server_type}"
-            if hd.server_type
-            else ""
-        )
-        command += (
-            f" --hetzner-default-location {hd.location}" if hd.location else ""
-        )
-        command += f" --hetzner-default-image {hd.image}" if hd.image else ""
-        command += (
-            f" --hetzner-default-volume-size {hd.volume_size}"
-            if hd.volume_size
-            else ""
-        )
-        command += (
-            f" --hetzner-default-volume-location {hd.volume_location}"
-            if hd.volume_location
-            else ""
-        )
     command += f" --max-runners {config.max_runners}" if config.max_runners else ""
     command += (
         f" --max-runners-in-workflow-run {config.max_runners_in_workflow_run}"
@@ -134,11 +109,12 @@ def install(args, config):
             "TimeoutStopSec=90\n"
             f"Environment=GITHUB_TOKEN={config.github_token}\n"
             f"Environment=GITHUB_REPOSITORY={config.github_repository}\n"
-            f"Environment=HETZNER_TOKEN={config.hetzner_token}\n"
         )
-        # add all other environment variables used inside the config file
+        # Provider credentials (Hetzner, AWS, Scaleway, ...) reach the service via
+        # the config file's ${ENV} references; bake them from config_vars like any
+        # other environment variable used in the config.
         for var, value in config_vars.items():
-            if var in ["GITHUB_TOKEN", "GITHUB_REPOSITORY", "HETZNER_TOKEN"]:
+            if var in ["GITHUB_TOKEN", "GITHUB_REPOSITORY"]:
                 continue
             contents += f"Environment={var}={value}\n"
 

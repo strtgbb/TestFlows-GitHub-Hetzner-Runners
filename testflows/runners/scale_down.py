@@ -358,9 +358,10 @@ def scale_down(
     scaleup_failures: dict[str, ScaleUpFailure] = {}
     interval: int = -1
 
-    if providers is None:
-        from .providers.hetzner.provider import HetznerCloudProvider
-        providers = [HetznerCloudProvider(token=config.hetzner_token)]
+    if not providers:
+        raise ValueError(
+            "scale_down requires at least one configured cloud provider"
+        )
 
     provider_ssh_key_names: dict[str, set[str]] = {}
     for provider_name, keys in (ssh_keys or {}).items():

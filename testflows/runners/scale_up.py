@@ -1256,25 +1256,10 @@ def scale_up(
     github_token: str = config.github_token
     github_repository: str = config.github_repository
 
-    if providers is None:
-        # Direct/embedded invocation without a prebuilt provider list: fall back
-        # to a Hetzner provider seeded from its configured defaults so unlabeled
-        # jobs still resolve a default type/location/image.
-        from .providers.hetzner.provider import HetznerCloudProvider
-
-        _hdef = (
-            config.providers.hetzner.defaults if config.providers.hetzner else None
+    if not providers:
+        raise ValueError(
+            "scale_up requires at least one configured cloud provider"
         )
-        providers = [
-            HetznerCloudProvider(
-                token=config.hetzner_token,
-                default_image=_hdef.image if _hdef else None,
-                default_server_type=_hdef.server_type if _hdef else None,
-                default_location=_hdef.location if _hdef else None,
-                default_volume_size=_hdef.volume_size if _hdef else None,
-                default_volume_location=_hdef.volume_location if _hdef else None,
-            )
-        ]
 
     # Defaults for jobs that carry no type-/in-/volume- label are seeded from
     # the first configured provider (precedence order hetzner -> scaleway ->

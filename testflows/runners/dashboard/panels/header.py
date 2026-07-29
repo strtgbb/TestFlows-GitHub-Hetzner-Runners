@@ -86,7 +86,7 @@ def render(config: Config):
                         else f"{x//60} minute{'s' if x//60 > 1 else ''}"
                     )
                 ),
-                index=2,  # Default to 10 seconds instead of "Off"
+                index=5,  # Default to 60 seconds (options[5]) to limit dashboard memory growth
                 key="update_interval",
                 label_visibility="collapsed",
                 width=200,

@@ -172,6 +172,10 @@ def create_time_series_chart(
         .properties(
             width="container",
             height=height,
+            # Carry chart_id so render_chart can give st.altair_chart a stable
+            # key; without one, the run_every refresh remounts a new Vega view
+            # each tick and leaks memory in long-lived tabs.
+            usermeta={"chart_id": chart_id},
         )
         .resolve_scale(color="independent")
     )

@@ -218,7 +218,12 @@ def render_chart(
     chart = chart_func()
 
     if chart is not None:
-        st.altair_chart(chart, use_container_width=True)
+        # Stable key (from the chart's usermeta) lets Streamlit reuse one
+        # element across run_every refreshes instead of remounting the Vega
+        # view every tick — see create_time_series_chart.
+        usermeta = getattr(chart, "usermeta", None)
+        key = usermeta.get("chart_id") if isinstance(usermeta, dict) else None
+        st.altair_chart(chart, use_container_width=True, key=key)
     else:
         st.info(no_data_message)
     time.sleep(0.1)

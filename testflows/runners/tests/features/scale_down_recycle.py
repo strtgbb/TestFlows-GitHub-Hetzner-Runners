@@ -15,7 +15,6 @@ from testflows.runners.cloud_provider import ProviderServer, RetirementResult
 from testflows.runners.scale_down import (
     delete_recyclable_server,
     recycle_server,
-    should_skip_runner_absence_cleanup,
 )
 from testflows.runners.constants import (
     recycle_timestamp_label,
@@ -51,17 +50,6 @@ def _provider(stored_ssh_key_name, name="hetzner"):
     return provider
 
 
-@TestScenario
-def incomplete_inventory_blocks_only_true_absence_cleanup(self):
-    assert should_skip_runner_absence_cleanup(
-        runner_server_found=False, provider_inventory_complete=False
-    ) is True
-    assert should_skip_runner_absence_cleanup(
-        runner_server_found=True, provider_inventory_complete=False
-    ) is False
-    assert should_skip_runner_absence_cleanup(
-        runner_server_found=False, provider_inventory_complete=True
-    ) is False
 
 
 def _ssh_keys(*names, provider_name="hetzner"):

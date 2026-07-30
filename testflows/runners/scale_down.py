@@ -112,13 +112,6 @@ def _server_age_components(server: ProviderServer) -> tuple[int, int, int, int]:
     return days, hours, minutes, seconds
 
 
-def should_skip_runner_absence_cleanup(
-    *, runner_server_found: bool, provider_inventory_complete: bool
-) -> bool:
-    """Skip deregistration only for not-found runners with partial inventory."""
-    return (not runner_server_found) and (not provider_inventory_complete)
-
-
 def delete_recyclable_server(
     server_name,
     recyclable_servers: list[tuple[ProviderServer, CloudProvider]],
@@ -406,7 +399,6 @@ def scale_down(
                 managed_runner_names=managed_runner_names,
             )
             cycle_providers = list(provider_selection.providers)
-            provider_inventory_complete = provider_selection.inventory_complete
 
             with Action(
                 "Getting list of servers", level=logging.DEBUG, interval=interval
@@ -720,7 +712,6 @@ def scale_down(
                             age_intervals = current_interval - unused_runner.time
                             runner_server: ProviderServer | None = None
                             runner_server_provider: CloudProvider | None = None
-                            runner_server_found = False
                             with Action(
                                 "Scale-down decision for unused runner",
                                 level=logging.DEBUG,
@@ -749,7 +740,6 @@ def scale_down(
                                     ):
                                         runner_server = _ps
                                         runner_server_provider = _p
-                                        runner_server_found = True
                                         break
 
                             with Action(
@@ -800,26 +790,10 @@ def scale_down(
                                             location=runner_server.location,
                                             reason="unused",
                                         )
-                                runner_server = None
-
-                            if (
-                                runner_server is None
-                                and should_skip_runner_absence_cleanup(
-                                    runner_server_found=runner_server_found,
-                                    provider_inventory_complete=provider_inventory_complete,
-                                )
-                            ):
-                                continue
-
-                            if runner_server is None:
-                                with Action(
-                                    f"Removing self-hosted runner {runner_name}",
-                                    ignore_fail=True,
-                                    server_name=get_runner_server_name(runner_name),
-                                    interval=interval,
-                                ):
-                                    repo.remove_self_hosted_runner(unused_runner.runner)
-                                    unused_runners.pop(runner_name)
+                                unused_runners.pop(runner_name, None)
+                            # Not found: the server isn't ours to manage (dead, or
+                            # another controller's). Leave the runner — GitHub owns
+                            # runner lifecycle (ephemeral deregister / offline cleanup).
 
             with Action(
                 "Checking which recyclable servers need to be deleted",

@@ -44,6 +44,7 @@ def mock_scaleway_sdk(self):
         class ServerAction:
             POWERON = "poweron"
             POWEROFF = "poweroff"
+            STOP_IN_PLACE = "stop_in_place"
             TERMINATE = "terminate"
 
         instance_mod.ServerAction = ServerAction

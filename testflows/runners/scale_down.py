@@ -544,8 +544,15 @@ def scale_down(
                 level=logging.DEBUG,
                 interval=interval,
             ):
+                # Map runner name -> its server via provider naming so unused-runner
+                # metrics carry real type/location, not values parsed from the name.
+                runner_servers = {}
+                for ps in servers:
+                    _p = server_providers.get(ps.name)
+                    if _p is not None:
+                        runner_servers[_p.build_runner_name(ps)] = ps
                 metrics.update_zombie_servers(zombie_servers)
-                metrics.update_unused_runners(unused_runners)
+                metrics.update_unused_runners(unused_runners, runner_servers)
                 metrics.update_recycled_servers(servers)
 
             with Action(
@@ -731,11 +738,15 @@ def scale_down(
                                 server_name=get_runner_server_name(runner_name),
                                 interval=interval,
                             ):
-                                for _p in cycle_providers:
-                                    _ps = _p.get_server(
-                                        get_runner_server_name(runner_name)
-                                    )
-                                    if _ps is not None:
+                                # Match by the provider's own build_runner_name over
+                                # already-listed servers; reverse-parsing the runner
+                                # name broke for standby-/recycle- names.
+                                for _ps in servers:
+                                    _p = server_providers.get(_ps.name)
+                                    if (
+                                        _p is not None
+                                        and _p.build_runner_name(_ps) == runner_name
+                                    ):
                                         runner_server = _ps
                                         runner_server_provider = _p
                                         runner_server_found = True
@@ -749,10 +760,13 @@ def scale_down(
                             ) as action:
                                 provider_lookup_summary = []
                                 for _p in cycle_providers:
-                                    lookup_name = get_runner_server_name(runner_name)
-                                    matched = _p.get_server(lookup_name) is not None
+                                    _matched = any(
+                                        server_providers.get(s.name) is _p
+                                        and _p.build_runner_name(s) == runner_name
+                                        for s in servers
+                                    )
                                     provider_lookup_summary.append(
-                                        f"{_p.name}:{'hit' if matched else 'miss'}"
+                                        f"{_p.name}:{'hit' if _matched else 'miss'}"
                                     )
                                 action.note(
                                     f"runner_server_found={runner_server is not None}, "

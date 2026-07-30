@@ -23,7 +23,6 @@ from github.WorkflowJob import WorkflowJob
 from prometheus_client import Counter, Gauge, Histogram, Info
 from .constants import standby_server_name_prefix
 from .constants import recycle_server_name_prefix
-from .server import get_runner_server_name
 
 # Server metrics
 SERVERS_TOTAL = Gauge(
@@ -1186,12 +1185,16 @@ def update_zombie_servers(zombie_servers_dict):
         )
 
 
-def update_unused_runners(unused_runners_dict):
+def update_unused_runners(unused_runners_dict, runner_servers=None):
     """Update unused runner metrics.
 
     Args:
         unused_runners_dict: Dictionary of unused runners with runner objects
+        runner_servers: Optional {runner_name: ProviderServer} for real server
+            type/location/id; falls back to "unknown" when a runner is absent.
     """
+    runner_servers = runner_servers or {}
+
     # Clear existing unused runner metrics
     UNUSED_RUNNERS_TOTAL._metrics.clear()
     UNUSED_RUNNER_INFO._metrics.clear()
@@ -1204,41 +1207,27 @@ def update_unused_runners(unused_runners_dict):
     for runner_name, unused_runner in unused_runners_dict.items():
         runner = unused_runner.runner
 
-        # Try to get server type and location from runner name
-        # This assumes runner names follow the pattern: server_name-runner_id
-        server_name = get_runner_server_name(runner_name)
-        server_type = "unknown"
-        location = "unknown"
-
-        # Extract server type and location from server name if possible
-        # This is a simplified approach - in practice, you might need to look up the actual server
-        if server_name and "-" in server_name:
-            parts = server_name.split("-")
-            if len(parts) >= 3:
-                # Assuming format: prefix-type-location-...
-                server_type = parts[1] if len(parts) > 1 else "unknown"
-                location = parts[2] if len(parts) > 2 else "unknown"
+        # Real server attributes from the resolved server (provider-owned
+        # naming), not parsed from the runner name.
+        server = runner_servers.get(runner_name)
+        server_type = server.server_type if server is not None else "unknown"
+        location = server.location if server is not None else "unknown"
+        server_id = str(server.id) if server is not None else "unknown"
+        server_name = server.name if server is not None else "unknown"
+        status = server.status if server is not None else "unknown"
+        created = str(server.created) if server is not None and server.created else ""
 
         key = (server_type, location)
-
-        # Count by type and location
         unused_counts[key] = unused_counts.get(key, 0) + 1
         total_unused_runners += 1
 
-        # Track unused runner age
         unused_age = current_time - unused_runner.time
-        # Extract server name from runner name (this is the actual server name)
-        server_name = get_runner_server_name(runner_name)
-        # For now we don't have direct server object access, but server_name is correct
-        server_id = "unknown"
-        status = "unknown"
-        created = ""
 
         UNUSED_RUNNER_INFO.labels(
             runner_id=str(runner.id),
             runner_name=runner.name,
             server_id=server_id,
-            server_name=server_name or "unknown",
+            server_name=server_name,
             server_type=server_type,
             location=location,
             status=status,

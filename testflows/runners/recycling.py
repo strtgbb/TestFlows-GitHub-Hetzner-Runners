@@ -1,8 +1,11 @@
 """Shared mechanics used by providers with a stopped-server recycle pool."""
 
+import logging
 import time
 import uuid
 from datetime import datetime, timezone
+
+logger = logging.getLogger(__name__)
 
 from .cloud_provider import (
     AcquiredServer,
@@ -33,41 +36,68 @@ def recyclable_server_matches(
     irrelevant). The provider decides this and passes it in; it is not part of
     the public provider interface.
     """
+    # Log the first failing criterion per candidate at DEBUG so a pool that is
+    # never reused (every job falls through to create) can be diagnosed without
+    # guessing which field mismatched. Enable debug logging to see these.
+    def reject(reason):
+        logger.debug("recyclable %s rejected for %s: %s", server.name, request.name, reason)
+        return False
+
     if not provider.is_recycled_server(server):
-        return False
+        return reject("not a recycled server (name prefix)")
     if server.status != CloudProvider.STATUS_OFF:
-        return False
+        return reject(f"status {server.status!r} != OFF")
     if server.server_type != request.server_type:
-        return False
+        return reject(
+            f"server_type {server.server_type!r} != requested {request.server_type!r}"
+        )
     if request.min_disk:
         # Reuse only when the pooled server's disk is known to satisfy the
         # requested minimum. Unknown size (None) is not known-safe, so the job
         # falls through to a fresh, correctly-sized create.
         if server.root_disk_size is None or server.root_disk_size < request.min_disk:
-            return False
+            return reject(
+                f"root_disk_size {server.root_disk_size!r} < min_disk {request.min_disk!r}"
+            )
     if request.location and server.location != request.location:
-        return False
+        return reject(f"location {server.location!r} != requested {request.location!r}")
     if bool(server.public_ipv4) != request.enable_ipv4:
-        return False
+        return reject(
+            f"ipv4 present={bool(server.public_ipv4)} != requested {request.enable_ipv4}"
+        )
     if bool(server.public_ipv6) != request.enable_ipv6:
-        return False
+        return reject(
+            f"ipv6 present={bool(server.public_ipv6)} != requested {request.enable_ipv6}"
+        )
     if not provider.has_matching_ssh_key(server, set(request.ssh_key_names)):
-        return False
+        return reject(
+            f"ssh key {provider.get_server_ssh_key_name(server)!r} "
+            f"not in requested {set(request.ssh_key_names)!r}"
+        )
     if require_image_match:
-        if provider.get_server_tag(server, recycle_image_label) != request.labels.get(
-            recycle_image_label
-        ):
-            return False
+        have = provider.get_server_tag(server, recycle_image_label)
+        want = request.labels.get(recycle_image_label)
+        if have != want:
+            return reject(f"recycle image tag {have!r} != requested {want!r}")
 
     if len(server.volumes) != len(request.volume_names):
-        return False
-    return all(
+        return reject(
+            f"volume count {len(server.volumes)} != requested {len(request.volume_names)}"
+        )
+    volumes_ok = all(
         any(
             volume.name == name or volume.name.startswith(f"{name}-")
             for volume in server.volumes
         )
         for name in request.volume_names
     )
+    if not volumes_ok:
+        return reject(
+            f"volumes {[v.name for v in server.volumes]!r} "
+            f"do not cover requested {set(request.volume_names)!r}"
+        )
+    logger.debug("recyclable %s matched %s", server.name, request.name)
+    return True
 
 
 def activate_recycled_server(

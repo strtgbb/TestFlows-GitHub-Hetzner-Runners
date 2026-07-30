@@ -526,8 +526,11 @@ class ScalewayCloudProvider(CloudProvider):
     def power_off_server(self, server: ProviderServer) -> None:
         from scaleway.instance.v1 import ServerAction
 
+        # stop_in_place, not poweroff: poweroff releases the compute reservation
+        # (UI "archived") and ends the paid hour, which defeats recycling. Stop
+        # in place keeps the instance on its hypervisor for a fast, in-hour reuse.
         self._instance.server_action(
-            server_id=server.id, zone=server.location, action=ServerAction.POWEROFF
+            server_id=server.id, zone=server.location, action=ServerAction.STOP_IN_PLACE
         )
 
     def power_on_server(

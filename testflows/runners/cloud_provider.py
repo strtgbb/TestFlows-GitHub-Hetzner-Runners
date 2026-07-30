@@ -502,10 +502,10 @@ class CloudProvider(ABC):
     def build_runner_name(self, server: ProviderServer) -> str:
         """Build GitHub runner registration name for a server.
 
-        Default naming preserves legacy behavior: <server-name>-<type>-<location>.
-        Providers can override to enforce provider-specific stable identities.
+        The server name already encodes {run}-{job}-{type}; use it verbatim.
+        Providers can override for a provider-specific stable identity.
         """
-        return f"{server.name}-{server.server_type}-{server.location}"
+        return server.name
 
     # ---------------------------------------------------------------------------
     # Runner label helpers

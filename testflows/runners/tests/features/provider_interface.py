@@ -5,11 +5,13 @@ a scenario that takes a provider plus a few provider-specific test fixtures
 (labeled_server, sample_labels, active_marker_key, sample_server_type) so
 the SAME suite can be re-run against each provider implementation.
 """
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from testflows.core import *
 
 from testflows.runners.cloud_provider import CloudProvider, ProviderServer, ProviderServerType
+from testflows.runners.utils import get_runner_server_type
 from testflows.runners.tests.steps.aws import aws_provider
 from testflows.runners.tests.steps.hetzner import hetzner_provider
 
@@ -118,6 +120,29 @@ def get_server_arch_returns_known_value(self, provider, sample_server_type):
     assert arch in ("x64", "arm64"), f"unexpected arch {arch!r}"
 
 
+@TestScenario
+def build_runner_name_is_server_name(self, provider, sample_server_type):
+    """A cloud runner name is the server name verbatim, so it round-trips
+    through get_runner_server_type and matches back to its own server on
+    scale-down. Location must not leak into the name."""
+    stype = sample_server_type.name
+    server = ProviderServer(
+        id="i-1",
+        name=f"github-runner-30-9-{stype}",
+        status="running",
+        public_ipv4="1.2.3.4",
+        private_ipv4=None,
+        labels={},
+        server_type=stype,
+        location="a-location",
+        created=datetime.now(timezone.utc),
+    )
+    name = provider.build_runner_name(server)
+    assert name == server.name, name
+    assert "a-location" not in name, name
+    assert get_runner_server_type(name) == stype, get_runner_server_type(name)
+
+
 _SHARED_SCENARIOS = [
     name_is_non_empty_string,
     status_constants_defined,
@@ -134,6 +159,7 @@ _SHARED_SCENARIOS = [
     build_server_labels_values_roundtrip,
     validate_labels_accepts_valid,
     get_server_arch_returns_known_value,
+    build_runner_name_is_server_name,
 ]
 
 

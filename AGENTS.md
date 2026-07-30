@@ -135,3 +135,4 @@ Backwards compatibility with the existing flat `hetzner_token` config should be 
 - The `Action` context manager (`actions.py`) should wrap any significant operation for structured logging. Use it in provider implementations.
 - Do not add error handling for conditions that cannot occur. Validate only at system boundaries.
 - Do not add speculative abstractions. Implement what the plan requires, no more.
+- Comments explain *why*, not *what*, and never reference repo history (commit hashes, PR numbers, "changed in X"). That context belongs in git; in a comment it just rots.

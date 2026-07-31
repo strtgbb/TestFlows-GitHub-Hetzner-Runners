@@ -1753,24 +1753,34 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
         # providers.<name>.defaults; there is no global config.default_* and no
         # write-back. A provider with a given default unset (None) has nothing
         # to validate for that slot (specs resolve per-job from labels).
+        failed_providers = []
         for p in providers:
-            with Action(f"Checking if default image exists ({p.name})"):
-                if p.default_image is not None:
-                    p._default_image = p.get_image(p.default_image)
+            try:
+                with Action(f"Checking if default image exists ({p.name})"):
+                    if p.default_image is not None:
+                        p._default_image = p.get_image(p.default_image)
 
-            with Action(f"Checking if default location exists ({p.name})"):
-                if p.default_location is not None:
-                    p._default_location = p.get_location(p.default_location)
+                with Action(f"Checking if default location exists ({p.name})"):
+                    if p.default_location is not None:
+                        p._default_location = p.get_location(p.default_location)
 
-            if p.supports_volumes and p.default_volume_location is not None:
-                with Action(f"Checking if default volume location exists ({p.name})"):
-                    p._default_volume_location = p.get_location(
-                        p.default_volume_location, required=True
-                    )
+                if p.supports_volumes and p.default_volume_location is not None:
+                    with Action(f"Checking if default volume location exists ({p.name})"):
+                        p._default_volume_location = p.get_location(
+                            p.default_volume_location, required=True
+                        )
 
-            if p.default_server_type is not None:
-                with Action(f"Checking if default server type exists ({p.name})"):
-                    p._default_server_type = p.get_server_type(p.default_server_type)
+                if p.default_server_type is not None:
+                    with Action(f"Checking if default server type exists ({p.name})"):
+                        p._default_server_type = p.get_server_type(p.default_server_type)
+            except Exception as e:
+                # One provider's defaults failing (e.g. a missing IAM permission)
+                # must not take down the others; disable it and carry on.
+                logger.error(
+                    f"Disabling provider {p.name}: its defaults did not validate: {e}"
+                )
+                failed_providers.append(p)
+                continue
 
             if not config.delete_random:
                 with Action(f"Getting server prices ({p.name})"):
@@ -1789,6 +1799,14 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
                         }
                     except Exception as e:
                         logger.error(f"Could not fetch prices for {p.name}: {e}")
+
+        if failed_providers:
+            providers = [p for p in providers if p not in failed_providers]
+            if not providers:
+                raise ValueError(
+                    "no usable providers: every configured provider failed "
+                    "defaults validation (see errors above)"
+                )
 
         for p in providers:
             with Action(f"Checking if SSH key exists ({p.name})"):

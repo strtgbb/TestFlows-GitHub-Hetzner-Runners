@@ -112,6 +112,22 @@ def _server_age_components(server: ProviderServer) -> tuple[int, int, int, int]:
     return days, hours, minutes, seconds
 
 
+def unused_runner_action(
+    runner_server: ProviderServer | None, runner_status: str
+) -> str:
+    """Decide what to do with an aged-out unused runner.
+
+    found -> "recycle" its server; not found + offline -> "deregister" the dead
+    runner; not found + online -> "leave" it (idle/waiting, or another
+    controller's).
+    """
+    if runner_server is not None:
+        return "recycle"
+    if runner_status == "offline":
+        return "deregister"
+    return "leave"
+
+
 def delete_recyclable_server(
     server_name,
     recyclable_servers: list[tuple[ProviderServer, CloudProvider]],
@@ -772,7 +788,10 @@ def scale_down(
                                     f"labels:{','.join(label['name'].lower() for label in unused_runner.runner.labels)}"
                                 )
 
-                            if runner_server is not None:
+                            decision = unused_runner_action(
+                                runner_server, unused_runner.runner.status
+                            )
+                            if decision == "recycle":
                                 result = recycle_server(
                                     reason="unused_runner",
                                     server=runner_server,
@@ -791,9 +810,20 @@ def scale_down(
                                             reason="unused",
                                         )
                                 unused_runners.pop(runner_name, None)
-                            # Not found: the server isn't ours to manage (dead, or
-                            # another controller's). Leave the runner — GitHub owns
-                            # runner lifecycle (ephemeral deregister / offline cleanup).
+                            elif decision == "deregister":
+                                # Dead: ephemeral runner killed before completing
+                                # never self-deregisters, and GitHub's offline
+                                # cleanup takes weeks. Online runners are left alone.
+                                with Action(
+                                    f"Removing offline runner {runner_name} with no server",
+                                    ignore_fail=True,
+                                    server_name=get_runner_server_name(runner_name),
+                                    interval=interval,
+                                ):
+                                    repo.remove_self_hosted_runner(
+                                        unused_runner.runner
+                                    )
+                                    unused_runners.pop(runner_name, None)
 
             with Action(
                 "Checking which recyclable servers need to be deleted",

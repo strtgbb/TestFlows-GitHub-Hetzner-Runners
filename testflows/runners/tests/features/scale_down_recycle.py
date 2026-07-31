@@ -15,6 +15,7 @@ from testflows.runners.cloud_provider import ProviderServer, RetirementResult
 from testflows.runners.scale_down import (
     delete_recyclable_server,
     recycle_server,
+    unused_runner_action,
 )
 from testflows.runners.constants import (
     recycle_timestamp_label,
@@ -157,6 +158,34 @@ def managed_retirement_is_not_logged_as_unmanaged(self):
     with Then("no unmanaged diagnostic is logged"):
         messages = " ".join(str(c.args[0]) for c in action.call_args_list if c.args)
         assert "unmanaged" not in messages, messages
+
+
+@TestScenario
+def found_server_is_recycled(self):
+    """A resolved server takes the recycle path regardless of runner status."""
+    server = _server("github-runner-1-0-cx22")
+    for status in ("online", "offline"):
+        assert unused_runner_action(server, status) == "recycle", status
+
+
+@TestScenario
+def offline_runner_without_server_is_deregistered(self):
+    """A dead (offline) runner whose server is gone is deregistered.
+
+    Regression guard: reaped ephemeral runners never self-deregister and
+    GitHub's offline cleanup takes weeks, so scale_down must remove them.
+    """
+    assert unused_runner_action(None, "offline") == "deregister"
+
+
+@TestScenario
+def online_runner_without_server_is_left_alone(self):
+    """An online runner with no server is left alone, never deregistered.
+
+    Regression guard: this is the case that broke fleets — an idle/waiting
+    (or another controller's) runner must not be deregistered on a lookup miss.
+    """
+    assert unused_runner_action(None, "online") == "leave"
 
 
 @TestScenario

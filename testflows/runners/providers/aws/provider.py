@@ -486,14 +486,44 @@ class AWSCloudProvider(CloudProvider):
             return response["AvailabilityZones"][0]["ZoneName"]
         raise LocationError(f"AWS availability zone '{name}' not found")
 
+    # Canonical's AWS account id; owns the official Ubuntu AMIs.
+    _CANONICAL_OWNER_ID = "099720109477"
+
+    def _resolve_canonical_ubuntu(self, version: str, arch: str = "amd64") -> str:
+        """Newest Canonical Ubuntu <version> AMI in this region, via
+        DescribeImages (needs ec2:DescribeImages, not ssm:GetParameter)."""
+        from botocore.exceptions import ClientError
+
+        name = f"ubuntu/images/hvm-ssd*/ubuntu-*-{version}-{arch}-server-*"
+        try:
+            response = self._ec2.describe_images(
+                Owners=[self._CANONICAL_OWNER_ID],
+                Filters=[
+                    {"Name": "name", "Values": [name]},
+                    {"Name": "state", "Values": ["available"]},
+                ],
+            )
+        except ClientError as exc:
+            raise ImageError(
+                f"failed to resolve Ubuntu {version} ({arch}) AMI: {exc}"
+            ) from exc
+        images = response.get("Images") or []
+        if not images:
+            raise ImageError(
+                f"no Canonical Ubuntu {version} {arch} AMI available in this region"
+            )
+        return max(images, key=lambda i: i["CreationDate"])["ImageId"]
+
     def get_image(self, image_spec) -> str:
         """Resolve and validate an AWS image spec. Returns the AMI ID string.
 
         Accepted formats:
 
         - ``"ami-{id}"`` — direct AMI ID; validated against EC2.
+        - ``"ubuntu-{version}"`` — newest Canonical Ubuntu release (e.g.
+          ``ubuntu-22.04``, amd64), resolved via EC2 DescribeImages.
         - ``"resolve:ssm:{path}"`` — SSM Parameter Store path that resolves to
-          an AMI ID (e.g. ``resolve:ssm:/aws/service/canonical/ubuntu/...``).
+          an AMI ID (needs ``ssm:GetParameter``).
         """
         from botocore.exceptions import ClientError
 
@@ -514,10 +544,12 @@ class AWSCloudProvider(CloudProvider):
                 ) from exc
         elif spec.startswith("ami-"):
             ami_id = spec
+        elif spec.startswith("ubuntu-"):
+            ami_id = self._resolve_canonical_ubuntu(spec[len("ubuntu-"):])
         else:
             raise ImageSpecFormatError(
-                f"unsupported AWS image spec '{spec}'; "
-                "expected 'ami-{{id}}' or 'resolve:ssm:{{path}}'"
+                f"unsupported AWS image spec '{spec}'; expected 'ami-{{id}}', "
+                "'ubuntu-{{version}}' (e.g. ubuntu-22.04), or 'resolve:ssm:{{path}}'"
             )
 
         # Validate that the AMI exists and is available in this region.

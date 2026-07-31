@@ -5,13 +5,16 @@ from argparse import ArgumentTypeError
 
 
 def image_type(v):
-    """AWS AMI ID or SSM parameter path. Example: ami-0abcdef1234567890 or resolve:ssm:/path"""
+    """AWS image spec: AMI ID, Ubuntu release, or SSM path.
+    Examples: ami-0abcdef1234567890, ubuntu-22.04, resolve:ssm:/path"""
     if v.startswith("resolve:ssm:"):
+        return v
+    if re.match(r"^ubuntu-\d+\.\d+$", v):
         return v
     if not v.startswith("ami-") or len(v) != 21:
         raise ArgumentTypeError(
-            f"invalid AWS image '{v}': must be an AMI ID (ami-xxxxxxxxxxxxxxxxx) "
-            f"or an SSM parameter path (resolve:ssm:/path)"
+            f"invalid AWS image '{v}': must be an AMI ID (ami-xxxxxxxxxxxxxxxxx), "
+            f"an Ubuntu release (ubuntu-22.04), or an SSM path (resolve:ssm:/path)"
         )
     return v
 
@@ -132,9 +135,9 @@ def add_arguments(parser):
 
     aws_group.add_argument(
         "--aws-default-image",
-        metavar="ami-id",
+        metavar="image",
         type=image_type,
-        help="Default AWS AMI ID or SSM parameter path (resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id)",
+        help="Default AWS image: AMI ID, Ubuntu release (ubuntu-22.04), or SSM path (resolve:ssm:/path)",
     )
 
     aws_group.add_argument(

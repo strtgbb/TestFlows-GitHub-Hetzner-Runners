@@ -123,7 +123,7 @@ class aws_provider:
     recycle_grace_period: int = None
     defaults: provider_defaults = dataclasses.field(
         default_factory=lambda: provider_defaults(
-            image="resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id",
+            image="ubuntu-22.04",
             server_type="t3.medium",
             location="us-east-1a",
             volume_size=20,

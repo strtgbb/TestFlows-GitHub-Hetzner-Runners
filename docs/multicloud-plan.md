@@ -65,7 +65,7 @@ providers:
     secret_access_key: ${AWS_SECRET_ACCESS_KEY}
     security_group: sg-...
     subnets: [subnet-a, subnet-b]   # region derived from the AZ
-    defaults: { image: "resolve:ssm:/aws/.../ami-id", server_type: t3.medium, location: us-east-1a, volume_size: 20, volume_type: gp3 }
+    defaults: { image: ubuntu-22.04, server_type: t3.medium, location: us-east-1a, volume_size: 20, volume_type: gp3 }
 ```
 
 ### Tag/label abstraction
@@ -154,7 +154,7 @@ hygiene.)
 - [x] Implement `AWSCloudProvider` in `providers/aws/provider.py`
   - EC2 instance lifecycle (create/delete/get/list)
   - Tag-based server identification
-  - AMI image resolution (`ami-{id}` or `resolve:ssm:{path}` label format)
+  - AMI image resolution (`ami-{id}`, `ubuntu-{version}`, or `resolve:ssm:{path}`)
   - EC2 key pair management
   - No recycling (`supports_recycling = False`)
   - Volumes: `NotImplementedError` stubs

@@ -174,9 +174,11 @@
                                     "type": "object",
                                     "properties": {
                                         "image": {
-                                            "description": "Default AMI ID or SSM parameter path",
+                                            "description": "Default AWS image: AMI ID, Ubuntu release (ubuntu-22.04), or SSM path",
                                             "type": "string",
                                             "examples": [
+                                                "ubuntu-22.04",
+                                                "ami-0abcdef1234567890",
                                                 "resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
                                             ]
                                         },

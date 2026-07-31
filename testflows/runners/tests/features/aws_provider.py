@@ -15,7 +15,13 @@ from testflows.runners.providers.aws.utils import (
     _instance_to_provider,
     _ARM64_RE,
 )
-from testflows.runners.errors import ServerTypeError, ImageError, LocationError
+from testflows.runners.errors import (
+    ServerTypeError,
+    ImageError,
+    ImageSpecFormatError,
+    LocationError,
+)
+from testflows.runners.providers.aws.args import image_type
 from testflows.runners.tests.steps.aws import mock_ec2, aws_provider
 
 
@@ -280,6 +286,66 @@ def default_image_returned_when_set(self):
         p = AWSCloudProvider("key", "secret", "us-east-1", default_image_spec="ami-abc123")
     with Then("default_image is 'ami-abc123'"):
         assert p.default_image == "ami-abc123"
+
+
+@TestScenario
+def get_image_resolves_ubuntu_via_describe_images(self):
+    """'ubuntu-<version>' resolves to the newest Canonical AMI via
+    DescribeImages — no SSM permission required."""
+    with Given("an AWS provider whose DescribeImages returns two Canonical AMIs"):
+        ec2, provider = aws_provider()
+        ec2.describe_images.return_value = {
+            "Images": [
+                {"ImageId": "ami-old", "CreationDate": "2023-01-01T00:00:00.000Z"},
+                {"ImageId": "ami-new", "CreationDate": "2024-06-01T00:00:00.000Z"},
+            ]
+        }
+    with When("I resolve 'ubuntu-22.04'"):
+        ami = provider.get_image("ubuntu-22.04")
+    with Then("the newest AMI is returned"):
+        assert ami == "ami-new", ami
+    with And("resolution queried Canonical's owner and a 22.04 name filter"):
+        first = ec2.describe_images.call_args_list[0].kwargs
+        assert first["Owners"] == ["099720109477"], first
+        name_filter = next(f for f in first["Filters"] if f["Name"] == "name")
+        assert "22.04" in name_filter["Values"][0], name_filter
+
+
+@TestScenario
+def get_image_ubuntu_no_match_raises(self):
+    """No matching Canonical AMI is an actionable ImageError, not a silent None."""
+    with Given("an AWS provider whose DescribeImages returns nothing"):
+        ec2, provider = aws_provider()
+        ec2.describe_images.return_value = {"Images": []}
+    with Then("resolving an Ubuntu release raises ImageError"):
+        try:
+            provider.get_image("ubuntu-99.99")
+            assert False, "expected ImageError"
+        except ImageError:
+            pass
+
+
+@TestScenario
+def get_image_unknown_spec_raises_format_error(self):
+    """An unrecognized spec is a format error so multi-cloud specs fall through."""
+    with Given("an AWS provider"):
+        ec2, provider = aws_provider()
+    with Then("an unknown spec raises ImageSpecFormatError"):
+        try:
+            provider.get_image("ubuntu_jammy")
+            assert False, "expected ImageSpecFormatError"
+        except ImageSpecFormatError:
+            pass
+
+
+@TestScenario
+def image_type_arg_accepts_ubuntu_release(self):
+    """The CLI/config validator accepts the legible Ubuntu form."""
+    with Then("ubuntu-22.04 validates"):
+        assert image_type("ubuntu-22.04") == "ubuntu-22.04"
+    with And("ami- and resolve:ssm: still validate"):
+        assert image_type("ami-0abcdef1234567890") == "ami-0abcdef1234567890"
+        assert image_type("resolve:ssm:/path") == "resolve:ssm:/path"
 
 
 # ---------------------------------------------------------------------------
@@ -970,9 +1036,9 @@ def get_image_resolves_ssm_path(self):
 def get_image_raises_for_unsupported_spec(self):
     with Given("an AWS provider"):
         _, provider = aws_provider()
-    with When("I call get_image with a non-AMI / non-SSM spec"):
+    with When("I call get_image with an unrecognized spec"):
         try:
-            provider.get_image("ubuntu-22.04")
+            provider.get_image("debian-12")
             raised = False
         except ImageError:
             raised = True

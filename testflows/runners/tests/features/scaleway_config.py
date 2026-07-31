@@ -524,6 +524,9 @@ def create_server_root_disk_size_sizes_boot_volume(self):
     with Then("the boot volume is requested at 200 GiB (above the snapshot floor)"):
         ckw = provider._block.create_volume.call_args.kwargs
         assert ckw["from_snapshot"].size == 200 * 1024**3, ckw["from_snapshot"].size
+    with And("the boot size is recorded as a server tag for recycle matching"):
+        skw = provider._instance._create_server.call_args.kwargs
+        assert f"{utils._ROOT_DISK_TAG}=200" in skw["tags"], skw["tags"]
 
 
 @TestScenario
@@ -602,6 +605,23 @@ def server_to_provider_root_disk_none_without_volumes(self):
     with Then("root_disk_size is None"):
         ps = utils._server_to_provider(srv)
         assert ps.root_disk_size is None, ps.root_disk_size
+
+
+@TestScenario
+def server_to_provider_reads_root_disk_from_tag(self):
+    """An SBS boot volume reports no size in the Instance API listing, so the
+    create-time tag is the source; this is the recycle disk-safety gate's input."""
+    with Given("a stopped SBS server: boot volume has no size but carries the tag"):
+        srv = SimpleNamespace(
+            id="i", name="github-runner-recycle-abc", state="stopped",
+            zone="fr-par-1", commercial_type="basic2-a8c-16g",
+            public_ips=[], public_ip=None, private_ip=None, creation_date=None,
+            tags=[f"{utils._ROOT_DISK_TAG}=140"],
+            volumes={"0": SimpleNamespace(boot=True, size=None)},
+        )
+    with Then("root_disk_size comes from the tag, not the empty volume size"):
+        ps = utils._server_to_provider(srv)
+        assert ps.root_disk_size == 140, ps.root_disk_size
 
 
 def _local_type(name="dev1.s", l_ssd_max=50 * 1024**3):

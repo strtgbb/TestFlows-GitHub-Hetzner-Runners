@@ -30,6 +30,10 @@ from ...cloud_provider import CloudProvider, ProviderServer
 _RUNNER_TAG = "github-runner"
 _RUNNER_LABEL_TAG_PREFIX = "github-runner-label"
 _SSH_KEY_TAG = "github-runner-ssh-key"
+# Boot disk size (GB) recorded at create time. The SBS boot volume's size is
+# not returned by the Instance API listing (it lives in the Block API), so the
+# recycle disk-safety gate reads it back from this tag instead.
+_ROOT_DISK_TAG = "github-runner-root-disk-gb"
 # Applied to boot-on-block (SBS) volumes at create time so orphaned volumes
 # left detached after an instance is terminated can be found and reaped.
 _RUNNER_VOLUME_TAG = "github-runner-volume=active"
@@ -166,22 +170,31 @@ def _server_to_provider(server, ssh_user: str = "root") -> ProviderServer:
 
     state = state_key(getattr(server, "state", ""))
     zone = str(getattr(server, "zone", "") or "")
+    tags = tags_to_dict(getattr(server, "tags", None))
 
-    # Root/boot disk size (GB) from the SDK server's volumes mapping: prefer the
-    # volume flagged boot, else index "0". Sizes are bytes. None if unknown.
+    # Root/boot disk size (GB). Prefer the tag recorded at create: SBS boot
+    # volumes don't report their size in the Instance API listing. Fall back to
+    # the volumes mapping (local boot, and servers created before the tag).
     root_disk_size = None
-    server_volumes = getattr(server, "volumes", None) or {}
-    if isinstance(server_volumes, dict) and server_volumes:
-        boot_vol = None
-        for vol in server_volumes.values():
-            if getattr(vol, "boot", False):
-                boot_vol = vol
-                break
-        if boot_vol is None:
-            boot_vol = server_volumes.get("0")
-        boot_size = getattr(boot_vol, "size", None) if boot_vol is not None else None
-        if isinstance(boot_size, (int, float)) and boot_size:
-            root_disk_size = int(boot_size // (1024**3))
+    tagged = tags.get(_ROOT_DISK_TAG)
+    if tagged is not None:
+        try:
+            root_disk_size = int(tagged)
+        except (TypeError, ValueError):
+            root_disk_size = None
+    if root_disk_size is None:
+        server_volumes = getattr(server, "volumes", None) or {}
+        if isinstance(server_volumes, dict) and server_volumes:
+            boot_vol = None
+            for vol in server_volumes.values():
+                if getattr(vol, "boot", False):
+                    boot_vol = vol
+                    break
+            if boot_vol is None:
+                boot_vol = server_volumes.get("0")
+            boot_size = getattr(boot_vol, "size", None) if boot_vol is not None else None
+            if isinstance(boot_size, (int, float)) and boot_size:
+                root_disk_size = int(boot_size // (1024**3))
 
     return ProviderServer(
         id=server.id,
@@ -190,7 +203,7 @@ def _server_to_provider(server, ssh_user: str = "root") -> ProviderServer:
         public_ipv4=public_ipv4,
         private_ipv4=private_ipv4,
         public_ipv6=public_ipv6,
-        labels=tags_to_dict(getattr(server, "tags", None)),
+        labels=tags,
         server_type=canonical_type(getattr(server, "commercial_type", "") or ""),
         location=zone,
         created=getattr(server, "creation_date", None) or datetime.now(timezone.utc),

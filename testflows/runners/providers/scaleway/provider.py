@@ -39,6 +39,7 @@ from .utils import (
     _RUNNER_TAG,
     _RUNNER_LABEL_TAG_PREFIX,
     _SSH_KEY_TAG,
+    _ROOT_DISK_TAG,
     _RUNNER_VOLUME_TAG,
     _ACTIVE_STATES,
     canonical_type,
@@ -233,13 +234,18 @@ class ScalewayCloudProvider(CloudProvider):
             )
             # Volume-first create: attach the tagged SBS boot volume by id and
             # omit ``image`` (the volume already carries the image contents).
+            # Record the boot size so the recycle disk-safety gate can read it
+            # back (SBS size is absent from the Instance API listing).
+            sbs_labels = (
+                {**labels, _ROOT_DISK_TAG: str(_boot_gb)} if _boot_gb else labels
+            )
             created = self._instance._create_server(
                 zone=zone,
                 name=name,
                 commercial_type=commercial_type,
                 dynamic_ip_required=True,
                 protected=False,
-                tags=dict_to_tags(labels),
+                tags=dict_to_tags(sbs_labels),
                 project=self._project_id,
                 volumes={
                     # size/name are create-time fields; the SDK defaults size to

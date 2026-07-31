@@ -1,12 +1,10 @@
 """Shared mechanics used by providers with a stopped-server recycle pool."""
 
-import logging
 import time
 import uuid
 from datetime import datetime, timezone
 
-logger = logging.getLogger(__name__)
-
+from .logger import logger
 from .cloud_provider import (
     AcquiredServer,
     CloudProvider,
@@ -40,7 +38,7 @@ def recyclable_server_matches(
     # never reused (every job falls through to create) can be diagnosed without
     # guessing which field mismatched. Enable debug logging to see these.
     def reject(reason):
-        logger.debug("recyclable %s rejected for %s: %s", server.name, request.name, reason)
+        logger.debug(f"recyclable {server.name} rejected for {request.name}: {reason}")
         return False
 
     if not provider.is_recycled_server(server):
@@ -96,7 +94,7 @@ def recyclable_server_matches(
             f"volumes {[v.name for v in server.volumes]!r} "
             f"do not cover requested {set(request.volume_names)!r}"
         )
-    logger.debug("recyclable %s matched %s", server.name, request.name)
+    logger.debug(f"recyclable {server.name} matched {request.name}")
     return True
 
 

@@ -516,8 +516,19 @@ def argparser():
         dest="cloud_host",
         type=str,
         help=(
-            "host (IP or hostname) of the cloud service server to connect to directly via SSH,\n"
-            "bypassing IP lookup by name using the Hetzner API"
+            "host (IP or hostname/ssh alias) of the cloud service server to connect to\n"
+            "directly via SSH, bypassing provider IP lookup by name (no provider config needed)"
+        ),
+    )
+
+    cloud_parser.add_argument(
+        "--user",
+        metavar="user",
+        dest="cloud_user",
+        type=str,
+        help=(
+            "SSH login user for --host; default lets ssh resolve it (e.g. from\n"
+            "~/.ssh/config), falling back to the configured provider's ssh_user"
         ),
     )
 

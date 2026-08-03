@@ -212,6 +212,10 @@ class cloud:
     provider: str = "hetzner"
     server_name: str = "tfs-runners-service"
     host: str = None
+    # SSH login user for a --host direct connection. None lets ssh resolve it
+    # (e.g. from ~/.ssh/config for a host alias) and falls back to the
+    # configured provider's ssh_user when a provider is configured.
+    ssh_user: str = None
     deploy: deploy_ = dataclasses.field(default_factory=deploy_)
 
 
@@ -335,6 +339,9 @@ class Config:
 
         if getattr(args, "cloud_host", None) is not None:
             self.cloud.host = args.cloud_host
+
+        if getattr(args, "cloud_user", None) is not None:
+            self.cloud.ssh_user = args.cloud_user
 
         if getattr(args, "cloud_deploy_location", None) is not None:
             self.cloud.deploy.location = args.cloud_deploy_location

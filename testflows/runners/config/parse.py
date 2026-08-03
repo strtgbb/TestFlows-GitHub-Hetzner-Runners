@@ -363,6 +363,11 @@ def parse_config(filename: str):
                 doc["cloud"]["server_name"], str
             ), "config.cloud.server_name: is not a string"
 
+        if doc["cloud"].get("ssh_user") is not None:
+            assert isinstance(
+                doc["cloud"]["ssh_user"], str
+            ), "config.cloud.ssh_user: is not a string"
+
         cloud_provider = doc["cloud"].get("provider") or "hetzner"
         assert cloud_provider in ("hetzner", "aws", "scaleway"), (
             "config.cloud.provider: must be one of 'hetzner', 'aws', 'scaleway' "
@@ -415,6 +420,7 @@ def parse_config(filename: str):
             provider=cloud_provider,
             server_name=doc["cloud"].get("server_name") or cloud().server_name,
             host=doc["cloud"].get("host"),
+            ssh_user=doc["cloud"].get("ssh_user"),
             deploy=deploy_obj,
         )
 

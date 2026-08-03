@@ -152,9 +152,12 @@ def ssh_command(server, options: str = ""):
     identity_option = ""
     if isinstance(server, ProviderServer) and getattr(server, "ssh_key_path", None):
         identity_option = f'-i {shlex.quote(server.ssh_key_path)} '
+    # No user (direct --host without one): let ssh resolve it, e.g. from
+    # ~/.ssh/config for a host alias, instead of forcing a wrong login.
+    destination = f"{user}@{ip}" if user else f"{ip}"
     return (
         f'ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
-        f"{port_option}{identity_option}{options}{' ' if options else ''}{user}@{ip}"
+        f"{port_option}{identity_option}{options}{' ' if options else ''}{destination}"
     )
 
 

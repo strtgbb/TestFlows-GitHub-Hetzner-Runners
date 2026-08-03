@@ -707,6 +707,14 @@
                                 "tfs-runners-service"
                             ]
                         },
+                        "ssh_user": {
+                            "description": "SSH login user for a --host direct connection; default lets ssh resolve it (e.g. from ~/.ssh/config), falling back to the configured provider's ssh_user.",
+                            "type": "string",
+                            "examples": [
+                                "root",
+                                "ubuntu"
+                            ]
+                        },
                         "deploy": {
                             "description": "The cloud deploy command configuration.",
                             "type": "object",

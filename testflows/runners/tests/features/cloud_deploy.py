@@ -153,14 +153,67 @@ def deploy_provider_selects_by_name(self):
 @TestScenario
 def get_server_host_mode_uses_provider_ssh_user(self):
     aws = _mock_provider("aws", ssh_user="ubuntu")
-    config = SimpleNamespace(cloud=SimpleNamespace(provider="aws", server_name="ctl", host="203.0.113.9"))
-    with When("host mode is used"):
+    config = SimpleNamespace(
+        cloud=SimpleNamespace(provider="aws", server_name="ctl", host="203.0.113.9", ssh_user=None)
+    )
+    with When("host mode is used with a provider passed"):
         server = cloud.get_server(config, provider=aws)
     with Then("a ProviderServer is built with the host IP and the provider ssh_user"):
         assert isinstance(server, ProviderServer)
         assert server.public_ipv4 == "203.0.113.9"
         assert server.ssh_user == "ubuntu"
         aws.get_server.assert_not_called()
+
+
+@TestScenario
+def get_server_host_mode_needs_no_provider(self):
+    """--host with no provider configured must not require one (dashboard/log/etc).
+
+    Regression guard: get_server used to resolve a provider just for ssh_user,
+    so `cloud --host X dashboard` failed with 'provider not configured'.
+    """
+    config = SimpleNamespace(
+        cloud=SimpleNamespace(provider="hetzner", server_name="ctl", host="builders", ssh_user=None)
+    )
+    with When("host mode is used and no provider is configured"), patch.object(
+        cloud, "provider_factory", return_value=[]
+    ):
+        server = cloud.get_server(config)
+    with Then("the host resolves with ssh_user left to ssh (None), no error"):
+        assert server.public_ipv4 == "builders"
+        assert server.ssh_user is None
+
+
+@TestScenario
+def get_server_host_mode_explicit_user_wins(self):
+    """An explicit config.cloud.ssh_user overrides any provider default."""
+    aws = _mock_provider("aws", ssh_user="ubuntu")
+    config = SimpleNamespace(
+        cloud=SimpleNamespace(provider="aws", server_name="ctl", host="1.2.3.4", ssh_user="admin")
+    )
+    with When("host mode is used with an explicit ssh_user"):
+        server = cloud.get_server(config, provider=aws)
+    with Then("the explicit user wins over the provider's"):
+        assert server.ssh_user == "admin"
+
+
+@TestScenario
+def ssh_command_omits_user_when_none(self):
+    """A direct host with no ssh_user lets ssh resolve the login (alias case)."""
+    from testflows.runners.server import ssh_command
+
+    alias = ProviderServer(id="s", name="s", status="running", public_ipv4="builders",
+                           private_ipv4=None, labels={}, server_type="", location="",
+                           created=None, ssh_user=None)
+    rooted = ProviderServer(id="s", name="s", status="running", public_ipv4="1.2.3.4",
+                            private_ipv4=None, labels={}, server_type="", location="",
+                            created=None, ssh_user="root")
+    with Then("no user@ is prepended for an alias host"):
+        cmd = ssh_command(alias)
+        assert cmd.endswith(" builders"), cmd
+        assert "@" not in cmd, cmd
+    with And("a user is prepended when set"):
+        assert ssh_command(rooted).endswith(" root@1.2.3.4"), ssh_command(rooted)
 
 
 # ---------------------------------------------------------------------------

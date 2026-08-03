@@ -55,6 +55,18 @@ def deploy_provider(config: Config) -> CloudProvider:
     )
 
 
+def _optional_provider_ssh_user(config: Config) -> str:
+    """The configured cloud.provider's ssh_user, or None if it isn't configured.
+
+    Direct --host connections shouldn't require a provider, but when one is
+    configured we still honor its ssh_user for backward compatibility.
+    """
+    try:
+        return deploy_provider(config).ssh_user
+    except ValueError:
+        return None
+
+
 def as_service_user(server: ProviderServer, inner: str) -> str:
     """Wrap a command so it runs as the service user (``ubuntu``).
 
@@ -85,14 +97,20 @@ def get_server(config: Config, provider: CloudProvider = None) -> ProviderServer
     Raises:
         ValueError: If the server is not found via the provider API.
     """
-    if provider is None:
-        provider = deploy_provider(config)
-
     server_name = config.cloud.server_name
     server_host = config.cloud.host
 
     if server_host:
-        # Direct host: address it by IP, logging in as the provider's SSH user.
+        # Direct host needs no provider (no provisioning). Login user: explicit
+        # config.cloud.ssh_user, else the given/configured provider's ssh_user,
+        # else None so ssh resolves it (e.g. from ~/.ssh/config for an alias).
+        ssh_user = config.cloud.ssh_user
+        if ssh_user is None:
+            ssh_user = (
+                provider.ssh_user
+                if provider is not None
+                else _optional_provider_ssh_user(config)
+            )
         return ProviderServer(
             id=server_name,
             name=server_name,
@@ -103,8 +121,11 @@ def get_server(config: Config, provider: CloudProvider = None) -> ProviderServer
             server_type="",
             location="",
             created=None,
-            ssh_user=provider.ssh_user,
+            ssh_user=ssh_user,
         )
+
+    if provider is None:
+        provider = deploy_provider(config)
 
     with Action(f"Getting server {server_name}"):
         server = provider.get_server(server_name)
@@ -386,9 +407,10 @@ def download_log(args, config: Config, server: ProviderServer = None):
         server = get_server(config)
 
     ip = ip_address(server)
+    host = f"{server.ssh_user}@{ip}" if server.ssh_user else f"{ip}"
     with Action(f"Downloading log from {server.name} to {args.output}"):
         scp(
-            source=f"{server.ssh_user}@{ip}:{os.path.join(tempfile.gettempdir(), 'tfs-runners.log')}",
+            source=f"{host}:{os.path.join(tempfile.gettempdir(), 'tfs-runners.log')}",
             destination=args.output,
             server=server,
         )

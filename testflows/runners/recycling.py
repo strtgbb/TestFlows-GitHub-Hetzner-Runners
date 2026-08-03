@@ -42,7 +42,8 @@ def recyclable_server_matches(
         return False
 
     if not provider.is_recycled_server(server):
-        return reject("not a recycled server (name prefix)")
+        # Common case (every non-recycle server); not worth a per-candidate log.
+        return False
     if server.status != CloudProvider.STATUS_OFF:
         return reject(f"status {server.status!r} != OFF")
     if server.server_type != request.server_type:

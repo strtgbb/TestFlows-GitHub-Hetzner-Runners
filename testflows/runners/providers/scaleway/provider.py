@@ -58,6 +58,27 @@ from .args import _ZONE_RE
 _ORPHAN_VOLUME_GRACE_SECONDS = 120
 
 
+def _aware(dt):
+    """A tz-aware datetime (assume UTC if naive), or None."""
+    if dt is None:
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _aware_ts(unix_seconds):
+    """A tz-aware UTC datetime from a unix-seconds string/int, or None."""
+    try:
+        return datetime.fromtimestamp(int(unix_seconds), timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fmt_secs(seconds: float) -> str:
+    """Format a duration as ``{m}m{s}s`` (clamped at zero)."""
+    s = max(int(seconds), 0)
+    return f"{s // 60}m{s % 60}s"
+
+
 class ScalewaySSHKey:
     """Minimal SSH-key descriptor returned by ``get_or_create_ssh_key``."""
 
@@ -458,7 +479,81 @@ class ScalewayCloudProvider(CloudProvider):
 
     def after_scale_down(self) -> None:
         """Run provider maintenance after scale-down decisions."""
+        self._reap_archived_servers()
         self._reap_orphaned_volumes()
+
+    def _reap_archived_servers(self) -> None:
+        """Delete recyclable servers the cloud archived (raw state 'stopped').
+
+        We park recyclable servers with stop_in_place ('stopped_in_place'); a
+        plain 'stopped' (UI "archived") is a state the cloud put them in, not us.
+        Resuming one costs the same as creating fresh, so keeping it buys nothing
+        while it holds its SBS boot volume against quota — reap it and let the
+        detached volume be reclaimed by _reap_orphaned_volumes. Deletion is
+        guarded by the recycle claim so it never races an in-flight reuse.
+        """
+        from ...constants import recycle_server_name_prefix, recycle_timestamp_label
+
+        try:
+            servers = self._instance.list_servers_all(zone=self._zone)
+        except Exception as exc:
+            with Action(
+                f"Could not list Scaleway servers to reap archived: {exc}",
+                stacklevel=3,
+                ignore_fail=True,
+            ):
+                pass
+            return
+
+        now = datetime.now(timezone.utc)
+        for s in servers or []:
+            if not (s.name or "").startswith(recycle_server_name_prefix):
+                continue
+            if state_key(getattr(s, "state", "")) != "stopped":
+                continue
+            server = _server_to_provider(s, ssh_user=self._ssh_user)
+            if self.is_recycle_claimed(server) or not self.reserve_recycled_server(
+                server
+            ):
+                continue
+            deleted = False
+            try:
+                self.delete_server(server)
+                deleted = True
+            except Exception as exc:
+                self.release_recycled_server(server)
+                with Action(
+                    f"Could not reap archived server {server.name}: {exc}",
+                    stacklevel=3,
+                    ignore_fail=True,
+                ):
+                    pass
+                continue
+            self.mark_recycled_server_deleting(server)
+            # Diagnostics for when/who caused the stop: created->stopped locates
+            # it in the billing hour; stopped-vs-parked shows whether the flip
+            # coincided with our stop_in_place or happened later (i.e. externally).
+            created = _aware(server.created)
+            stopped_at = _aware(getattr(s, "modification_date", None))
+            parked_at = _aware_ts(server.labels.get(recycle_timestamp_label))
+            age = _fmt_secs((now - created).total_seconds()) if created else "?"
+            after_create = (
+                _fmt_secs((stopped_at - created).total_seconds())
+                if stopped_at and created else "?"
+            )
+            after_park = (
+                _fmt_secs((stopped_at - parked_at).total_seconds())
+                if stopped_at and parked_at else "?"
+            )
+            with Action(
+                f"Reaped archived recycle server {server.name} (type "
+                f"{server.server_type}) to free its volume — created {age} ago; "
+                f"entered 'stopped' {after_create} after creation, {after_park} "
+                f"after we parked it (raw state at reap: stopped)",
+                stacklevel=3,
+                server_name=server.name,
+            ):
+                pass
 
     def _reap_orphaned_volumes(self) -> None:
         """Delete detached SBS volumes we created that no instance references.

@@ -318,11 +318,13 @@ class ScalewayCloudProvider(CloudProvider):
         return bool(getattr(l_ssd, "max_size", 0) or 0)
 
     def _power_on_and_wait(self, server, zone, name):
-        """Power on *server* and wait until running; terminate it on failure.
+        """Power on *server* and wait until running; remove it on failure.
 
-        On any failure the partial instance is best-effort terminated. In SBS mode
-        its boot volume is tagged, so the reaper reclaims it regardless; in LOCAL
-        mode the boot volume dies with the terminated instance.
+        An out-of-stock POWERON leaves the instance ``stopped`` (created but never
+        booted), so cleanup must go through delete_server, which removes a stopped
+        instance via the DELETE endpoint — a plain terminate is rejected for it.
+        The removal is best-effort (logged, never masks the original error); the
+        tagged SBS boot volume is reclaimed by the after_scale_down reaper.
         """
         from scaleway.instance.v1 import ServerAction
 
@@ -335,12 +337,12 @@ class ScalewayCloudProvider(CloudProvider):
                     server.id, zone, states={"running"}, timeout=300
                 )
         except Exception:
-            try:
-                self._instance.server_action(
-                    server_id=server.id, zone=zone, action=ServerAction.TERMINATE
-                )
-            except Exception:
-                pass
+            with Action(
+                f"Removing {name} after it failed to start",
+                stacklevel=3,
+                ignore_fail=True,
+            ):
+                self.delete_server(_server_to_provider(server, ssh_user=self._ssh_user))
             raise
 
         return server
@@ -348,49 +350,30 @@ class ScalewayCloudProvider(CloudProvider):
     def delete_server(self, server: ProviderServer) -> None:
         """Remove the Instance; the tagged SBS boot volume is reaped out of band.
 
-        Removal uses two complementary API operations, because each is rejected
-        in the state the other handles:
+        Two API operations, each rejected in the state the other handles:
 
-        * ``terminate`` removes a *running* instance but is rejected for a fully
-          powered-off one ("invalid state 'stopped' for the action 'terminate'").
-        * the DELETE endpoint removes a powered-off instance but is rejected while
-          it still holds resources ("instance should be powered off") — which
-          includes the ``stopped_in_place`` state that our status map also reports
-          as OFF.
+        * ``terminate`` removes a *running* / ``stopped_in_place`` instance (still
+          holding its reservation) but is rejected for a fully powered-off one.
+        * the DELETE endpoint removes a fully ``stopped`` instance but is rejected
+          while it still holds resources ("instance should be powered off").
 
-        We pick the operation matching the instance's believed status, then fall
-        back to the other on a precondition failure — the cached status can be
-        stale or an in-place-stopped state, so neither alone is reliable. Either
-        operation only detaches (not deletes) the SBS boot volume, which is
-        reclaimed later by ``after_scale_down`` reaping (tagged at create time),
-        so cleanup stays crash-safe.
+        ``status`` collapses ``stopped`` and ``stopped_in_place`` into ``OFF``, so
+        pick the op from the raw state instead. No precondition fallback for now:
+        if the observed state is stale we want the mispick to surface rather than
+        silently self-correct, while we characterize why instances end up stopped.
+        Either op only detaches (not deletes) the SBS boot volume, reclaimed later
+        by ``after_scale_down`` reaping.
         """
         from scaleway.instance.v1 import ServerAction
-        from scaleway_core.api import ScalewayException
 
-        def _terminate():
+        raw = state_key(getattr(getattr(server, "_native", None), "state", ""))
+        if raw == "stopped":
+            self._instance.delete_server(server_id=server.id, zone=server.location)
+        else:
             self._instance.server_action(
                 server_id=server.id, zone=server.location,
                 action=ServerAction.TERMINATE,
             )
-
-        def _delete():
-            self._instance.delete_server(server_id=server.id, zone=server.location)
-
-        if server.status == CloudProvider.STATUS_OFF:
-            primary, fallback = _delete, _terminate
-        else:
-            primary, fallback = _terminate, _delete
-
-        try:
-            primary()
-        except ScalewayException as exc:
-            # A precondition failure means the instance is in the state the other
-            # operation handles; retry with it rather than trust the status.
-            if _scaleway_error_type(exc) == "precondition_failed":
-                fallback()
-            else:
-                raise
 
     def _create_boot_volume(
         self,

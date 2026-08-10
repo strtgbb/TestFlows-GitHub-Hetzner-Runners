@@ -351,11 +351,18 @@ def get_server_arch_defaults_x64_without_sdk_type(self):
         assert provider.get_server_arch(ProviderServerType(name="basic2.a8c.16g")) == "x64"
 
 
-def _scaleway_server(status):
+def _scaleway_server(raw_state):
+    """A ProviderServer carrying a raw Scaleway ``state`` in ``_native`` — the
+    field delete_server reads to pick its removal op."""
+    status = (
+        CloudProvider.STATUS_RUNNING if raw_state == "running"
+        else CloudProvider.STATUS_OFF
+    )
     return ProviderServer(
         id="srv-1", name="github-runner-1-0-dev1.s", status=status,
         public_ipv4=None, private_ipv4=None, labels={},
         server_type="dev1.s", location="fr-par-1", created=None,
+        _native=SimpleNamespace(state=raw_state),
     )
 
 
@@ -365,7 +372,7 @@ def delete_server_terminates_running(self):
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     with When("delete_server is called on a running instance"):
-        provider.delete_server(_scaleway_server(CloudProvider.STATUS_RUNNING))
+        provider.delete_server(_scaleway_server("running"))
     with Then("it terminates and never deletes the instance resource or volumes"):
         _, kwargs = provider._instance.server_action.call_args
         assert str(kwargs["action"]) == "terminate", kwargs["action"]
@@ -375,15 +382,15 @@ def delete_server_terminates_running(self):
 
 @TestScenario
 def delete_server_stopped_uses_delete_endpoint(self):
-    """A stopped instance can't be terminated, so it's removed via DELETE.
+    """A fully 'stopped' instance can't be terminated, so it's removed via DELETE.
 
-    Regression: terminate on a stopped (pooled/recycled) server is rejected with
+    Regression: terminate on a stopped server is rejected with
     'resource_not_usable: invalid state stopped for the action terminate'.
     """
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     with When("delete_server is called on a stopped instance"):
-        provider.delete_server(_scaleway_server(CloudProvider.STATUS_OFF))
+        provider.delete_server(_scaleway_server("stopped"))
     with Then("it uses the DELETE endpoint and does not attempt terminate"):
         provider._instance.delete_server.assert_called_once()
         _, dkwargs = provider._instance.delete_server.call_args
@@ -393,66 +400,44 @@ def delete_server_stopped_uses_delete_endpoint(self):
 
 
 @TestScenario
-def delete_server_falls_back_to_delete_on_stale_running_status(self):
-    """A stale running status: terminate is rejected, so fall back to DELETE."""
+def delete_server_stopped_in_place_terminates(self):
+    """A 'stopped_in_place' instance still holds its reservation, so terminate —
+    picked directly from the raw state (status collapses it with 'stopped')."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
-    from scaleway_core.api import ScalewayException
-
-    with And("terminate is rejected with a precondition error"):
-        provider._instance.server_action.side_effect = ScalewayException(
-            status_code=412, error_type="precondition_failed"
-        )
-    with When("delete_server is called with a (stale) running status"):
-        provider.delete_server(_scaleway_server(CloudProvider.STATUS_RUNNING))
-    with Then("it falls back to the DELETE endpoint"):
-        provider._instance.delete_server.assert_called_once()
-
-
-@TestScenario
-def delete_server_falls_back_to_terminate_when_off_still_in_use(self):
-    """A pooled server mapped OFF but not fully powered off: DELETE is rejected
-    ('instance should be powered off'), so fall back to terminate."""
-    with Given("a scaleway provider"):
-        provider = scaleway_provider()
-    from scaleway_core.api import ScalewayException
-
-    with And("DELETE is rejected with a precondition error"):
-        provider._instance.delete_server.side_effect = ScalewayException(
-            status_code=412, error_type="precondition_failed"
-        )
-    with When("delete_server is called on an OFF (in-place-stopped) instance"):
-        provider.delete_server(_scaleway_server(CloudProvider.STATUS_OFF))
-    with Then("it falls back to terminate"):
+    with When("delete_server is called on a stopped-in-place instance"):
+        provider.delete_server(_scaleway_server("stopped in place"))
+    with Then("it terminates in one call, without trying the DELETE endpoint"):
         provider._instance.server_action.assert_called_once()
         _, kwargs = provider._instance.server_action.call_args
         assert str(kwargs["action"]) == "terminate", kwargs["action"]
+        provider._instance.delete_server.assert_not_called()
 
 
 @TestScenario
-def delete_server_reraises_non_precondition_error(self):
-    """A non-precondition error (e.g. quota) is not retried — it propagates."""
+def delete_server_propagates_errors(self):
+    """No fallback for now: a removal error surfaces rather than self-correcting."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     from scaleway_core.api import ScalewayException
 
-    with And("DELETE fails with a non-precondition error"):
+    with And("the DELETE endpoint fails"):
         provider._instance.delete_server.side_effect = ScalewayException(
             status_code=403, error_type="quotas_exceeded"
         )
-    with Then("delete_server re-raises and does not fall back to terminate"):
+    with Then("delete_server re-raises and does not try terminate as a fallback"):
         try:
-            provider.delete_server(_scaleway_server(CloudProvider.STATUS_OFF))
-            assert False, "expected the non-precondition error to propagate"
+            provider.delete_server(_scaleway_server("stopped"))
+            assert False, "expected the error to propagate"
         except ScalewayException:
             pass
         provider._instance.server_action.assert_not_called()
 
 
-def _running_native(name="github-runner-1-0"):
-    """A minimal Scaleway-native running server for _server_to_provider."""
+def _running_native(name="github-runner-1-0", state="running"):
+    """A minimal Scaleway-native server for _server_to_provider."""
     return SimpleNamespace(
-        id="srv-1", name=name, state="running", zone="fr-par-1",
+        id="srv-1", name=name, state=state, zone="fr-par-1",
         commercial_type="basic2-a16c-32g", tags=[],
         public_ips=None, public_ip=None, private_ip=None,
     )
@@ -744,20 +729,20 @@ def create_server_sbs_mode_for_sbs_only_native(self):
 
 
 @TestScenario
-def create_server_local_mode_power_on_failure_terminates(self):
-    """Local-mode boot failure terminates the instance and creates no SBS volume."""
+def create_server_local_mode_power_on_failure_removes_instance(self):
+    """Local-mode boot failure removes the (stopped) instance, no SBS volume."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
-    with And("the instance is created but never reaches running"):
+    with And("the instance is created stopped but never reaches running"):
         provider._instance._create_server.return_value = SimpleNamespace(
-            server=SimpleNamespace(id="srv-1")
+            server=_running_native(name="tfs-controller", state="stopped")
         )
 
         def _boom(*a, **k):
             raise RuntimeError("boot timeout")
 
         provider._wait_for_state = _boom
-    with Then("it best-effort terminates and touches no block volume"):
+    with Then("it removes the stopped instance via DELETE and touches no volume"):
         try:
             provider.create_server(
                 name="tfs-controller", server_type=_local_type(),
@@ -766,11 +751,7 @@ def create_server_local_mode_power_on_failure_terminates(self):
             assert False, "expected the boot failure to propagate"
         except RuntimeError:
             pass
-        actions = [
-            str(c.kwargs.get("action"))
-            for c in provider._instance.server_action.call_args_list
-        ]
-        assert "terminate" in actions, actions
+        provider._instance.delete_server.assert_called_once()
         provider._block.create_volume.assert_not_called()
         provider._block.delete_volume.assert_not_called()
 
@@ -895,11 +876,12 @@ def create_server_quota_exceeded_propagates_not_image_error(self):
 
 
 @TestScenario
-def create_server_powering_on_failure_terminates_partial_instance(self):
-    """If power-on/boot fails, the partial instance is terminated (volume reaper-covered)."""
+def create_server_powering_on_failure_removes_partial_instance(self):
+    """If power-on/boot fails, the partial (stopped) instance is removed via the
+    DELETE endpoint and re-raises; its tagged boot volume is reaper-covered."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
-    with And("a created boot volume + instance, but boot never reaches running"):
+    with And("a created boot volume + stopped instance that never reaches running"):
         provider._instance.get_image.return_value = SimpleNamespace(
             image=SimpleNamespace(
                 root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
@@ -908,14 +890,14 @@ def create_server_powering_on_failure_terminates_partial_instance(self):
         provider._block.get_snapshot.return_value = SimpleNamespace(size=10)
         provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
         provider._instance._create_server.return_value = SimpleNamespace(
-            server=SimpleNamespace(id="srv-1")
+            server=_running_native(name="r", state="stopped")
         )
 
         def _boom(*a, **k):
             raise RuntimeError("boot timeout")
 
         provider._wait_for_state = _boom
-    with Then("it best-effort terminates the partial instance and re-raises"):
+    with Then("it removes the partial instance via DELETE and re-raises"):
         try:
             provider.create_server(
                 name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
@@ -924,11 +906,7 @@ def create_server_powering_on_failure_terminates_partial_instance(self):
             assert False, "expected the boot failure to propagate"
         except RuntimeError:
             pass
-        actions = [
-            str(c.kwargs.get("action"))
-            for c in provider._instance.server_action.call_args_list
-        ]
-        assert "terminate" in actions, actions
+        provider._instance.delete_server.assert_called_once()
 
 
 @TestScenario

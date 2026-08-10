@@ -1276,6 +1276,26 @@ def provider_zone_set_filters_and_includes_default(self):
         assert provider._zones == {"fr-par-1", "fr-par-2", "nl-ams-1"}, provider._zones
 
 
+@TestScenario
+def list_servers_fans_out_across_zones(self):
+    """list_servers queries every zone in the set and merges the results."""
+    with Given("a provider over two zones, each with one active server"):
+        provider = scaleway_provider()
+        provider._zones = {"fr-par-1", "nl-ams-1"}
+        by_zone = {
+            "fr-par-1": [_running_native(name="a")],
+            "nl-ams-1": [_running_native(name="b")],
+        }
+        provider._instance.list_servers_all.side_effect = (
+            lambda zone, **k: by_zone.get(zone, [])
+        )
+    with When("list_servers runs"):
+        result = provider.list_servers()
+    with Then("servers from both zones are returned"):
+        names = sorted(s.name for s in result)
+        assert names == ["a", "b"], names
+
+
 # ---------------------------------------------------------------------------
 # Feature entry point
 # ---------------------------------------------------------------------------

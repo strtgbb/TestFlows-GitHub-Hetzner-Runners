@@ -508,21 +508,25 @@ class ScalewayCloudProvider(CloudProvider):
                     pass
 
     def get_server(self, name: str) -> ProviderServer | None:
-        servers = self._instance.list_servers_all(zone=self._zone, name=name)
-        for server in servers or []:
-            if server.name == name and state_key(server.state) in _ACTIVE_STATES:
-                return _server_to_provider(server, ssh_user=self._ssh_user)
+        for zone in self._zones:
+            servers = self._instance.list_servers_all(zone=zone, name=name)
+            for server in servers or []:
+                if server.name == name and state_key(server.state) in _ACTIVE_STATES:
+                    return _server_to_provider(server, ssh_user=self._ssh_user)
         return None
 
     def list_servers(self, label_selector: str = None) -> list[ProviderServer]:
-        """List Instances, optionally filtered by a ``key=value`` tag selector."""
+        """List Instances across all zones, optionally filtered by a tag."""
         tags = [label_selector] if label_selector and "=" in label_selector else None
-        servers = self._instance.list_servers_all(zone=self._zone, tags=tags)
-        return [
-            _server_to_provider(s, ssh_user=self._ssh_user)
-            for s in (servers or [])
-            if state_key(s.state) in _ACTIVE_STATES
-        ]
+        result = []
+        for zone in self._zones:
+            servers = self._instance.list_servers_all(zone=zone, tags=tags)
+            result.extend(
+                _server_to_provider(s, ssh_user=self._ssh_user)
+                for s in (servers or [])
+                if state_key(s.state) in _ACTIVE_STATES
+            )
+        return result
 
     def power_off_server(self, server: ProviderServer) -> None:
         from scaleway.instance.v1 import ServerAction

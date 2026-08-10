@@ -798,69 +798,54 @@ class ScalewayCloudProvider(CloudProvider):
         return zone
 
     def get_image(self, image_spec):
-        """Resolve a Scaleway image spec to an image identifier.
+        """Validate a Scaleway image spec for multi-cloud fallthrough.
 
-        Resolves, in order:
-
-        1. an image **UUID** (custom or otherwise) -> returned as-is;
-        2. a **marketplace label** such as ``ubuntu_jammy`` -> the zone-local
-           image UUID (public base images);
-        3. a **custom/private image name** -> the private image UUID for this
-           project and zone (your own baked images, e.g. ``runner-base``).
-
-        Foreign image specs (Hetzner's ``arch:type:name`` colon form, AWS
-        ``ami-`` / ``resolve:ssm:`` specs) raise ``ImageSpecFormatError`` so a
-        multi-cloud job can fall through to the provider that owns them.
+        Returns the spec unchanged (no API call, no name validation — Scaleway
+        arbitrates valid names). Rejects clearly-foreign specs so scale_up can
+        try the next provider. Actual resolution happens per target zone in
+        create_server via _resolve_image_in_zone.
         """
-        import uuid as _uuid
-
         if image_spec is None:
             raise ImageError("Scaleway image spec is required")
-
         spec = str(image_spec).strip()
-
-        # 1. UUID -> use directly.
-        try:
-            _uuid.UUID(spec)
-            return spec
-        except (ValueError, AttributeError):
-            pass
-
-        # Reject specs that clearly belong to another provider so scale_up can
-        # try the next provider's get_image instead of hard-failing here.
         if ":" in spec or spec.startswith("ami-"):
             raise ImageSpecFormatError(
                 f"'{spec}' is not a Scaleway image spec (expected an image UUID, "
                 f"a marketplace label like 'ubuntu_jammy', or a custom image name)"
             )
+        return spec
 
-        # 2. Marketplace label (public base images). Only attempt this for
-        #    marketplace-label-shaped specs (lowercase alphanumerics + '_', e.g.
-        #    'ubuntu_jammy'); custom image names contain '-'/'.' and are handled
-        #    below. The marketplace endpoint 404s on an unknown label, which we
-        #    treat as "not a marketplace image" so resolution falls through.
+    def _resolve_image_in_zone(self, spec: str, zone: str) -> str:
+        """Resolve a Scaleway image spec to a zone-local image UUID.
+
+        UUID passthrough -> marketplace label -> custom image name, all in the
+        given zone. Raises ImageError if nothing matches in that zone.
+        """
+        import uuid as _uuid
+
+        try:
+            _uuid.UUID(spec)
+            return spec
+        except (ValueError, AttributeError):
+            pass
         if spec.replace("_", "").isalnum():
-            marketplace_id = self._resolve_marketplace_image(spec)
+            marketplace_id = self._resolve_marketplace_image(spec, zone)
             if marketplace_id is not None:
                 return marketplace_id
-
-        # 3. Custom/private image by name (case-insensitive; names may contain
-        #    '-'/'.', which survive the label since get_server_image does not
-        #    split the image value).
-        custom_id = self._resolve_custom_image(spec)
+        custom_id = self._resolve_custom_image(spec, zone)
         if custom_id is not None:
             return custom_id
-
         raise ImageError(
-            f"Scaleway image '{spec}' not found in zone {self._zone}: no matching "
+            f"Scaleway image '{spec}' not found in zone {zone}: no matching "
             f"marketplace label or custom image name"
         )
 
-    def _resolve_marketplace_image(self, label: str) -> str | None:
+    def _resolve_marketplace_image(self, label: str, zone: str) -> str | None:
         """Return the zone-local image UUID for a marketplace *label*, or None.
 
         Returns None (rather than raising) when the label is not a known
-        marketplace image, so ``get_image`` can fall through to custom images.
+        marketplace image, so ``_resolve_image_in_zone`` can fall through to
+        custom images.
         """
         from scaleway.marketplace.v2 import MarketplaceV2API
         from scaleway_core.api import ScalewayException
@@ -868,7 +853,7 @@ class ScalewayCloudProvider(CloudProvider):
         try:
             local_images = MarketplaceV2API(self._client).list_local_images_all(
                 image_label=label,
-                zone=self._zone,
+                zone=zone,
                 type_="instance_local",
             )
         except ScalewayException as exc:
@@ -879,11 +864,11 @@ class ScalewayCloudProvider(CloudProvider):
             ) from exc
         return self._pick_image_id(local_images)
 
-    def _resolve_custom_image(self, name: str) -> str | None:
+    def _resolve_custom_image(self, name: str, zone: str) -> str | None:
         """Return the private image UUID matching *name* in this project, or None."""
         try:
             images = self._instance.list_images_all(
-                zone=self._zone, name=name, public=False, project=self._project_id
+                zone=zone, name=name, public=False, project=self._project_id
             )
         except Exception as exc:
             raise ImageError(

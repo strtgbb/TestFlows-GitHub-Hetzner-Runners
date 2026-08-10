@@ -1049,23 +1049,26 @@ def get_image_rejects_foreign_specs(self):
 
 
 @TestScenario
-def get_image_marketplace_label(self):
+def resolve_image_in_zone_marketplace_label(self):
     """A marketplace label resolves before custom images are consulted."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     with And("marketplace resolution returns an id and custom lookup would fail"):
-        provider._resolve_marketplace_image = lambda label: "mkt-" + label
+        provider._resolve_marketplace_image = lambda label, zone: "mkt-" + label
 
         def _boom(**kwargs):
             raise AssertionError("custom lookup must not run when marketplace matches")
 
         provider._instance.list_images_all = _boom
     with Then("the marketplace id is returned"):
-        assert provider.get_image("ubuntu_jammy") == "mkt-ubuntu_jammy"
+        assert (
+            provider._resolve_image_in_zone("ubuntu_jammy", "fr-par-1")
+            == "mkt-ubuntu_jammy"
+        )
 
 
 @TestScenario
-def get_image_custom_dashed_name_skips_marketplace(self):
+def resolve_image_in_zone_custom_dashed_name_skips_marketplace(self):
     """A custom name with '-'/'.' skips the marketplace lookup entirely.
 
     Reproduces the reported bug: a baked image name like
@@ -1075,7 +1078,7 @@ def get_image_custom_dashed_name_skips_marketplace(self):
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     with And("marketplace resolution would fail if called, and a private image exists"):
-        def _must_not_call(label):
+        def _must_not_call(label, zone):
             raise AssertionError("marketplace must not be queried for a dashed name")
 
         provider._resolve_marketplace_image = _must_not_call
@@ -1083,54 +1086,96 @@ def get_image_custom_dashed_name_skips_marketplace(self):
             _FakeImage(id="img-arm", name="arm-ubuntu-24.04-regression-tester", arch="arm64"),
         ]
     with Then("the custom image id is returned without touching the marketplace"):
-        assert provider.get_image("arm-ubuntu-24.04-regression-tester") == "img-arm"
+        assert (
+            provider._resolve_image_in_zone(
+                "arm-ubuntu-24.04-regression-tester", "fr-par-1"
+            )
+            == "img-arm"
+        )
 
 
 @TestScenario
-def get_image_marketplace_shaped_miss_falls_through_to_custom(self):
+def resolve_image_in_zone_marketplace_shaped_miss_falls_through_to_custom(self):
     """A marketplace-shaped spec that misses (None) falls through to custom images."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     with And("marketplace returns None (unknown label) and a custom image matches"):
-        provider._resolve_marketplace_image = lambda label: None
+        provider._resolve_marketplace_image = lambda label, zone: None
         provider._instance.list_images_all = lambda **kwargs: [
             _FakeImage(id="img-x86", name="ubuntucustom", arch="x86_64"),
         ]
     with Then("the custom image id is returned"):
-        assert provider.get_image("ubuntucustom") == "img-x86"
+        assert (
+            provider._resolve_image_in_zone("ubuntucustom", "fr-par-1") == "img-x86"
+        )
 
 
 @TestScenario
-def get_image_custom_by_name(self):
+def resolve_image_in_zone_custom_by_name(self):
     """A custom image name resolves to its private-image UUID, preferring x86_64."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     with And("no marketplace match, and a private image exists in two arches"):
-        provider._resolve_marketplace_image = lambda label: None
+        provider._resolve_marketplace_image = lambda label, zone: None
         provider._instance.list_images_all = lambda **kwargs: [
             _FakeImage(id="img-arm", name="runner-base", arch="arm64"),
             _FakeImage(id="img-x86", name="runner-base", arch="x86_64"),
         ]
     with Then("the x86_64 custom image id is returned"):
-        assert provider.get_image("runner-base") == "img-x86"
+        assert provider._resolve_image_in_zone("runner-base", "fr-par-1") == "img-x86"
 
 
 @TestScenario
-def get_image_custom_name_requires_exact_match(self):
+def resolve_image_in_zone_custom_name_requires_exact_match(self):
     """A prefix-only name match is rejected (the API name filter is a prefix)."""
     with Given("a scaleway provider"):
         provider = scaleway_provider()
     with And("marketplace misses and only a prefix-match private image exists"):
-        provider._resolve_marketplace_image = lambda label: None
+        provider._resolve_marketplace_image = lambda label, zone: None
         provider._instance.list_images_all = lambda **kwargs: [
             _FakeImage(id="img-1", name="runner-base-2024", arch="x86_64"),
         ]
-    with Then("get_image raises ImageError (no exact name match)"):
+    with Then("_resolve_image_in_zone raises ImageError (no exact name match)"):
         try:
-            provider.get_image("runner-base")
+            provider._resolve_image_in_zone("runner-base", "fr-par-1")
             assert False, "expected ImageError for prefix-only match"
         except ImageError:
             pass
+
+
+@TestScenario
+def get_image_is_format_only(self):
+    """get_image returns a Scaleway spec unchanged and makes no SDK call."""
+    with Given("a scaleway provider"):
+        provider = scaleway_provider()
+    with Then("a Scaleway spec passes through untouched"):
+        assert provider.get_image("ubuntu_jammy") == "ubuntu_jammy"
+        assert provider.get_image("my-custom-image") == "my-custom-image"
+    with And("foreign specs raise ImageSpecFormatError for fallthrough"):
+        for foreign in ("x86:system:ubuntu-22.04", "ami-0abc123", "resolve:ssm:/x"):
+            try:
+                provider.get_image(foreign)
+                assert False, f"expected reject for {foreign}"
+            except ImageSpecFormatError:
+                pass
+    with And("no image/marketplace SDK call was made"):
+        provider._instance.list_images_all.assert_not_called()
+
+
+@TestScenario
+def resolve_image_in_zone_uses_given_zone(self):
+    """_resolve_image_in_zone resolves a custom image against the passed zone."""
+    with Given("a scaleway provider whose custom-image lookup returns a match"):
+        provider = scaleway_provider()
+        provider._instance.list_images_all.return_value = [
+            SimpleNamespace(id="img-ams", name="runner-base", arch="arm64"),
+        ]
+    with When("resolving a custom name in nl-ams-1"):
+        uuid = provider._resolve_image_in_zone("runner-base", "nl-ams-1")
+    with Then("it returns the image id and queried that zone"):
+        assert uuid == "img-ams", uuid
+        _, kwargs = provider._instance.list_images_all.call_args
+        assert kwargs["zone"] == "nl-ams-1", kwargs
 
 
 @TestScenario

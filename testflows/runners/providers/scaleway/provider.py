@@ -211,6 +211,7 @@ class ScalewayCloudProvider(CloudProvider):
         del ssh_keys, volumes, public_net
 
         zone = location or self._zone
+        image = self._resolve_image_in_zone(image, zone)
         commercial_type = native_type(server_type.name)
 
         if self._is_local_bootable(server_type):

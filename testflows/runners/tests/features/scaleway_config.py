@@ -464,7 +464,7 @@ def create_server_builds_tagged_boot_volume(self):
         provider.create_server(
             name="github-runner-1-0",
             server_type=ProviderServerType(name="basic2-a16c-32g"),
-            location="fr-par-1", image="img-uuid", ssh_keys=[],
+            location="fr-par-1", image="cccccccc-cccc-cccc-cccc-cccccccccccc", ssh_keys=[],
             labels={"github-runner": "active"},
         )
     with Then("the boot volume is created from the snapshot and tagged at birth"):
@@ -480,6 +480,36 @@ def create_server_builds_tagged_boot_volume(self):
         # Attaching by id must not send size (SDK default 0) — the API rejects
         # 'id' + 'size' together.
         assert template.size is None, template.size
+
+
+@TestScenario
+def create_server_resolves_image_in_target_zone(self):
+    """The image spec is resolved against the create location, not self._zone."""
+    with Given("a scaleway provider whose custom image resolves to a zone id"):
+        provider = scaleway_provider()
+        provider._instance.list_images_all.return_value = [
+            SimpleNamespace(id="img-ams", name="runner-base", arch="x86_64"),
+        ]
+        provider._instance.get_image.return_value = SimpleNamespace(
+            image=SimpleNamespace(
+                root_volume=SimpleNamespace(id="snap-1", volume_type="sbs_snapshot")
+            )
+        )
+        provider._block.get_snapshot.return_value = SimpleNamespace(size=10 * 1024**3)
+        provider._block.create_volume.return_value = SimpleNamespace(id="vol-boot")
+        provider._instance._create_server.return_value = SimpleNamespace(
+            server=_running_native(state="running")
+        )
+        provider._wait_for_state = lambda *a, **k: _running_native(state="running")
+    with When("create_server runs with location nl-ams-1 and a custom image name"):
+        provider.create_server(
+            name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
+            location="nl-ams-1", image="runner-base", ssh_keys=[], labels={},
+        )
+    with Then("the image was resolved in nl-ams-1 and its id used for the boot volume"):
+        _, ikwargs = provider._instance.list_images_all.call_args
+        assert ikwargs["zone"] == "nl-ams-1", ikwargs
+        assert provider._instance.get_image.call_args.kwargs["image_id"] == "img-ams"
 
 
 @TestScenario
@@ -503,7 +533,7 @@ def create_server_root_disk_size_sizes_boot_volume(self):
         provider.create_server(
             name="github-runner-1-0",
             server_type=ProviderServerType(name="basic2-a16c-32g"),
-            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+            location="fr-par-1", image="cccccccc-cccc-cccc-cccc-cccccccccccc", ssh_keys=[], labels={},
             root_disk_size=200,
         )
     with Then("the boot volume is requested at 200 GiB (above the snapshot floor)"):
@@ -535,7 +565,7 @@ def create_server_root_disk_below_snapshot_uses_snapshot_floor(self):
         provider.create_server(
             name="github-runner-1-0",
             server_type=ProviderServerType(name="basic2-a16c-32g"),
-            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+            location="fr-par-1", image="cccccccc-cccc-cccc-cccc-cccccccccccc", ssh_keys=[], labels={},
             root_disk_size=50,
         )
     with Then("the boot volume is floored at the 120 GiB snapshot size"):
@@ -637,12 +667,12 @@ def create_server_local_mode_uses_image_not_boot_volume(self):
         result = provider.create_server(
             name="tfs-controller",
             server_type=_local_type(),
-            location="fr-par-1", image="img-local", ssh_keys=[],
+            location="fr-par-1", image="dddddddd-dddd-dddd-dddd-dddddddddddd", ssh_keys=[],
             labels={"role": "controller"},
         )
     with Then("it launches with image= and no volumes, and creates no SBS volume"):
         skw = provider._instance._create_server.call_args.kwargs
-        assert skw.get("image") == "img-local", skw
+        assert skw.get("image") == "dddddddd-dddd-dddd-dddd-dddddddddddd", skw
         assert skw.get("volumes") is None, skw
         provider._block.create_volume.assert_not_called()
     with And("it returns a ProviderServer with the Scaleway ssh_user"):
@@ -678,7 +708,7 @@ def create_server_sbs_mode_for_sbs_only_native(self):
     with When("create_server runs"):
         provider.create_server(
             name="github-runner-1-0", server_type=sbs_only,
-            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+            location="fr-par-1", image="cccccccc-cccc-cccc-cccc-cccccccccccc", ssh_keys=[], labels={},
         )
     with Then("it pre-creates the tagged SBS volume and attaches it (no image=)"):
         provider._block.create_volume.assert_called_once()
@@ -705,7 +735,7 @@ def create_server_local_mode_power_on_failure_removes_instance(self):
         try:
             provider.create_server(
                 name="tfs-controller", server_type=_local_type(),
-                location="fr-par-1", image="img-local", ssh_keys=[], labels={},
+                location="fr-par-1", image="dddddddd-dddd-dddd-dddd-dddddddddddd", ssh_keys=[], labels={},
             )
             assert False, "expected the boot failure to propagate"
         except RuntimeError:
@@ -737,7 +767,7 @@ def create_server_sizes_boot_volume_to_configured_default(self):
         provider.create_server(
             name="github-runner-1-0",
             server_type=ProviderServerType(name="basic2-a16c-32g"),
-            location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+            location="fr-par-1", image="cccccccc-cccc-cccc-cccc-cccccccccccc", ssh_keys=[], labels={},
         )
     with Then("the boot volume is created at the configured 200 GiB, above the snapshot floor"):
         ckw = provider._block.create_volume.call_args.kwargs
@@ -759,7 +789,7 @@ def create_server_local_snapshot_raises_helpful_error(self):
         try:
             provider.create_server(
                 name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
-                location="fr-par-1", image="img-local", ssh_keys=[], labels={},
+                location="fr-par-1", image="dddddddd-dddd-dddd-dddd-dddddddddddd", ssh_keys=[], labels={},
             )
             assert False, "expected ImageError for a non-SBS image"
         except ImageError as exc:
@@ -791,7 +821,7 @@ def create_server_cross_project_snapshot_raises_helpful_error(self):
         try:
             provider.create_server(
                 name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
-                location="fr-par-1", image="img-marketplace", ssh_keys=[], labels={},
+                location="fr-par-1", image="eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", ssh_keys=[], labels={},
             )
             assert False, "expected ImageError for a cross-project snapshot"
         except ImageError as exc:
@@ -825,7 +855,7 @@ def create_server_quota_exceeded_propagates_not_image_error(self):
         try:
             provider.create_server(
                 name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
-                location="fr-par-1", image="img-uuid", ssh_keys=[], labels={},
+                location="fr-par-1", image="cccccccc-cccc-cccc-cccc-cccccccccccc", ssh_keys=[], labels={},
             )
             assert False, "expected the quota error to propagate"
         except ImageError as exc:
@@ -860,7 +890,7 @@ def create_server_powering_on_failure_removes_partial_instance(self):
         try:
             provider.create_server(
                 name="r", server_type=ProviderServerType(name="basic2-a16c-32g"),
-                location="fr-par-1", image="img", ssh_keys=[], labels={},
+                location="fr-par-1", image="ffffffff-ffff-ffff-ffff-ffffffffffff", ssh_keys=[], labels={},
             )
             assert False, "expected the boot failure to propagate"
         except RuntimeError:

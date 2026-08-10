@@ -318,6 +318,27 @@ def scaleway_recycle_rejects_non_boolean(self):
 
 
 # ---------------------------------------------------------------------------
+# get_server_type: resolved across all configured zones
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def get_server_type_found_in_non_default_zone(self):
+    """A type offered only in a non-default zone still resolves."""
+    with Given("a provider over two zones; the type exists only in nl-ams-1"):
+        provider = scaleway_provider()
+        provider._zones = {"fr-par-1", "nl-ams-1"}
+        def _types(zone):
+            servers = {"BASIC2-A16C-32G": SimpleNamespace(arch="arm64")} if zone == "nl-ams-1" else {}
+            return SimpleNamespace(servers=servers)
+        provider._instance.list_servers_types.side_effect = _types
+    with When("resolving basic2.a16c.32g"):
+        st = provider.get_server_type("basic2.a16c.32g")
+    with Then("it resolves via the zone that offers it"):
+        assert st.name == "basic2.a16c.32g", st.name
+
+
+# ---------------------------------------------------------------------------
 # get_server_arch: authoritative SDK arch, with a name fallback
 # ---------------------------------------------------------------------------
 

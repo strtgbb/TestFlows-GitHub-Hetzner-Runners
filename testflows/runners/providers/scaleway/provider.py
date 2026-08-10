@@ -143,7 +143,7 @@ class ScalewayCloudProvider(CloudProvider):
     def get_prices(self) -> dict[str, dict[str, float]]:
         from .estimate import check_prices
 
-        return check_prices(self._client, zones=[self._zone])
+        return check_prices(self._client, zones=sorted(self._zones))
 
     # ---------------------------------------------------------------------------
     # Server lifecycle
@@ -759,24 +759,25 @@ class ScalewayCloudProvider(CloudProvider):
     def get_server_type(self, name) -> ProviderServerType:
         """Validate and return a ProviderServerType for a canonical type name.
 
-        *name* is the canonical dot-form (``dev1.s``).  We translate it to the
-        native dash-form, validate it against the zone's available commercial
-        types, and return a ProviderServerType whose ``.name`` stays canonical
-        and whose ``._native`` carries the dash-form for the SDK.
+        Checked across all configured zones (a type may be offered in one zone
+        but not another); the SDK ServerType's properties are the same wherever
+        it is offered. Per-zone availability at a specific location is enforced
+        at create time via location fallback.
         """
         canonical = canonical_type(name) if "-" in str(name) else str(name).lower()
         native = native_type(canonical)
 
-        response = self._instance.list_servers_types(zone=self._zone)
-        available = (getattr(response, "servers", None) or {})
-        if native not in available:
-            raise ServerTypeError(
-                f"Scaleway server type '{canonical}' (native '{native}') not "
-                f"available in zone {self._zone}"
-            )
-        # Store the SDK ServerType (it carries the authoritative ``arch``) so
-        # get_server_arch does not have to guess from the name.
-        return ProviderServerType(name=canonical, _native=available[native])
+        for zone in self._zones:
+            response = self._instance.list_servers_types(zone=zone)
+            available = getattr(response, "servers", None) or {}
+            if native in available:
+                # Store the SDK ServerType (it carries the authoritative ``arch``)
+                # so get_server_arch does not have to guess from the name.
+                return ProviderServerType(name=canonical, _native=available[native])
+        raise ServerTypeError(
+            f"Scaleway server type '{canonical}' (native '{native}') not "
+            f"available in any configured zone {sorted(self._zones)}"
+        )
 
     def get_server_arch(self, server_type: ProviderServerType) -> str:
         """Return CPU architecture ('arm64' or 'x64') for *server_type*.

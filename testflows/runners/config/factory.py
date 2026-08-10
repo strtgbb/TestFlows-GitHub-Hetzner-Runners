@@ -48,6 +48,17 @@ def provider_factory(config: Config) -> list[CloudProvider]:
     ):
         from ..providers.scaleway.provider import ScalewayCloudProvider
 
+        # Derive candidate zones from in- labels across meta-labels; the provider
+        # filters to valid Scaleway zones. (A proper home for this is the factory
+        # rewrite noted in the design follow-ups.)
+        candidate_zones = []
+        for labels in (config.meta_label or {}).values():
+            for label in labels:
+                lowered = str(label).lower()
+                idx = lowered.find("in-")
+                if idx != -1:
+                    candidate_zones.append(lowered[idx + len("in-"):])
+
         providers.append(
             ScalewayCloudProvider(
                 access_key=scaleway_cfg.access_key,
@@ -55,6 +66,7 @@ def provider_factory(config: Config) -> list[CloudProvider]:
                 project_id=scaleway_cfg.project_id,
                 organization_id=scaleway_cfg.organization_id,
                 zone=scaleway_cfg.defaults.location or "fr-par-1",
+                zones=candidate_zones,
                 default_image_spec=scaleway_cfg.defaults.image,
                 default_location_spec=scaleway_cfg.defaults.location,
                 default_server_type_spec=scaleway_cfg.defaults.server_type,

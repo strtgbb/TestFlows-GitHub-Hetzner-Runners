@@ -249,6 +249,34 @@ def factory_builds_scaleway_provider(self):
 
 
 @TestScenario
+def factory_derives_scaleway_zones_from_meta_labels(self):
+    """The factory passes Scaleway in- zones from meta-labels to the provider."""
+    with Given("a mocked SDK and a parsed config with scaleway creds"):
+        mock_scaleway_sdk()
+        path = write_config(yaml_text="""\
+            ssh_key: /dev/null
+            providers:
+              scaleway:
+                access_key: k
+                secret_key: 11111111-1111-1111-1111-111111111111
+                project_id: 22222222-2222-2222-2222-222222222222
+                defaults:
+                  location: fr-par-1
+        """)
+        cfg = parse_config(path)
+    with And("meta-labels referencing Scaleway and non-Scaleway in- zones"):
+        cfg.meta_label = {
+            "linux-arm": {"type-basic2.a16c.32g", "in-fr-par-2", "in-nl-ams-1"},
+            "x86": {"type-t3.medium", "in-us-east-1a"},
+        }
+    with When("the factory builds providers"):
+        providers = provider_factory(cfg)
+        scw = next(p for p in providers if p.name == "scaleway")
+    with Then("its zone set is the default plus the Scaleway in- zones"):
+        assert scw._zones == {"fr-par-1", "fr-par-2", "nl-ams-1"}, scw._zones
+
+
+@TestScenario
 def scaleway_recycle_override_parses_and_propagates(self):
     """providers.scaleway.recycle / recycle_grace_period parse and reach the provider,
     so recycling can be disabled per-provider (e.g. off for Scaleway)."""

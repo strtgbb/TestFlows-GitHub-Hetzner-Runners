@@ -593,47 +593,6 @@ def server_to_provider_root_disk_none_without_volumes(self):
 
 
 @TestScenario
-def reap_archived_servers_targets_stopped_recycle_only(self):
-    """after_scale_down reaps recycle-pool servers the cloud archived (raw
-    'stopped'), leaving controller-parked ('stopped in place') and non-recycle
-    servers alone."""
-    from datetime import datetime, timezone, timedelta
-    from testflows.runners.constants import (
-        recycle_server_name_prefix,
-        recycle_timestamp_label,
-    )
-
-    now = datetime.now(timezone.utc)
-
-    def _native(name, state):
-        return SimpleNamespace(
-            id="srv-" + name, name=name, state=state, zone="fr-par-1",
-            commercial_type="basic2-a8c-16g", volumes={},
-            creation_date=now - timedelta(minutes=63),
-            modification_date=now - timedelta(minutes=3),
-            public_ips=[], public_ip=None, private_ip=None,
-            tags=[f"{recycle_timestamp_label}={int((now - timedelta(minutes=8)).timestamp())}"],
-        )
-
-    with Given("a scaleway provider"):
-        provider = scaleway_provider()
-    with And("an archived recycle, a parked recycle, and a non-recycle stopped server"):
-        provider._instance.list_servers_all.return_value = [
-            _native(f"{recycle_server_name_prefix}arch", "stopped"),
-            _native(f"{recycle_server_name_prefix}parked", "stopped in place"),
-            _native("github-runner-30-9-basic2.a8c.16g", "stopped"),
-        ]
-    with When("the archived-server reaper runs"):
-        provider._reap_archived_servers()
-    with Then("only the archived recycle server is deleted"):
-        assert provider._instance.delete_server.call_count == 1, (
-            provider._instance.delete_server.call_count
-        )
-        _, dkwargs = provider._instance.delete_server.call_args
-        assert dkwargs["server_id"] == f"srv-{recycle_server_name_prefix}arch", dkwargs
-
-
-@TestScenario
 def server_to_provider_reads_root_disk_from_tag(self):
     """An SBS boot volume reports no size in the Instance API listing, so the
     create-time tag is the source; this is the recycle disk-safety gate's input."""

@@ -153,7 +153,4 @@ def scaleway_provider(self):
         default_image_spec="ubuntu_jammy",
         ssh_user="root",
     )
-    # Sane default so after_scale_down's archived-server reaper (which lists
-    # instances) is a no-op unless a test stubs it.
-    provider._instance.list_servers_all.return_value = []
     yield provider

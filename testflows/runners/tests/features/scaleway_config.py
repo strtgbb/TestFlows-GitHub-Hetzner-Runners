@@ -1181,6 +1181,27 @@ def provider_sdk_calls_match_real_signatures(self):
 
 
 # ---------------------------------------------------------------------------
+# Provider zone set
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def provider_zone_set_filters_and_includes_default(self):
+    """zones is filtered to valid Scaleway zones; the default zone is always in."""
+    with Given("a scaleway provider given mixed zones (incl. non-Scaleway)"):
+        from testflows.runners.tests.steps.scaleway import mock_scaleway_sdk
+        mock_scaleway_sdk()
+        from testflows.runners.providers.scaleway.provider import ScalewayCloudProvider
+        provider = ScalewayCloudProvider(
+            access_key="k", secret_key="11111111-1111-1111-1111-111111111111",
+            project_id="22222222-2222-2222-2222-222222222222", zone="fr-par-1",
+            zones=["fr-par-2", "nl-ams-1", "nbg1", "us-east-1a"],
+        )
+    with Then("only Scaleway zones survive and the default is included"):
+        assert provider._zones == {"fr-par-1", "fr-par-2", "nl-ams-1"}, provider._zones
+
+
+# ---------------------------------------------------------------------------
 # Feature entry point
 # ---------------------------------------------------------------------------
 

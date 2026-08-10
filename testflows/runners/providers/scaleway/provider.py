@@ -80,6 +80,7 @@ class ScalewayCloudProvider(CloudProvider):
         project_id: str,
         organization_id: str = None,
         zone: str = "fr-par-1",
+        zones: list[str] = None,
         default_image_spec: str = None,
         default_location_spec: str = None,
         default_server_type_spec: str = None,
@@ -106,6 +107,16 @@ class ScalewayCloudProvider(CloudProvider):
         self._project_id = project_id
         self._organization_id = organization_id
         self._zone = zone
+        # Zones this provider operates over (listing/prices/fallback). Derived
+        # from in- labels by the factory; filtered to valid Scaleway zones here.
+        self._zones = set()
+        for z in zones or []:
+            try:
+                if self.get_location(z) is not None:
+                    self._zones.add(z)
+            except LocationError:
+                pass
+        self._zones.add(zone)
         self._default_image = default_image_spec
         self._default_location = default_location_spec
         self._default_server_type = default_server_type_spec

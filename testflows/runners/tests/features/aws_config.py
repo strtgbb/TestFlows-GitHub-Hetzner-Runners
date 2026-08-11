@@ -341,6 +341,33 @@ def factory_derives_region_from_location(self):
 
 
 # ---------------------------------------------------------------------------
+# parse_config_section: direct unit tests of providers/aws/config.py
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def aws_parse_section_validates(self):
+    """parse_config_section coerces a valid section and rejects an invalid one."""
+    from testflows.runners.providers.aws import config as aws_config
+
+    with Then("a valid section coerces into the dataclass"):
+        cfg = aws_config.parse_config_section(
+            {
+                "access_key_id": "AK",
+                "secret_access_key": "SK",
+                "security_group": "sg-1",
+            }
+        )
+        assert cfg.access_key_id == "AK", cfg
+    with And("an invalid field is rejected"):
+        try:
+            aws_config.parse_config_section({"access_key_id": 123})
+            assert False, "expected rejection"
+        except AssertionError:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # Feature entry point
 # ---------------------------------------------------------------------------
 

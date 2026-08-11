@@ -338,6 +338,59 @@ def static_owns_no_global_defaults(self):
 
 
 # ---------------------------------------------------------------------------
+# parse_config_section: direct unit tests of the moved dedicated_static
+# validation (providers/dedicated_static/config.py)
+# ---------------------------------------------------------------------------
+
+
+@TestScenario
+def dedicated_static_parse_section_validates(self):
+    """parse_config_section() coerces a minimal valid section (with a group,
+    its hosts, and per-group ssh) into dedicated_static_provider, and rejects
+    an invalid group name, mirroring parse_config()'s validation of
+    providers.dedicated_static.groups.
+    """
+    from testflows.runners.providers.dedicated_static import config as ds_config
+
+    valid_section = {
+        "claim_ttl_minutes": 120,
+        "ssh_defaults": {"user": "runner", "port": 22, "key": "/tmp/key"},
+        "groups": {
+            "metal-dc1": {
+                "labels": ["self-hosted", "type-x", "in-y"],
+                "hosts": ["203.0.113.10", "203.0.113.11"],
+                "ssh": {"user": "override", "port": 2222},
+            }
+        },
+    }
+
+    with Then("a minimal valid section coerces into the dataclass"):
+        cfg = ds_config.parse_config_section(valid_section)
+        assert cfg is not None, cfg
+        assert cfg.claim_ttl_minutes == 120, cfg.claim_ttl_minutes
+        group = cfg.groups["metal-dc1"]
+        assert group.hosts == ["203.0.113.10", "203.0.113.11"], group.hosts
+        assert "type-x" in group.labels, group.labels
+        assert group.ssh.user == "override", group.ssh.user
+        assert group.ssh.port == 2222, group.ssh.port
+
+    with And("an invalid group name is rejected"):
+        invalid_section = {
+            "groups": {
+                "Bad Name!": {
+                    "labels": ["type-x"],
+                    "hosts": ["203.0.113.10"],
+                }
+            }
+        }
+        try:
+            ds_config.parse_config_section(invalid_section)
+            assert False, "expected rejection"
+        except AssertionError as e:
+            assert "invalid group name" in str(e), str(e)
+
+
+# ---------------------------------------------------------------------------
 # Feature entry point
 # ---------------------------------------------------------------------------
 

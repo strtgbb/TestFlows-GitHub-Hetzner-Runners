@@ -193,6 +193,36 @@ def parse_propagates_credentials_and_defaults(self):
 
 
 @TestScenario
+def scaleway_parse_section_validates(self):
+    """parse_config_section coerces a valid section and rejects dash-form types."""
+    from testflows.runners.providers.scaleway import config as scw_config
+
+    with Then("a valid section coerces into the dataclass"):
+        cfg = scw_config.parse_config_section(
+            {
+                "access_key": "k",
+                "secret_key": "s",
+                "project_id": "p",
+                "defaults": {"server_type": "dev1.m", "location": "fr-par-1"},
+            }
+        )
+        assert cfg.access_key == "k" and cfg.defaults.server_type == "dev1.m", cfg
+    with And("a dash-form server_type is rejected"):
+        try:
+            scw_config.parse_config_section(
+                {
+                    "access_key": "k",
+                    "secret_key": "s",
+                    "project_id": "p",
+                    "defaults": {"server_type": "DEV1-M"},
+                }
+            )
+            assert False, "expected rejection"
+        except AssertionError:
+            pass
+
+
+@TestScenario
 def parse_rejects_dash_server_type(self):
     """A dash-form default server_type in config is rejected with guidance."""
     with Given("a config file with a dash-form server_type"):

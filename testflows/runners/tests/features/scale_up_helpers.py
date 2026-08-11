@@ -106,6 +106,17 @@ def _runner_name(server_type):
 
 
 @TestScenario
+def format_runner_name_round_trips_to_type(self):
+    """format_runner_name and get_runner_server_type are inverse (the codec)."""
+    from testflows.runners.utils import format_runner_name
+
+    for t in ("cx22", "c8g.2xlarge", "basic2.a16c.32g", "dev1.s"):
+        name = format_runner_name(123, 45, t)
+        assert name == f"{RUNNER_PREFIX}123-45-{t}", name
+        assert get_runner_server_type(name) == t, name
+
+
+@TestScenario
 def get_runner_server_type_valid(self):
     assert get_runner_server_type(_runner_name("cx22")) == "cx22"
 

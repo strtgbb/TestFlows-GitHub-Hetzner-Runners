@@ -32,7 +32,7 @@ from .config import (
     check_setup_script,
 )
 from .config import standby_runner as StandbyRunner
-from .utils import get_runner_server_type
+from .utils import get_runner_server_type, format_runner_name
 from .cloud_provider import (
     CloudProvider,
     ProviderServer,
@@ -1889,7 +1889,9 @@ def scale_up(
                                 _primary_type = (
                                     _type_names[0] if _type_names else "unknown"
                                 )
-                                server_name = f"{server_name_prefix}{job.run_id}-{job.id}-{_primary_type}"
+                                server_name = format_runner_name(
+                                    job.run_id, job.id, _primary_type
+                                )
 
                                 if job.status != "completed":
                                     if server_name in [

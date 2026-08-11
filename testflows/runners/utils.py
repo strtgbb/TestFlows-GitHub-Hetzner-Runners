@@ -1,6 +1,16 @@
 from .constants import runner_name_prefix
 
 
+def format_runner_name(run_id, job_id, server_type: str) -> str:
+    """Build the canonical runner/server name from its identity parts.
+
+    Single source of truth for the format ``{prefix}{run_id}-{job_id}-{type}``;
+    get_runner_server_type is its inverse. server_type must be dash-free
+    (canonical dot-form) so the name round-trips.
+    """
+    return f"{runner_name_prefix}{run_id}-{job_id}-{server_type}"
+
+
 def get_runner_server_type(runner_name: str) -> str | None:
     """Return the server type embedded in a runner name, or None.
 

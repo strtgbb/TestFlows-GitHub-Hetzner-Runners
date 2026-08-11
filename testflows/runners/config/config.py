@@ -421,13 +421,6 @@ def write(file, doc: dict):
     yaml.dump(doc, file)
 
 
-def check_scripts(scripts: str):
-    """Check if scripts directory exists."""
-    if not os.path.exists(scripts):
-        raise errors.ScriptsError(f"invalid scripts directory '{scripts}'")
-    return scripts
-
-
 def check_setup_script(script: str):
     """Check if setup script is valid."""
     if not os.path.exists(script):

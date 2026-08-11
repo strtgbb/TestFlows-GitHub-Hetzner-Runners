@@ -144,7 +144,6 @@ class ScalewayCloudProvider(CloudProvider):
         self._instance = InstanceV1API(self._client)
         self._block = BlockV1API(self._client)
         self._project_id = project_id
-        self._organization_id = organization_id
         self._zone = zone
         # Zones this provider operates over (listing/prices/fallback). Derived
         # from in- labels by the factory; filtered to valid Scaleway zones here.

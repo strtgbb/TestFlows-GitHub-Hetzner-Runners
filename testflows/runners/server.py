@@ -20,77 +20,10 @@ import subprocess
 import signal
 import shlex
 
-from datetime import datetime, timezone
-from collections import namedtuple
-
 from hcloud.servers.client import BoundServer
-from hcloud.servers.domain import Server, PublicNetwork, IPv4Address, IPv6Network
-from hcloud.primary_ips.domain import PrimaryIP
 
 from .actions import Action
 from .shell import shell
-
-ServerAge = namedtuple("ServerAge", "days hours minutes seconds")
-
-
-class MockServer(Server):
-    """Mock server class for direct SSH connections."""
-
-    def __init__(self, name: str, public_net: dict):
-        """Initialize mock server.
-
-        Args:
-            name: Server name
-            public_net: Dictionary containing public network info with ipv4/ipv6
-        """
-        ipv4_ip = public_net.get("ipv4", {}).get("ip")
-        ipv6_ip = public_net.get("ipv6", {}).get("ip")
-
-        ipv4_addr = (
-            IPv4Address(ip=ipv4_ip, blocked=False, dns_ptr="") if ipv4_ip else None
-        )
-        ipv6_addr = (
-            IPv6Network(ip=f"{ipv6_ip}/64", blocked=False, dns_ptr=[])
-            if ipv6_ip
-            else None
-        )
-
-        primary_ipv4 = PrimaryIP(ip=ipv4_ip) if ipv4_ip else None
-        primary_ipv6 = PrimaryIP(ip=ipv6_ip) if ipv6_ip else None
-
-        public_network = PublicNetwork(
-            ipv4=ipv4_addr,
-            ipv6=ipv6_addr,
-            primary_ipv4=primary_ipv4,
-            primary_ipv6=primary_ipv6,
-            floating_ips=[],
-        )
-
-        # Convert datetime to ISO format string
-        created_dt = datetime.now(timezone.utc)
-        created_iso = created_dt.isoformat()
-
-        super().__init__(
-            id=0,
-            name=name,
-            status=Server.STATUS_RUNNING,
-            created=created_iso,  # Pass ISO format string instead of datetime object
-            public_net=public_network,
-            server_type={"name": "unknown"},
-            labels={},
-        )
-
-
-def age(server: Server):
-    """Return server's age."""
-    now = datetime.now(timezone.utc)
-    used = now - server.created
-    days = used.days
-    hours, remainder = divmod(used.seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-
-    return ServerAge(days=days, hours=hours, minutes=minutes, seconds=seconds)
-
 
 def ip_address(server):
     """Return IPv4 (default) or IPv6 address of the server."""
@@ -104,7 +37,7 @@ def ip_address(server):
                 server.public_ipv6, strict=False
             ).network_address + 1
         raise ValueError(f"Server {server.name} has no public IPv4 or IPv6 address")
-    # Legacy path: hcloud Server / MockServer objects.
+    # Legacy path: raw hcloud server objects (public_net-based).
     if server.public_net.primary_ipv4 is not None:
         return server.public_net.primary_ipv4.ip
     return (

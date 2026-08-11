@@ -37,17 +37,7 @@ class ServerTypeError(Exception):
     pass
 
 
-class ScriptsError(Exception):
-    pass
-
-
 class ConfigError(Exception):
-    pass
-
-
-class RetryableError(Exception):
-    """Error that can be retried"""
-
     pass
 
 

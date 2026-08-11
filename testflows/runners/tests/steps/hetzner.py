@@ -27,7 +27,5 @@ def hetzner_provider(self):
     """Yield (hclient_mock, HetznerCloudProvider) with HClient patched."""
     with Given("mocked HClient"):
         hclient = mock_hclient()
-    provider = HetznerCloudProvider(
-        token="test-token", ssh_key_path="/tmp/id_rsa.pub"
-    )
+    provider = HetznerCloudProvider(token="test-token")
     yield hclient, provider

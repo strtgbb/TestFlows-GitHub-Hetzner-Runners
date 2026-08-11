@@ -50,7 +50,6 @@ class HetznerCloudProvider(CloudProvider):
         defaults = cfg.defaults
         return cls(
             token=cfg.token,
-            ssh_key_path=config.ssh_key,
             default_image=defaults.image,
             default_server_type=defaults.server_type,
             default_location=defaults.location,
@@ -66,7 +65,6 @@ class HetznerCloudProvider(CloudProvider):
     def __init__(
         self,
         token: str,
-        ssh_key_path: str = None,
         default_image=None,
         default_server_type=None,
         default_location=None,
@@ -82,8 +80,6 @@ class HetznerCloudProvider(CloudProvider):
 
         Args:
             token: Hetzner Cloud API token.
-            ssh_key_path: Optional path to a public SSH key file.  When
-                supplied, ``get_or_create_ssh_key`` can accept ``is_file=True``.
             default_image: Default image spec used when no ``image-`` label is
                 present (from ``providers.hetzner.defaults.image``). Resolved to
                 a validated hcloud ``Image`` at startup.
@@ -97,8 +93,6 @@ class HetznerCloudProvider(CloudProvider):
             max_runners: Per-provider runner cap (overrides global max_runners).
             end_of_life: Per-provider end-of-life in minutes (overrides global).
         """
-        self._token = token
-        self._ssh_key_path = ssh_key_path
         self._client = HClient(token=token)
         self._default_image = default_image
         self._default_server_type = default_server_type

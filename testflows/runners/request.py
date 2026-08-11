@@ -23,12 +23,6 @@ from . import __version__ as project_version, __name__ as project_name
 user_agent = f"{project_name}/{project_version}"
 
 
-class RetryableError(Exception):
-    """Error that can be retried"""
-
-    pass
-
-
 def should_retry(exc):
     """Determine if an error should be retried"""
     if isinstance(exc, HTTPError):

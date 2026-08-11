@@ -63,11 +63,6 @@ class StreamingYAMLWriter:
         self._write(value)
         return self
 
-    def add_key_value(self, key, value):
-        """Add '{key}: {value}\n'."""
-        self._write({key: value})
-        return self
-
     def add_list_element(self, value):
         """Add '- {value}\n'."""
         self._write([value])

@@ -11,7 +11,6 @@ from .config import (
     image,
     location,
     server_type,
-    provider_defaults,
     provider_list,
 )
 

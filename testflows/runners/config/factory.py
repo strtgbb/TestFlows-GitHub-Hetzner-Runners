@@ -1,5 +1,7 @@
 """Provider factory: construct CloudProvider instances from Config."""
 
+import re
+
 from .config import Config
 from ..cloud_provider import CloudProvider
 
@@ -48,16 +50,15 @@ def provider_factory(config: Config) -> list[CloudProvider]:
     ):
         from ..providers.scaleway.provider import ScalewayCloudProvider
 
-        # Derive candidate zones from in- labels across meta-labels; the provider
-        # filters to valid Scaleway zones. (A proper home for this is the factory
-        # rewrite noted in the design follow-ups.)
+        # Derive candidate zones from [prefix-]in-<zone> labels across meta-labels;
+        # the provider filters to valid Scaleway zones. Match in- as a prefix
+        # segment (like scale_up), not a substring, so spin-up/min-cpu don't hit.
         candidate_zones = []
         for labels in (config.meta_label or {}).values():
             for label in labels:
-                lowered = str(label).lower()
-                idx = lowered.find("in-")
-                if idx != -1:
-                    candidate_zones.append(lowered[idx + len("in-"):])
+                match = re.match(r"(?:.+-)?in-(.+)$", str(label).lower())
+                if match:
+                    candidate_zones.append(match.group(1))
 
         providers.append(
             ScalewayCloudProvider(

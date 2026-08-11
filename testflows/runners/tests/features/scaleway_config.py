@@ -23,7 +23,7 @@ from testflows.runners.cloud_provider import (
     ProviderServer,
     ProviderServerType,
 )
-from testflows.runners.errors import ImageError, ImageSpecFormatError
+from testflows.runners.errors import ImageError, ImageSpecFormatError, ServerTypeError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
 from testflows.runners.server import get_runner_server_name
@@ -1343,6 +1343,39 @@ def list_servers_fans_out_across_zones(self):
     with Then("servers from both zones are returned"):
         names = sorted(s.name for s in result)
         assert names == ["a", "b"], names
+
+
+@TestScenario
+def get_server_type_missing_in_all_zones_raises(self):
+    """A type offered in no configured zone raises ServerTypeError."""
+    with Given("a provider over two zones that offer no matching type"):
+        provider = scaleway_provider()
+        provider._zones = {"fr-par-1", "nl-ams-1"}
+        provider._instance.list_servers_types.return_value = SimpleNamespace(servers={})
+    with Then("get_server_type raises ServerTypeError"):
+        try:
+            provider.get_server_type("basic2.a16c.32g")
+            assert False, "expected ServerTypeError"
+        except ServerTypeError:
+            pass
+
+
+@TestScenario
+def get_prices_fans_out_across_zones(self):
+    """get_prices asks the estimator for every configured zone (sorted)."""
+    from unittest.mock import patch
+
+    with Given("a provider over two zones"):
+        provider = scaleway_provider()
+        provider._zones = {"nl-ams-1", "fr-par-1"}
+    with When("get_prices runs"), patch(
+        "testflows.runners.providers.scaleway.estimate.check_prices",
+        return_value={},
+    ) as check_prices:
+        provider.get_prices()
+    with Then("the estimator is queried for all zones, sorted"):
+        _, kwargs = check_prices.call_args
+        assert kwargs["zones"] == ["fr-par-1", "nl-ams-1"], kwargs
 
 
 # ---------------------------------------------------------------------------

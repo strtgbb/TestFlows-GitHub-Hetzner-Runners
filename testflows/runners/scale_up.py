@@ -141,15 +141,6 @@ def get_volume_name(name: str):
     return name.split("-", 1)[0]
 
 
-def get_runner_server_type(runner_name: str) -> str | None:
-    """Return the server type embedded in a runner name, or None."""
-    if runner_name and runner_name.startswith(runner_name_prefix):
-        parts = runner_name.split("-", 4)
-        if len(parts) == 5:
-            return parts[4]
-    return None
-
-
 def server_setup(
     provider: CloudProvider,
     server: ProviderServer,

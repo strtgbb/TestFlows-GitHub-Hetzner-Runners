@@ -19,11 +19,11 @@ import github
 
 from .actions import Action
 from .config import Config
-from .providers.hetzner.config import check_prices as hetzner_check_prices
+from .config.factory import provider_factory
 from .providers.hetzner import estimate as hetzner_estimate
 from .providers.aws import estimate as aws_estimate
+from .providers.scaleway import estimate as scaleway_estimate
 from .streamingyaml import StreamingYAMLWriter
-from .hclient import HClient as Client
 from .utils import get_runner_server_type
 
 from datetime import timedelta
@@ -110,42 +110,59 @@ def extend_workflow_run(run: WorkflowRun):
     return run
 
 
-def _is_aws_server_type(server_type: str) -> bool:
-    """Return True if server_type looks like an EC2 instance type (contains a dot)."""
-    return server_type is not None and "." in server_type
+# Pricing dispatch: the estimate CLI works on historical runner names, which
+# carry no provider, so route by which provider's price map holds the type
+# (server_prices is keyed per-provider, like metrics.py and the runtime).
+_PROVIDER_PRICE_FNS = {
+    "hetzner": hetzner_estimate.get_server_price,
+    "aws": aws_estimate.get_server_price,
+    "scaleway": scaleway_estimate.get_server_price,
+}
+_PROVIDER_RUNNER_PRICE_FNS = {
+    "hetzner": hetzner_estimate.get_runner_server_price_per_second,
+    "aws": aws_estimate.get_runner_server_price_per_second,
+    "scaleway": scaleway_estimate.get_runner_server_price_per_second,
+}
+
+
+def _provider_for_type(server_prices: dict, server_type: str) -> str | None:
+    """Return the provider whose price map contains server_type, or None."""
+    for name, entry in (server_prices or {}).items():
+        if server_type in ((entry or {}).get("prices") or {}):
+            return name
+    return None
 
 
 def get_server_price(
-    server_prices: dict[str, dict[str, float]],
+    server_prices: dict,
     server_type: str,
     server_location: str,
     ipv4_price: float = 0.0,
     ipv6_price: float = 0.0,
 ) -> float:
-    """Get server price, dispatching to the right provider based on server type."""
-    if _is_aws_server_type(server_type):
-        return aws_estimate.get_server_price(server_prices, server_type, server_location)
-    return hetzner_estimate.get_server_price(
-        server_prices, server_type, server_location, ipv4_price, ipv6_price
+    """Price a server via the provider whose price map owns its type."""
+    name = _provider_for_type(server_prices, server_type)
+    if name is None:
+        return None
+    return _PROVIDER_PRICE_FNS[name](
+        server_prices[name]["prices"], server_type, server_location,
+        ipv4_price, ipv6_price,
     )
 
 
 def get_runner_server_price_per_second(
-    server_prices: dict[str, dict[str, float]],
+    server_prices: dict,
     runner_name: str,
     ipv4_price: float = 0.0,
     ipv6_price: float = 0.0,
 ) -> tuple[float, str]:
-    """Get runner server price per second, dispatching to the right provider."""
-
+    """Price a runner's server per second via the owning provider."""
     server_type = get_runner_server_type(runner_name)
-
-    if _is_aws_server_type(server_type):
-        return aws_estimate.get_runner_server_price_per_second(
-            server_prices, runner_name
-        )
-    return hetzner_estimate.get_runner_server_price_per_second(
-        server_prices, runner_name, ipv4_price, ipv6_price
+    name = _provider_for_type(server_prices, server_type)
+    if name is None:
+        return None, server_type
+    return _PROVIDER_RUNNER_PRICE_FNS[name](
+        server_prices[name]["prices"], runner_name, ipv4_price, ipv6_price,
     )
 
 
@@ -163,48 +180,20 @@ def login_and_get_prices(
     with Action(f"Getting repository {config.github_repository}"):
         repo: Repository = github_client.get_repo(config.github_repository)
 
-    server_prices: dict[str, dict[str, float]] = {}
-
-    hetzner_token = getattr(config, "hetzner_token", None)
-    if hetzner_token:
-        with Action("Getting Hetzner server prices"):
+    # Per-provider price map {name: {"prices": ..., "currency": ...}}, matching
+    # metrics.py and the runtime. Each provider owns its own auth/pricing; a
+    # provider's fetch failing is logged and skipped, not fatal.
+    server_prices: dict[str, dict] = {}
+    for provider in provider_factory(config):
+        with Action(f"Getting {provider.name} server prices"):
             try:
-                client = Client(token=hetzner_token)
-                server_prices.update(hetzner_check_prices(client))
+                server_prices[provider.name] = {
+                    "prices": provider.get_prices(),
+                    "currency": provider.currency,
+                }
             except Exception as e:
                 import logging
-                logging.warning(f"Could not fetch Hetzner prices: {e}")
-
-    # Determine AWS region and session from config if present.
-    from .providers.aws.utils import _az_to_region
-    aws_cfg = getattr(getattr(config, "providers", None), "aws", None)
-    aws_session = None
-    if aws_cfg is not None:
-        default_az = getattr(getattr(aws_cfg, "defaults", None), "location", None) or "us-east-1a"
-        aws_region = _az_to_region(default_az)
-        try:
-            import boto3
-            aws_session = boto3.Session(
-                aws_access_key_id=getattr(aws_cfg, "access_key_id", None),
-                aws_secret_access_key=getattr(aws_cfg, "secret_access_key", None),
-                region_name=aws_region,
-            )
-        except Exception:
-            pass
-    else:
-        try:
-            import boto3
-            aws_region = boto3.session.Session().region_name or "us-east-1"
-        except Exception:
-            aws_region = None
-
-    if aws_region:
-        with Action(f"Getting EC2 on-demand prices for {aws_region}"):
-            try:
-                server_prices.update(aws_estimate.check_prices(aws_region, session=aws_session))
-            except Exception as e:
-                import logging
-                logging.warning(f"Could not fetch EC2 prices: {e}")
+                logging.warning(f"Could not fetch {provider.name} prices: {e}")
 
     return (repo, server_prices)
 

@@ -35,7 +35,6 @@ from .scale_up import (
     StandbyRunner,
     ScaleUpFailureMessage,
 )
-from .server import get_runner_server_name
 from .config import Config
 from .cloud_provider import (
     CloudProvider,
@@ -533,7 +532,7 @@ def scale_down(
                             if runner.name not in unused_runners:
                                 with Action(
                                     f"Found new unused runner {runner.name}",
-                                    server_name=get_runner_server_name(runner.name),
+                                    server_name=runner.name,
                                     interval=interval,
                                 ):
                                     unused_runners[runner.name] = UnusedRunner(
@@ -715,7 +714,7 @@ def scale_down(
                     if unused_runner.observed_interval != current_interval:
                         with Action(
                             f"Forgetting about unused runner {runner_name}",
-                            server_name=get_runner_server_name(runner_name),
+                            server_name=runner_name,
                             interval=interval,
                         ):
                             unused_runners.pop(runner_name)
@@ -731,7 +730,7 @@ def scale_down(
                             with Action(
                                 "Scale-down decision for unused runner",
                                 level=logging.DEBUG,
-                                server_name=get_runner_server_name(runner_name),
+                                server_name=runner_name,
                                 interval=interval,
                             ) as action:
                                 action.note(
@@ -742,7 +741,7 @@ def scale_down(
                             with Action(
                                 f"Try to find server for the runner {runner_name}",
                                 ignore_fail=True,
-                                server_name=get_runner_server_name(runner_name),
+                                server_name=runner_name,
                                 interval=interval,
                             ):
                                 # Match by the provider's own build_runner_name over
@@ -761,7 +760,7 @@ def scale_down(
                             with Action(
                                 "Unused runner resolution result",
                                 level=logging.DEBUG,
-                                server_name=get_runner_server_name(runner_name),
+                                server_name=runner_name,
                                 interval=interval,
                             ) as action:
                                 provider_lookup_summary = []
@@ -817,7 +816,7 @@ def scale_down(
                                 with Action(
                                     f"Removing offline runner {runner_name} with no server",
                                     ignore_fail=True,
-                                    server_name=get_runner_server_name(runner_name),
+                                    server_name=runner_name,
                                     interval=interval,
                                 ):
                                     repo.remove_self_hosted_runner(

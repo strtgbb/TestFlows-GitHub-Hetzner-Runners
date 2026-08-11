@@ -26,7 +26,7 @@ from testflows.runners.cloud_provider import (
 from testflows.runners.errors import ImageError, ImageSpecFormatError, ServerTypeError
 from testflows.runners.providers.scaleway import utils, args as scw_args
 from testflows.runners.scale_up import get_server_types, get_runner_server_type
-from testflows.runners.server import get_runner_server_name
+from testflows.runners.utils import format_runner_name
 from testflows.runners.constants import runner_name_prefix
 from testflows.runners.tests.steps.config import write_config
 from testflows.runners.tests.steps.scaleway import mock_scaleway_sdk, scaleway_provider
@@ -145,18 +145,18 @@ def get_server_types_accepts_dot_skips_dash(self):
 
 @TestScenario
 def runner_name_roundtrip_for_dot_types(self):
-    """A canonical dot-type embedded in a runner name decodes back intact.
+    """A canonical dot-type survives the runner-name codec round-trip.
 
-    Covers both ``get_runner_server_type`` (remainder capture) and
-    ``get_runner_server_name`` (the ``[:5]`` truncation), which only stay
-    correct because the canonical form is dash-free.
+    ``format_runner_name`` builds the name and ``get_runner_server_type``
+    decodes the type back out; both stay correct only because the canonical
+    form is dash-free.
     """
     for _native, canonical in _TYPES:
-        name = f"{runner_name_prefix}run1-0-{canonical}"
-        with Then(f"type decodes from name for {canonical}"):
+        name = format_runner_name("run1", 0, canonical)
+        with Then(f"name is built in canonical form for {canonical}"):
+            assert name == f"{runner_name_prefix}run1-0-{canonical}", name
+        with And(f"type decodes from name for {canonical}"):
             assert get_runner_server_type(name) == canonical, name
-        with And(f"server name reconstructs intact for {canonical}"):
-            assert get_runner_server_name(name) == name, name
 
 
 # ---------------------------------------------------------------------------

@@ -29,7 +29,6 @@ from hcloud.primary_ips.domain import PrimaryIP
 
 from .actions import Action
 from .shell import shell
-from .constants import runner_name_prefix
 
 ServerAge = namedtuple("ServerAge", "days hours minutes seconds")
 
@@ -297,22 +296,3 @@ class ssh_tunnel:
             time.sleep(check_interval)
 
         return False
-
-
-def get_runner_server_name(runner_name: str) -> str:
-    """Determine runner's server name.
-
-    Default runners are named ``<server-name>-<type>-<location>``; the server
-    name is the first five dash fields (the trailing ``-<type>-<location>`` is
-    dropped, which also tolerates hyphenated AWS locations like ``us-east-1a``
-    that sit past field five).
-
-    Dedicated-static runners register under their bare, stable name with no
-    ``-<type>-<location>`` suffix, and that name may contain hyphens in the
-    group (e.g. ``github-runner-static-my-group-<hash>``). For them the runner
-    name *is* the server name, so return it unchanged — mirroring the prefix
-    guard used by get_runner_server_type for the same class of issue.
-    """
-    if runner_name.startswith(f"{runner_name_prefix}static-"):
-        return runner_name
-    return "-".join(runner_name.split("-")[:5])

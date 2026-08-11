@@ -51,7 +51,7 @@ from .constants import (
     recycle_image_label,
 )
 
-from .server import wait_ssh, ssh, get_runner_server_name
+from .server import wait_ssh, ssh
 from .ordered_set import OrderedSet as set
 
 from hcloud import APIException

@@ -12,8 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-__author__ = "Vitaliy Zakaznikov"
-__version__ = "1.10.__VERSION__"
+__author__ = "Vitaliy Zakaznikov, Stuart Gibb"
+__version__ = "2.01.__VERSION__"
 __name__ = "testflows.runners"
 __license__ = f"""
 Copyright 2023-2025 Katteli Inc.

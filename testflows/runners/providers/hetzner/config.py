@@ -69,7 +69,7 @@ def update_from_args(provider_config, args):
 
 def parse_config_section(section: dict) -> "hetzner_provider":
     """Validate and coerce a ``providers.hetzner`` config section into a
-    ``hetzner_provider`` dataclass. Moved from config/parse.py verbatim.
+    ``hetzner_provider`` dataclass.
     """
     h = section
     assert isinstance(h, dict), "config.providers.hetzner: is not a dictionary"

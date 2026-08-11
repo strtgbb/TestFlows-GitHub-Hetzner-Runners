@@ -16,7 +16,7 @@ def parse_config_section(
     section: dict, meta_label: dict = None, label_prefix: str = ""
 ) -> "dedicated_static_provider":
     """Validate and coerce a ``providers.dedicated_static`` config section into a
-    ``dedicated_static_provider`` dataclass. Moved from config/parse.py verbatim.
+    ``dedicated_static_provider`` dataclass.
 
     ``meta_label`` and ``label_prefix`` come from the top-level document (not the
     section itself) because group label validation needs them to resolve the

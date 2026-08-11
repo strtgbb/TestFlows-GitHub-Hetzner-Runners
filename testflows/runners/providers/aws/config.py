@@ -73,7 +73,7 @@ def update_from_args(provider_config, args):
 
 def parse_config_section(section: dict) -> "aws_provider":
     """Validate and coerce a ``providers.aws`` config section into an
-    ``aws_provider`` dataclass. Moved from config/parse.py verbatim.
+    ``aws_provider`` dataclass.
     """
     a = section
     assert isinstance(a, dict), "config.providers.aws: is not a dictionary"

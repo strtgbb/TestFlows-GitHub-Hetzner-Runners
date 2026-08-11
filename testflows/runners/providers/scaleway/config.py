@@ -61,7 +61,7 @@ def update_from_args(provider_config, args):
 
 def parse_config_section(section: dict) -> "scaleway_provider":
     """Validate and coerce a ``providers.scaleway`` config section into a
-    ``scaleway_provider`` dataclass. Moved from config/parse.py verbatim.
+    ``scaleway_provider`` dataclass.
     """
     s = section
     assert isinstance(

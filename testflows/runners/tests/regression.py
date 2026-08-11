@@ -23,6 +23,7 @@ def regression(self):
     Feature(run=load("testflows.runners.tests.features.aws_provider", "feature"))
     Feature(run=load("testflows.runners.tests.features.scaleway_config", "feature"))
     Feature(run=load("testflows.runners.tests.features.hetzner_provider", "feature"))
+    Feature(run=load("testflows.runners.tests.features.hetzner_config", "feature"))
     Feature(run=load("testflows.runners.tests.features.dedicated_static_provider", "feature"))
     Feature(run=load("testflows.runners.tests.features.provider_interface", "feature"))
     Feature(run=load("testflows.runners.tests.features.provider_orchestration_hooks", "feature"))

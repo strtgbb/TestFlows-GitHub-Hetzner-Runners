@@ -11,6 +11,7 @@ from hcloud.ssh_keys.domain import SSHKey
 from ...hclient import HClient as Client
 from ...actions import Action
 from ... import errors
+from ...config.config import hetzner_provider, provider_defaults
 
 
 def is_enabled(provider_config):
@@ -64,6 +65,76 @@ def update_from_args(provider_config, args):
 
 
 # Hetzner-specific validation functions
+
+
+def parse_config_section(section: dict) -> "hetzner_provider":
+    """Validate and coerce a ``providers.hetzner`` config section into a
+    ``hetzner_provider`` dataclass. Moved from config/parse.py verbatim.
+    """
+    h = section
+    assert isinstance(h, dict), "config.providers.hetzner: is not a dictionary"
+    if h.get("token") is not None:
+        assert isinstance(
+            h["token"], str
+        ), "config.providers.hetzner.token: is not a string"
+    _hetzner_kwargs = {"token": h.get("token")}
+    if h.get("recycle_with_rebuild") is not None:
+        v = h["recycle_with_rebuild"]
+        assert isinstance(v, bool), (
+            "config.providers.hetzner.recycle_with_rebuild: "
+            "is not a boolean"
+        )
+        _hetzner_kwargs["recycle_with_rebuild"] = v
+    if h.get("max_runners") is not None:
+        v = h["max_runners"]
+        assert isinstance(v, int) and v > 0, (
+            "config.providers.hetzner.max_runners: must be an integer > 0"
+        )
+        _hetzner_kwargs["max_runners"] = v
+    if h.get("end_of_life") is not None:
+        v = h["end_of_life"]
+        assert isinstance(v, int) and 0 < v < 60, (
+            "config.providers.hetzner.end_of_life: must be an integer > 0 and < 60"
+        )
+        _hetzner_kwargs["end_of_life"] = v
+    if h.get("recycle") is not None:
+        v = h["recycle"]
+        assert isinstance(v, bool), (
+            "config.providers.hetzner.recycle: is not a boolean"
+        )
+        _hetzner_kwargs["recycle"] = v
+    if h.get("recycle_grace_period") is not None:
+        v = h["recycle_grace_period"]
+        assert isinstance(v, int) and v >= 0, (
+            "config.providers.hetzner.recycle_grace_period: must be an integer >= 0"
+        )
+        _hetzner_kwargs["recycle_grace_period"] = v
+    _hetzner_defaults_raw = h.get("defaults")
+    if _hetzner_defaults_raw is not None:
+        assert isinstance(
+            _hetzner_defaults_raw, dict
+        ), "config.providers.hetzner.defaults: is not a dictionary"
+        base = hetzner_provider().defaults
+        _hetzner_volume_size = _hetzner_defaults_raw.get(
+            "volume_size", base.volume_size
+        )
+        assert (
+            isinstance(_hetzner_volume_size, int) and _hetzner_volume_size > 0
+        ), (
+            "config.providers.hetzner.defaults.volume_size: must be an integer > 0 (in GB)"
+        )
+        _hetzner_kwargs["defaults"] = provider_defaults(
+            image=_hetzner_defaults_raw.get("image", base.image),
+            server_type=_hetzner_defaults_raw.get(
+                "server_type", base.server_type
+            ),
+            location=_hetzner_defaults_raw.get("location", base.location),
+            volume_size=_hetzner_volume_size,
+            volume_location=_hetzner_defaults_raw.get(
+                "volume_location", base.volume_location
+            ),
+        )
+    return hetzner_provider(**_hetzner_kwargs)
 
 
 def check_ssh_key(client: Client, ssh_key: str, is_file=True):

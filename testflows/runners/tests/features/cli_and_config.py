@@ -367,6 +367,19 @@ def factory_passes_hetzner_defaults(self):
 
 
 @TestScenario
+def factory_loops_registry_and_from_config_gates_on_config(self):
+    """Factory returns only configured providers, in precedence order, via from_config."""
+    from testflows.runners.config.factory import provider_factory, PROVIDER_REGISTRY
+
+    cfg = Config(providers=provider_list(hetzner=hetzner_provider(token="t")))
+    with Then("only the configured provider is built; others from_config -> None"):
+        assert [p.name for p in provider_factory(cfg)] == ["hetzner"]
+    with And("registry is ordered by precedence"):
+        precs = [c.precedence for c in PROVIDER_REGISTRY]
+        assert precs == sorted(precs), precs
+
+
+@TestScenario
 def config_rejects_removed_top_level_defaults(self):
     """Top-level default_image/default_server_type/... are gone; they hard-error."""
     import tempfile

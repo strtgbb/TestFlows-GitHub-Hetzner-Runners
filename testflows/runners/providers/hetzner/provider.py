@@ -38,6 +38,31 @@ class HetznerCloudProvider(CloudProvider):
     validation helpers in providers/hetzner/config.py.
     """
 
+    config_key = "hetzner"
+    precedence = 0
+
+    @classmethod
+    def from_config(cls, config) -> "HetznerCloudProvider | None":
+        """Construct from Config, or None if Hetzner is not configured."""
+        cfg = config.providers.hetzner
+        if not (cfg and cfg.token):
+            return None
+        defaults = cfg.defaults
+        return cls(
+            token=cfg.token,
+            ssh_key_path=config.ssh_key,
+            default_image=defaults.image,
+            default_server_type=defaults.server_type,
+            default_location=defaults.location,
+            default_volume_size=defaults.volume_size,
+            default_volume_location=defaults.volume_location,
+            max_runners=cfg.max_runners,
+            end_of_life=cfg.end_of_life,
+            recycle=cfg.recycle,
+            recycle_grace_period=cfg.recycle_grace_period,
+            recycle_with_rebuild=cfg.recycle_with_rebuild,
+        )
+
     def __init__(
         self,
         token: str,

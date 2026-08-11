@@ -26,6 +26,35 @@ class AWSCloudProvider(CloudProvider):
     Volume operations raise ``NotImplementedError`` (inherited from base class).
     """
 
+    config_key = "aws"
+    precedence = 2
+
+    @classmethod
+    def from_config(cls, config) -> "AWSCloudProvider | None":
+        """Construct from Config, or None if AWS is not configured."""
+        cfg = config.providers.aws
+        if not (cfg and cfg.access_key_id and cfg.secret_access_key):
+            return None
+        location = cfg.defaults.location or "us-east-1a"
+        region = _az_to_region(location)
+        return cls(
+            access_key_id=cfg.access_key_id,
+            secret_access_key=cfg.secret_access_key,
+            region=region,
+            security_group=cfg.security_group,
+            subnets=cfg.subnets,
+            default_image_spec=cfg.defaults.image,
+            default_location_spec=cfg.defaults.location,
+            default_server_type_spec=cfg.defaults.server_type,
+            ssh_user=cfg.ssh_user,
+            root_volume_size=cfg.defaults.volume_size,
+            root_volume_type=cfg.defaults.volume_type,
+            max_runners=cfg.max_runners,
+            end_of_life=cfg.end_of_life,
+            recycle=cfg.recycle,
+            recycle_grace_period=cfg.recycle_grace_period,
+        )
+
     def __init__(
         self,
         access_key_id: str,

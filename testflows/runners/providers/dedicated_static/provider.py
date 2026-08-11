@@ -65,6 +65,45 @@ class DedicatedStaticCloudProvider(CloudProvider):
     _CLAIM_DIR = "/run/user/$(id -u)/testflows-github-runners"
     _CLAIM_PATH = "/run/user/$(id -u)/testflows-github-runners/claim"
 
+    config_key = "dedicated_static"
+    precedence = 3
+
+    @classmethod
+    def from_config(cls, config) -> "DedicatedStaticCloudProvider | None":
+        """Construct from Config, or None if dedicated_static is not configured."""
+        cfg = config.providers.dedicated_static
+        if not (cfg and cfg.groups):
+            return None
+
+        groups = {}
+        for group_name, group in cfg.groups.items():
+            ssh_user = (
+                group.ssh.user if group.ssh is not None else cfg.ssh_defaults.user
+            )
+            ssh_port = (
+                group.ssh.port if group.ssh is not None else cfg.ssh_defaults.port
+            )
+            ssh_key_path = (
+                group.ssh.key
+                if group.ssh is not None and group.ssh.key
+                else cfg.ssh_defaults.key
+            )
+            groups[group_name] = {
+                "labels": group.labels,
+                "hosts": group.hosts,
+                "ssh_user": ssh_user,
+                "ssh_port": ssh_port,
+                "ssh_key_path": ssh_key_path,
+            }
+
+        return cls(
+            groups=groups,
+            default_ssh_user=cfg.ssh_defaults.user,
+            claim_ttl_minutes=cfg.claim_ttl_minutes,
+            # Routing labels (type-/in-) carry the global label_prefix.
+            label_prefix=config.label_prefix,
+        )
+
     def __init__(
         self,
         groups: dict[str, dict],

@@ -13,6 +13,7 @@ the canonical dot-form used by the orchestrator (``dev1.s``) and Scaleway's
 native dash-form (``DEV1-S``) via :func:`utils.native_type` / :func:`utils.canonical_type`.
 """
 
+import re
 import time
 import hashlib
 import logging
@@ -72,6 +73,44 @@ class ScalewayCloudProvider(CloudProvider):
     Recycling uses stop/start without image rebuild. Volume operations raise
     ``NotImplementedError`` (inherited from base class).
     """
+
+    config_key = "scaleway"
+    precedence = 1
+
+    @classmethod
+    def from_config(cls, config) -> "ScalewayCloudProvider | None":
+        """Construct from Config, or None if Scaleway is not configured."""
+        cfg = config.providers.scaleway
+        if not (cfg and cfg.access_key and cfg.secret_key and cfg.project_id):
+            return None
+
+        # Derive candidate zones from [prefix-]in-<zone> labels across meta-labels;
+        # the provider filters to valid Scaleway zones. Match in- as a prefix
+        # segment (like scale_up), not a substring, so spin-up/min-cpu don't hit.
+        candidate_zones = []
+        for labels in (config.meta_label or {}).values():
+            for label in labels:
+                match = re.match(r"(?:.+-)?in-(.+)$", str(label).lower())
+                if match:
+                    candidate_zones.append(match.group(1))
+
+        return cls(
+            access_key=cfg.access_key,
+            secret_key=cfg.secret_key,
+            project_id=cfg.project_id,
+            organization_id=cfg.organization_id,
+            zone=cfg.defaults.location or "fr-par-1",
+            zones=candidate_zones,
+            default_image_spec=cfg.defaults.image,
+            default_location_spec=cfg.defaults.location,
+            default_server_type_spec=cfg.defaults.server_type,
+            default_volume_size=cfg.defaults.volume_size,
+            ssh_user=cfg.ssh_user,
+            max_runners=cfg.max_runners,
+            end_of_life=cfg.end_of_life,
+            recycle=cfg.recycle,
+            recycle_grace_period=cfg.recycle_grace_period,
+        )
 
     def __init__(
         self,

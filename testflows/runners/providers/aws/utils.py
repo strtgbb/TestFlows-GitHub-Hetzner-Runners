@@ -34,7 +34,6 @@ _ARM64_RE = re.compile(r"^(t4g|[mcr]\d+g[a-z]*|a1|im4gn|is4gen)\.")
 @dataclass
 class AWSKeyPair:
     """Minimal key-pair descriptor returned by ``get_or_create_ssh_key``."""
-
     name: str
 
 

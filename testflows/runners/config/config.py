@@ -3,6 +3,7 @@ import re
 import yaml
 
 from .. import errors
+from ..providers.hetzner import config as hetzner_config
 
 # Pure validators re-exported from the leaf argtypes module under their
 # historical names, so config.parse can keep doing `from .config import path`.
@@ -95,8 +96,6 @@ def apply_args(config, args):
 
     # Provider configuration is nested and intentionally skipped above.
     # Apply Hetzner-specific CLI overrides through its provider update hook.
-    from ..providers.hetzner import config as hetzner_config
-
     if config.providers.hetzner is not None:
         hetzner_config.update_from_args(config.providers.hetzner, args)
     elif getattr(args, "hetzner_token", None):

@@ -5,7 +5,7 @@ from hcloud.locations.domain import Location
 from hcloud.server_types.domain import ServerType
 from argparse import ArgumentTypeError
 
-from ...args import switch_type
+from ...argtypes import switch_type
 
 
 def image_type(v, separator=":"):

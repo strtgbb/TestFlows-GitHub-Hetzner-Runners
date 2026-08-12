@@ -18,6 +18,9 @@ import sys
 from argparse import ArgumentTypeError
 from traceback import print_exception
 
+from .config import default_user_config
+from .config.parse import parse_config
+
 # Pure validators live in the leaf ``argtypes`` module; re-exported here so
 # existing ``args.<name>_type`` references (bin parser, providers) keep working.
 from .argtypes import (
@@ -40,9 +43,6 @@ from .argtypes import (
 
 def config_type(v):
     """Program configuration file type."""
-    from .config import default_user_config
-    from .config.parse import parse_config
-
     if v == "__default_user_config__":
         if os.path.exists(default_user_config):
             v = default_user_config

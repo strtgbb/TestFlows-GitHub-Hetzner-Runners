@@ -22,6 +22,8 @@ import shlex
 
 from .actions import Action
 from .shell import shell
+from .cloud_provider import ProviderServer
+
 
 def ip_address(server):
     """Return IPv4 (default) or IPv6 address of the server."""
@@ -61,8 +63,6 @@ def wait_ssh(server, timeout: float):
 
 def ssh_command(server, options: str = ""):
     """Return ssh command."""
-    from .cloud_provider import ProviderServer
-
     ip = ip_address(server=server)
     user = server.ssh_user if isinstance(server, ProviderServer) else "root"
     port_option = ""

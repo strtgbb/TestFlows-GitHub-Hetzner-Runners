@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 
 from ...actions import Action
 from ...constants import recycle_server_name_prefix
+from . import estimate
 from ...cloud_provider import (
     AcquiredServer,
     CloudProvider,
@@ -181,9 +182,7 @@ class ScalewayCloudProvider(CloudProvider):
         return "EUR"
 
     def get_prices(self) -> dict[str, dict[str, float]]:
-        from .estimate import check_prices
-
-        return check_prices(self._client, zones=sorted(self._zones))
+        return estimate.check_prices(self._client, zones=sorted(self._zones))
 
     # ---------------------------------------------------------------------------
     # Server lifecycle

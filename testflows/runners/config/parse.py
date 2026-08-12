@@ -2,6 +2,11 @@ import yaml
 import logging
 import logging.config
 
+from ..providers.hetzner import config as _hetzner_config
+from ..providers.aws import config as _aws_config
+from ..providers.scaleway import config as _scaleway_config
+from ..providers.dedicated_static import config as _ds_config
+
 from .config import (
     Config,
     standby_runner,
@@ -471,23 +476,18 @@ def parse_config(filename: str):
 
         _hetzner = None
         if _p.get("hetzner") is not None:
-            from ..providers.hetzner import config as _hetzner_config
             _hetzner = _hetzner_config.parse_config_section(_p["hetzner"])
 
         _aws = None
         if _p.get("aws") is not None:
-            from ..providers.aws import config as _aws_config
             _aws = _aws_config.parse_config_section(_p["aws"])
 
         _scaleway = None
         if _p.get("scaleway") is not None:
-            from ..providers.scaleway import config as _scaleway_config
             _scaleway = _scaleway_config.parse_config_section(_p["scaleway"])
 
         _dedicated_static = None
         if _p.get("dedicated_static") is not None:
-            from ..providers.dedicated_static import config as _ds_config
-
             _dedicated_static = _ds_config.parse_config_section(
                 _p["dedicated_static"],
                 meta_label=doc.get("meta_label"),

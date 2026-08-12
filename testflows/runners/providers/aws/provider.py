@@ -4,6 +4,7 @@ import hashlib
 
 from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
 from ...errors import ServerTypeError, ImageError, ImageSpecFormatError, LocationError
+from . import estimate
 from .utils import (
     _RUNNER_TAG,
     _RUNNER_LABEL_TAG_PREFIX,
@@ -138,8 +139,7 @@ class AWSCloudProvider(CloudProvider):
         return "USD"
 
     def get_prices(self) -> dict[str, dict[str, float]]:
-        from .estimate import check_prices
-        return check_prices(self._region, session=self._session)
+        return estimate.check_prices(self._region, session=self._session)
 
     # ---------------------------------------------------------------------------
     # Server lifecycle

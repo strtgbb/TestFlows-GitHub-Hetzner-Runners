@@ -23,6 +23,10 @@ from github.WorkflowJob import WorkflowJob
 from prometheus_client import Counter, Gauge, Histogram, Info
 from .constants import standby_server_name_prefix
 from .constants import recycle_server_name_prefix
+from .providers.hetzner.estimate import get_server_price as hetzner_get_price
+from .providers.aws.estimate import get_server_price as aws_get_price
+from .providers.scaleway.estimate import get_server_price as scaleway_get_price
+from .providers.aws.utils import _az_to_region
 
 # Server metrics
 SERVERS_TOTAL = Gauge(
@@ -532,10 +536,6 @@ def update_servers(servers, server_prices=None, ipv4_price=0.0008, ipv6_price=0.
         ipv4_price: Price per hour for IPv4 (Hetzner only, EUR)
         ipv6_price: Price per hour for IPv6 (Hetzner only, EUR)
     """
-    from .providers.hetzner.estimate import get_server_price as hetzner_get_price
-    from .providers.aws.estimate import get_server_price as aws_get_price
-    from .providers.scaleway.estimate import get_server_price as scaleway_get_price
-
     _provider_fns = {
         "hetzner": hetzner_get_price,
         "aws": aws_get_price,
@@ -603,7 +603,6 @@ def update_servers(servers, server_prices=None, ipv4_price=0.0008, ipv6_price=0.
                         )
                     elif provider_name == "aws":
                         # AWS prices are keyed by region; location may be an AZ.
-                        from .providers.aws.utils import _az_to_region
                         total_cost = price_fn(
                             prices, server_type, _az_to_region(location)
                         )

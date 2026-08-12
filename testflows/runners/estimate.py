@@ -15,6 +15,7 @@
 import sys
 import math
 import types
+import logging
 import github
 
 from .actions import Action
@@ -192,7 +193,6 @@ def login_and_get_prices(
                     "currency": provider.currency,
                 }
             except Exception as e:
-                import logging
                 logging.warning(f"Could not fetch {provider.name} prices: {e}")
 
     return (repo, server_prices)

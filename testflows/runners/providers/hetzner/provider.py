@@ -27,7 +27,11 @@ from ...recycling import (
 )
 from ...errors import ImageSpecFormatError
 from . import config as hetzner_config
-from ...constants import github_runner_label
+from ...constants import (
+    github_runner_label,
+    recycle_server_name_prefix,
+    server_ssh_key_label,
+)
 from .utils import _HETZNER_DC_CODE_RE, _STATUS_MAP, _server_to_provider, _volume_to_provider
 
 
@@ -222,8 +226,6 @@ class HetznerCloudProvider(CloudProvider):
         return self.list_servers(label_selector=f"{github_runner_label}=active")
 
     def is_recycled_server(self, server: ProviderServer) -> bool:
-        from ...constants import recycle_server_name_prefix
-
         return server.name.startswith(recycle_server_name_prefix)
 
     def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
@@ -296,8 +298,6 @@ class HetznerCloudProvider(CloudProvider):
         Each runner label is stored under a numbered ``github-hetzner-runner-label-{i}``
         key so it satisfies Hetzner's label value constraints.
         """
-        from ...constants import server_ssh_key_label, github_runner_label
-
         labels = {
             f"github-hetzner-runner-label-{i}": value
             for i, value in enumerate(runner_labels)
@@ -341,8 +341,6 @@ class HetznerCloudProvider(CloudProvider):
 
     def get_server_ssh_key_name(self, server: ProviderServer) -> str | None:
         """Return the SSH-key name stored under Hetzner's ssh-key label, or None."""
-        from ...constants import server_ssh_key_label
-
         return server.labels.get(server_ssh_key_label)
 
     def get_server_tag(self, server: ProviderServer, key: str) -> str | None:
@@ -362,8 +360,6 @@ class HetznerCloudProvider(CloudProvider):
         self, server: ProviderServer, ssh_key_names: set[str]
     ) -> bool:
         """Return True when the server SSH key tag matches a known key name."""
-        from ...constants import server_ssh_key_label
-
         key_name = server.labels.get(server_ssh_key_label)
         return key_name in ssh_key_names if key_name is not None else False
 

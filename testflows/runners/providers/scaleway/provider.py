@@ -17,10 +17,12 @@ import re
 import time
 import hashlib
 import logging
+import uuid
 from dataclasses import replace
 from datetime import datetime, timezone
 
 from ...actions import Action
+from ...constants import recycle_server_name_prefix
 from ...cloud_provider import (
     AcquiredServer,
     CloudProvider,
@@ -602,8 +604,6 @@ class ScalewayCloudProvider(CloudProvider):
         return self.list_servers(label_selector=f"{_RUNNER_TAG}=active")
 
     def is_recycled_server(self, server: ProviderServer) -> bool:
-        from ...constants import recycle_server_name_prefix
-
         return server.name.startswith(recycle_server_name_prefix)
 
     def claim_recycled_server(self, request: RecycleRequest) -> RecycleClaim | None:
@@ -865,10 +865,8 @@ class ScalewayCloudProvider(CloudProvider):
         UUID passthrough -> marketplace label -> custom image name, all in the
         given zone. Raises ImageError if nothing matches in that zone.
         """
-        import uuid as _uuid
-
         try:
-            _uuid.UUID(spec)
+            uuid.UUID(spec)
             return spec
         except (ValueError, AttributeError):
             pass

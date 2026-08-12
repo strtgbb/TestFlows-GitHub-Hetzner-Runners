@@ -4,7 +4,7 @@ from github import Github
 from github.Repository import Repository
 
 from ...actions import Action
-from ...config import Config
+from ...config_schema import Config
 from ...hclient import HClient as Client
 from ...utils import get_runner_server_type
 from .config import check_prices

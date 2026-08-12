@@ -2,12 +2,12 @@
 
 import re
 
-from ...config.config import (
+from ...config_schema import (
     dedicated_static_provider,
     dedicated_static_group,
     dedicated_static_ssh,
-    path,
 )
+from ...argtypes import path_type as path
 
 DEDICATED_STATIC_GROUP_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 

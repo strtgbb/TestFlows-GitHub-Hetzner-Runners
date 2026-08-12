@@ -6,7 +6,7 @@ from hcloud.locations.domain import Location
 
 from ...hclient import HClient as Client
 from ... import errors
-from ...config.config import hetzner_provider, provider_defaults
+from ...config_schema import hetzner_provider, provider_defaults
 
 
 def is_enabled(provider_config):

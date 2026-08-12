@@ -1,6 +1,6 @@
 """AWS provider configuration."""
 
-from ...config.config import aws_provider, provider_defaults
+from ...config_schema import aws_provider, provider_defaults
 
 
 def is_enabled(provider_config):

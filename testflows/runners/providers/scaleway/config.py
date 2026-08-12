@@ -1,6 +1,6 @@
 """Scaleway provider configuration."""
 
-from ...config.config import scaleway_provider, provider_defaults
+from ...config_schema import scaleway_provider, provider_defaults
 
 
 def is_enabled(provider_config):

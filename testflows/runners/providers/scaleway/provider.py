@@ -734,7 +734,13 @@ class ScalewayCloudProvider(CloudProvider):
         return server.labels.get(key)
 
     def set_server_tags(self, server: ProviderServer, tags: dict) -> None:
-        merged = {**(server.labels or {}), **tags}
+        """Set/merge tags; a tag with value ``None`` is removed."""
+        merged = {**(server.labels or {})}
+        for k, v in tags.items():
+            if v is None:
+                merged.pop(k, None)
+            else:
+                merged[k] = v
         self._instance._update_server(
             server_id=server.id, zone=server.location, tags=dict_to_tags(merged)
         )

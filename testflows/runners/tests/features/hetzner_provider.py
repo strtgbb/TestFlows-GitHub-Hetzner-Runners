@@ -145,6 +145,29 @@ def list_runner_servers_label_selector(self):
 
 
 @TestScenario
+def set_server_tags_deletes_on_none(self):
+    with Given("a provider and a server carrying a legacy label"):
+        _, provider = hetzner_provider()
+        native = MagicMock()
+        native.labels = {"github-hetzner-runner": "active", "keep": "v"}
+        ps = _provider_server(
+            labels=dict(native.labels), native=native
+        )
+    with When("I set the new label and delete the legacy one via None"):
+        provider.set_server_tags(
+            ps, {"github-runner": "acme-infra", "github-hetzner-runner": None}
+        )
+    with Then("native.update is called without the deleted key"):
+        sent = native.update.call_args[1]["labels"]
+        assert sent.get("github-runner") == "acme-infra", sent
+        assert "github-hetzner-runner" not in sent, sent
+        assert sent.get("keep") == "v", sent
+    with And("the ProviderServer labels reflect it"):
+        assert ps.labels.get("github-runner") == "acme-infra"
+        assert "github-hetzner-runner" not in ps.labels
+
+
+@TestScenario
 def list_runner_servers_returns_provider_server(self):
     with Given("a Hetzner provider with one bound server"):
         hclient, provider = hetzner_provider()

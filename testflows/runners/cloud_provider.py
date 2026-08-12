@@ -543,8 +543,10 @@ class CloudProvider(ABC):
     def set_server_tags(self, server: ProviderServer, tags: dict[str, str]) -> None:
         """Update (merge) the given tags onto the server.
 
-        Existing tags not in *tags* are preserved. The implementation should
-        also update ``server.labels`` to reflect the new state.
+        Existing tags not in *tags* are preserved. A tag whose value is ``None``
+        is *removed* from the server (used by the migration to drop a legacy
+        discovery label when claiming a server). The implementation should also
+        update ``server.labels`` to reflect the new state.
         """
 
     @abstractmethod

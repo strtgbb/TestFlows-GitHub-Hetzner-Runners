@@ -310,11 +310,23 @@ class AWSCloudProvider(CloudProvider):
         return server.labels.get(key)
 
     def set_server_tags(self, server: ProviderServer, tags: dict) -> None:
-        self._ec2.create_tags(
-            Resources=[server.id],
-            Tags=[{"Key": k, "Value": v} for k, v in tags.items()],
-        )
-        server.labels = {**server.labels, **tags}
+        """Set/merge tags; a tag with value ``None`` is deleted."""
+        to_set = {k: v for k, v in tags.items() if v is not None}
+        to_delete = [k for k, v in tags.items() if v is None]
+        if to_set:
+            self._ec2.create_tags(
+                Resources=[server.id],
+                Tags=[{"Key": k, "Value": v} for k, v in to_set.items()],
+            )
+        if to_delete:
+            self._ec2.delete_tags(
+                Resources=[server.id],
+                Tags=[{"Key": k} for k in to_delete],
+            )
+        new_labels = {**server.labels, **to_set}
+        for k in to_delete:
+            new_labels.pop(k, None)
+        server.labels = new_labels
 
     def has_matching_ssh_key(
         self, server: ProviderServer, ssh_key_names: set[str]

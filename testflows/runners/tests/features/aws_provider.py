@@ -763,6 +763,25 @@ def validate_labels_reserved_aws_prefix(self):
 
 
 @TestScenario
+def set_server_tags_deletes_on_none(self):
+    with Given("an AWS provider and a server carrying a legacy tag"):
+        ec2, provider = aws_provider()
+        ps = _ps_with_labels({"github-runner": "active", "drop-me": "x"})
+    with When("I set a new tag and delete another via None"):
+        provider.set_server_tags(ps, {"github-runner": "acme-infra", "drop-me": None})
+    with Then("create_tags sets the new value and delete_tags removes the None key"):
+        set_dict = {
+            t["Key"]: t["Value"] for t in ec2.create_tags.call_args[1]["Tags"]
+        }
+        assert set_dict == {"github-runner": "acme-infra"}, set_dict
+        del_keys = [t["Key"] for t in ec2.delete_tags.call_args[1]["Tags"]]
+        assert del_keys == ["drop-me"], del_keys
+    with And("the ProviderServer labels reflect both operations"):
+        assert ps.labels["github-runner"] == "acme-infra"
+        assert "drop-me" not in ps.labels
+
+
+@TestScenario
 def update_server_updates_name_and_labels(self):
     with Given("an AWS provider"):
         ec2, provider = aws_provider()

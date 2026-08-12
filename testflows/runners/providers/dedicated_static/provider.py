@@ -507,7 +507,14 @@ class DedicatedStaticCloudProvider(CloudProvider):
         return server.labels.get(key)
 
     def set_server_tags(self, server: ProviderServer, tags: dict[str, str]) -> None:
-        server.labels = {**server.labels, **tags}
+        """Set/merge tags; a tag with value ``None`` is removed."""
+        merged = {**server.labels}
+        for k, v in tags.items():
+            if v is None:
+                merged.pop(k, None)
+            else:
+                merged[k] = v
+        server.labels = merged
 
     def has_matching_ssh_key(
         self, server: ProviderServer, ssh_key_names: set[str]

@@ -348,10 +348,16 @@ class HetznerCloudProvider(CloudProvider):
         return server.labels.get(key)
 
     def set_server_tags(self, server: ProviderServer, tags: dict[str, str]) -> None:
-        """Merge *tags* onto the server and update the ProviderServer labels."""
+        """Merge *tags* onto the server and update the ProviderServer labels.
+
+        A tag with value ``None`` removes that label."""
         native: BoundServer = server._native
         updated_labels = dict(native.labels or {})
-        updated_labels.update(tags)
+        for k, v in tags.items():
+            if v is None:
+                updated_labels.pop(k, None)
+            else:
+                updated_labels[k] = v
         native.update(labels=updated_labels)
         # Keep the ProviderServer in sync.
         server.labels = updated_labels

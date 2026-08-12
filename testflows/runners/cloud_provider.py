@@ -583,8 +583,9 @@ class CloudProvider(ABC):
 
         The provider owns its own tag key naming scheme (e.g. Hetzner uses
         ``github-hetzner-runner-label-{i}``).  The returned dict should include
-        both the per-label entries and the ``github_runner_label = "active"``
-        marker used for server discovery.
+        both the per-label entries and the discovery marker
+        ``github_runner_label = self._runner_tag`` (the controller identity),
+        used for server discovery and per-controller isolation.
         """
 
     @abstractmethod

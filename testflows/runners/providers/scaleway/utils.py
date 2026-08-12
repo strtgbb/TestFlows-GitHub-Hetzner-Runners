@@ -27,7 +27,6 @@ from ...cloud_provider import CloudProvider, ProviderServer
 # Scaleway tag conventions. Scaleway tags are a flat ``list[str]``; we encode
 # ``key=value`` pairs as individual tag strings to present a dict to the rest
 # of the system (mirrors the AWS tag-key conventions).
-_RUNNER_TAG = "github-runner"
 _RUNNER_LABEL_TAG_PREFIX = "github-runner-label"
 _SSH_KEY_TAG = "github-runner-ssh-key"
 # Boot disk size (GB) recorded at create time. The SBS boot volume's size is

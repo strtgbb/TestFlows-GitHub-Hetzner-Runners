@@ -22,7 +22,8 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from ...actions import Action
-from ...constants import recycle_server_name_prefix
+from ...constants import recycle_server_name_prefix, github_runner_label
+from ...utils import derive_runner_tag
 from . import estimate
 from ...cloud_provider import (
     AcquiredServer,
@@ -40,7 +41,6 @@ from ...recycling import (
 )
 from ...errors import ServerTypeError, ImageError, ImageSpecFormatError, LocationError
 from .utils import (
-    _RUNNER_TAG,
     _RUNNER_LABEL_TAG_PREFIX,
     _SSH_KEY_TAG,
     _ROOT_DISK_TAG,
@@ -97,7 +97,7 @@ class ScalewayCloudProvider(CloudProvider):
                 if match:
                     candidate_zones.append(match.group(1))
 
-        return cls(
+        provider = cls(
             access_key=cfg.access_key,
             secret_key=cfg.secret_key,
             project_id=cfg.project_id,
@@ -114,6 +114,10 @@ class ScalewayCloudProvider(CloudProvider):
             recycle=cfg.recycle,
             recycle_grace_period=cfg.recycle_grace_period,
         )
+        provider._runner_tag = derive_runner_tag(
+            config.github_repository, config.with_label
+        )
+        return provider
 
     def __init__(
         self,
@@ -148,6 +152,9 @@ class ScalewayCloudProvider(CloudProvider):
         self._block = BlockV1API(self._client)
         self._project_id = project_id
         self._zone = zone
+        # Controller-identity value for the discovery tag; overridden in
+        # from_config with the derived id ("active" = legacy default for tests).
+        self._runner_tag = "active"
         # Zones this provider operates over (listing/prices/fallback). Derived
         # from in- labels by the factory; filtered to valid Scaleway zones here.
         self._zones = set()
@@ -600,7 +607,9 @@ class ScalewayCloudProvider(CloudProvider):
     # ---------------------------------------------------------------------------
 
     def list_runner_servers(self) -> list[ProviderServer]:
-        return self.list_servers(label_selector=f"{_RUNNER_TAG}=active")
+        return self.list_servers(
+            label_selector=f"{github_runner_label}={self._runner_tag}"
+        )
 
     def is_recycled_server(self, server: ProviderServer) -> bool:
         return server.name.startswith(recycle_server_name_prefix)
@@ -685,7 +694,7 @@ class ScalewayCloudProvider(CloudProvider):
         }
         if ssh_key_name:
             labels[_SSH_KEY_TAG] = ssh_key_name
-        labels[_RUNNER_TAG] = "active"
+        labels[github_runner_label] = self._runner_tag
         return labels
 
     def build_volume_labels(self, arch: str, os_flavor: str, os_version: str) -> dict:

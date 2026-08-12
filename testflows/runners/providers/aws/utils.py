@@ -8,7 +8,7 @@ from ...cloud_provider import CloudProvider, ProviderServer
 
 
 # AWS-specific tag keys used to identify and annotate runner instances.
-_RUNNER_TAG = "github-runner"
+# (The discovery-tag key is the shared constants.github_runner_label.)
 _RUNNER_LABEL_TAG_PREFIX = "github-runner-label"
 _SSH_KEY_TAG = "github-runner-ssh-key"
 

@@ -8,6 +8,7 @@ from testflows.core import *
 
 from testflows.runners.config.parse import parse_config
 from testflows.runners.config.factory import provider_factory
+from testflows.runners.utils import derive_runner_tag
 from testflows.runners.providers.aws.provider import AWSCloudProvider
 from testflows.runners.tests.steps.aws import mock_ec2
 from testflows.runners.tests.steps.config import write_config
@@ -235,6 +236,33 @@ def no_defaults_section_uses_dataclass_defaults(self):
 # ---------------------------------------------------------------------------
 # provider_factory: YAML values reach AWSCloudProvider
 # ---------------------------------------------------------------------------
+
+
+@TestScenario
+def factory_sets_isolation_runner_tag(self):
+    """from_config computes the discovery-tag value from repo + with_label, and
+    build_server_labels writes it (per-controller isolation)."""
+    with Given("mocked EC2 client"):
+        mock_ec2()
+    with Given("a config with a custom with_label set"):
+        path = write_config(yaml_text="""\
+            ssh_key: /dev/null
+            with_label:
+              - self-hosted
+              - gpu
+            providers:
+              aws:
+                access_key_id: AKIATEST
+                secret_access_key: s3cr3t
+        """)
+    with Then("the provider's discovery tag matches derive_runner_tag(config)"):
+        cfg = parse_config(path)
+        provider = provider_factory(cfg)[0]
+        expected = derive_runner_tag(cfg.github_repository, cfg.with_label)
+        assert provider._runner_tag == expected, provider._runner_tag
+    with And("build_server_labels writes the id under github-runner"):
+        labels = provider.build_server_labels(["self-hosted"])
+        assert labels["github-runner"] == expected, labels
 
 
 @TestScenario

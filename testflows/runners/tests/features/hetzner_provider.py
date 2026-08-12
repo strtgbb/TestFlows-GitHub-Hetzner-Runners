@@ -140,7 +140,22 @@ def list_runner_servers_label_selector(self):
         provider.list_runner_servers()
     with Then("HClient.servers.get_all is called with the runner label selector"):
         hclient.servers.get_all.assert_called_once_with(
-            label_selector="github-hetzner-runner=active"
+            label_selector="github-runner=active"
+        )
+
+
+@TestScenario
+def list_runner_servers_uses_isolation_tag(self):
+    """Discovery filters by the controller's own id (isolation)."""
+    with Given("a provider with a controller id"):
+        hclient, provider = hetzner_provider()
+        provider._runner_tag = "acme-infra"
+    with When("I call list_runner_servers"):
+        hclient.servers.get_all.return_value = []
+        provider.list_runner_servers()
+    with Then("the selector filters by github-runner=<id>"):
+        hclient.servers.get_all.assert_called_once_with(
+            label_selector="github-runner=acme-infra"
         )
 
 
@@ -223,7 +238,7 @@ def create_server_passes_args(self):
         location = MagicMock()
         image = MagicMock()
         ssh_keys = [MagicMock()]
-        labels = {"github-hetzner-runner": "active"}
+        labels = {"github-runner": "active"}
         public_net = MagicMock()
         result = provider.create_server(
             name="test-server",

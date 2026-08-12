@@ -16,6 +16,7 @@ from ...cloud_provider import (
     RetirementResult,
 )
 from ...constants import github_runner_label, server_ssh_key_label, runner_name_prefix
+from ...utils import derive_runner_tag
 from ...errors import ServerTypeError, LocationError, ImageSpecFormatError
 from ...server import ssh
 
@@ -96,13 +97,17 @@ class DedicatedStaticCloudProvider(CloudProvider):
                 "ssh_key_path": ssh_key_path,
             }
 
-        return cls(
+        provider = cls(
             groups=groups,
             default_ssh_user=cfg.ssh_defaults.user,
             claim_ttl_minutes=cfg.claim_ttl_minutes,
             # Routing labels (type-/in-) carry the global label_prefix.
             label_prefix=config.label_prefix,
         )
+        provider._runner_tag = derive_runner_tag(
+            config.github_repository, config.with_label
+        )
+        return provider
 
     def __init__(
         self,
@@ -113,6 +118,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
     ):
         self._default_image = None
         self._default_location = None
+        # Controller-identity value written into the discovery label; overridden
+        # in from_config ("active" = legacy default for direct construction).
+        self._runner_tag = "active"
         # Minutes a claim marker stays authoritative before it is treated as
         # stale (a crashed/abandoned setup) and the host may be reclaimed.
         self._claim_ttl_minutes = claim_ttl_minutes
@@ -546,7 +554,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
         labels = {
             f"{self._RUNNER_LABEL_PREFIX}-{i}": value for i, value in enumerate(runner_labels)
         }
-        labels[github_runner_label] = "active"
+        labels[github_runner_label] = self._runner_tag
         if ssh_key_name:
             labels[server_ssh_key_label] = ssh_key_name
         return labels

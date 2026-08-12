@@ -32,6 +32,7 @@ from ...constants import (
     recycle_server_name_prefix,
     server_ssh_key_label,
 )
+from ...utils import derive_runner_tag
 from .utils import _HETZNER_DC_CODE_RE, _STATUS_MAP, _server_to_provider, _volume_to_provider
 
 
@@ -52,7 +53,7 @@ class HetznerCloudProvider(CloudProvider):
         if not (cfg and cfg.token):
             return None
         defaults = cfg.defaults
-        return cls(
+        provider = cls(
             token=cfg.token,
             default_image=defaults.image,
             default_server_type=defaults.server_type,
@@ -65,6 +66,10 @@ class HetznerCloudProvider(CloudProvider):
             recycle_grace_period=cfg.recycle_grace_period,
             recycle_with_rebuild=cfg.recycle_with_rebuild,
         )
+        provider._runner_tag = derive_runner_tag(
+            config.github_repository, config.with_label
+        )
+        return provider
 
     def __init__(
         self,
@@ -108,6 +113,10 @@ class HetznerCloudProvider(CloudProvider):
         self._recycle = recycle
         self._recycle_grace_period = recycle_grace_period
         self._recycle_with_rebuild = recycle_with_rebuild
+        # Controller-identity value for the discovery label. Overridden in
+        # from_config with the derived id; "active" is the legacy default for
+        # direct construction (tests).
+        self._runner_tag = "active"
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -223,7 +232,9 @@ class HetznerCloudProvider(CloudProvider):
 
     def list_runner_servers(self) -> list[ProviderServer]:
         """Return all active runner servers using the Hetzner label convention."""
-        return self.list_servers(label_selector=f"{github_runner_label}=active")
+        return self.list_servers(
+            label_selector=f"{github_runner_label}={self._runner_tag}"
+        )
 
     def is_recycled_server(self, server: ProviderServer) -> bool:
         return server.name.startswith(recycle_server_name_prefix)
@@ -304,7 +315,7 @@ class HetznerCloudProvider(CloudProvider):
         }
         if ssh_key_name:
             labels[server_ssh_key_label] = ssh_key_name
-        labels[github_runner_label] = "active"
+        labels[github_runner_label] = self._runner_tag
         return labels
 
     def build_volume_labels(

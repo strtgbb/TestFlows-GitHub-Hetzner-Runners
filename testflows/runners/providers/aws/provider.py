@@ -4,9 +4,10 @@ import hashlib
 
 from ...cloud_provider import CloudProvider, ProviderServer, ProviderServerType
 from ...errors import ServerTypeError, ImageError, ImageSpecFormatError, LocationError
+from ...constants import github_runner_label
+from ...utils import derive_runner_tag
 from . import estimate
 from .utils import (
-    _RUNNER_TAG,
     _RUNNER_LABEL_TAG_PREFIX,
     _SSH_KEY_TAG,
     _ACTIVE_STATES,
@@ -38,7 +39,7 @@ class AWSCloudProvider(CloudProvider):
             return None
         location = cfg.defaults.location or "us-east-1a"
         region = _az_to_region(location)
-        return cls(
+        provider = cls(
             access_key_id=cfg.access_key_id,
             secret_access_key=cfg.secret_access_key,
             region=region,
@@ -55,6 +56,10 @@ class AWSCloudProvider(CloudProvider):
             recycle=cfg.recycle,
             recycle_grace_period=cfg.recycle_grace_period,
         )
+        provider._runner_tag = derive_runner_tag(
+            config.github_repository, config.with_label
+        )
+        return provider
 
     def __init__(
         self,
@@ -116,6 +121,9 @@ class AWSCloudProvider(CloudProvider):
         self._end_of_life = end_of_life
         self._recycle = recycle
         self._recycle_grace_period = recycle_grace_period
+        # Controller-identity value for the discovery tag; overridden in
+        # from_config with the derived id ("active" = legacy default for tests).
+        self._runner_tag = "active"
 
         # Build subnet → AZ mapping from describe_subnets.
         # This is a single API call at init time; the result is cached for the
@@ -286,7 +294,9 @@ class AWSCloudProvider(CloudProvider):
     # ---------------------------------------------------------------------------
 
     def list_runner_servers(self) -> list[ProviderServer]:
-        return self.list_servers(label_selector=f"{_RUNNER_TAG}=active")
+        return self.list_servers(
+            label_selector=f"{github_runner_label}={self._runner_tag}"
+        )
 
     # ---------------------------------------------------------------------------
     # Runner label helpers
@@ -390,7 +400,7 @@ class AWSCloudProvider(CloudProvider):
         }
         if ssh_key_name:
             labels[_SSH_KEY_TAG] = ssh_key_name
-        labels[_RUNNER_TAG] = "active"
+        labels[github_runner_label] = self._runner_tag
         return labels
 
     def build_volume_labels(self, arch: str, os_flavor: str, os_version: str) -> dict:

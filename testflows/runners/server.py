@@ -20,32 +20,19 @@ import subprocess
 import signal
 import shlex
 
-from hcloud.servers.client import BoundServer
-
 from .actions import Action
 from .shell import shell
 
 def ip_address(server):
     """Return IPv4 (default) or IPv6 address of the server."""
-    from .cloud_provider import ProviderServer
-
-    if isinstance(server, ProviderServer):
-        if server.public_ipv4 is not None:
-            return server.public_ipv4
-        if server.public_ipv6 is not None:
-            return ipaddress.IPv6Network(
-                server.public_ipv6, strict=False
-            ).network_address + 1
-        raise ValueError(f"Server {server.name} has no public IPv4 or IPv6 address")
-    # Legacy path: raw hcloud server objects (public_net-based).
-    if server.public_net.primary_ipv4 is not None:
-        return server.public_net.primary_ipv4.ip
-    return (
-        ipaddress.IPv6Network(
-            server.public_net.primary_ipv6.ip, strict=False
-        ).network_address
-        + 1
-    )
+    if server.public_ipv4 is not None:
+        return server.public_ipv4
+    if server.public_ipv6 is not None:
+        return (
+            ipaddress.IPv6Network(server.public_ipv6, strict=False).network_address
+            + 1
+        )
+    raise ValueError(f"Server {server.name} has no public IPv4 or IPv6 address")
 
 
 def wait_ssh(server, timeout: float):
@@ -144,7 +131,7 @@ class ssh_tunnel:
 
     def __init__(
         self,
-        server: BoundServer,
+        server,
         local_port: int,
         remote_port: int,
         action: Action = None,
@@ -152,7 +139,7 @@ class ssh_tunnel:
         """Initialize SSH tunnel.
 
         Args:
-            server: Hetzner server to connect to
+            server: server to connect to
             local_port: Local port to bind the tunnel to
             remote_port: Remote port to forward to
             action: Optional Action context for logging

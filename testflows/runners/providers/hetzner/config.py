@@ -1,15 +1,10 @@
 """Hetzner Cloud provider configuration."""
 
-import base64
-import hashlib
-
 from hcloud.images.domain import Image
 from hcloud.server_types.domain import ServerType
 from hcloud.locations.domain import Location
-from hcloud.ssh_keys.domain import SSHKey
 
 from ...hclient import HClient as Client
-from ...actions import Action
 from ... import errors
 from ...config.config import hetzner_provider, provider_defaults
 
@@ -135,45 +130,6 @@ def parse_config_section(section: dict) -> "hetzner_provider":
             ),
         )
     return hetzner_provider(**_hetzner_kwargs)
-
-
-def check_ssh_key(client: Client, ssh_key: str, is_file=True):
-    """Check that ssh key exists if not create it."""
-
-    def fingerprint(ssh_key):
-        """Calculate fingerprint of a public SSH key."""
-        encoded_key = base64.b64decode(ssh_key.strip().split()[1].encode("utf-8"))
-        md5_digest = hashlib.md5(encoded_key).hexdigest()
-
-        return ":".join(a + b for a, b in zip(md5_digest[::2], md5_digest[1::2]))
-
-    if is_file:
-        with open(ssh_key, "r", encoding="utf-8") as ssh_key_file:
-            public_key = ssh_key_file.read()
-    else:
-        public_key = ssh_key
-
-    name = hashlib.md5(public_key.encode("utf-8")).hexdigest()
-    ssh_key: SSHKey = SSHKey(
-        name=name, public_key=public_key, fingerprint=fingerprint(public_key)
-    )
-
-    existing_ssh_key = client.ssh_keys.get_by_fingerprint(
-        fingerprint=ssh_key.fingerprint
-    )
-
-    if not existing_ssh_key:
-        with Action(
-            f"Creating SSH key {ssh_key.name} with fingerprint {ssh_key.fingerprint}",
-            stacklevel=3,
-        ):
-            ssh_key = client.ssh_keys.create(
-                name=ssh_key.name, public_key=ssh_key.public_key
-            )
-    else:
-        ssh_key = existing_ssh_key
-
-    return ssh_key
 
 
 def check_image(client: Client, image: Image):

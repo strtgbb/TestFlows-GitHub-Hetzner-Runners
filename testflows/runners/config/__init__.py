@@ -23,7 +23,6 @@ from ..providers.hetzner.config import (
     check_location,
     check_prices,
     check_server_type,
-    check_ssh_key,
 )
 from .config import standby_runner
 from .config import read, write
@@ -39,7 +38,6 @@ __all__ = [
     "check_location",
     "check_prices",
     "check_server_type",
-    "check_ssh_key",
     "check_setup_script",
     "check_recycle_script",
     "check_startup_script",

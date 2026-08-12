@@ -120,22 +120,6 @@ def scp(source: str, destination: str, *args, server=None, **kwargs):
     return shell(f"{scp_command}", *args, **kwargs)
 
 
-def wait_ready(server: BoundServer, timeout: float, action: Action = None):
-    """Wait for server to be ready."""
-    start_time = time.time()
-
-    while True:
-        status = server.status
-        if action:
-            action.note(f"{server.name} {status}", stacklevel=4)
-        if status == server.STATUS_RUNNING:
-            break
-        if time.time() - start_time >= timeout:
-            raise TimeoutError("waiting for server to start running")
-        time.sleep(1)
-        server.reload()
-
-
 def is_port_available(port: int) -> bool:
     """Check if a local port is available.
 

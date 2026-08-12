@@ -44,6 +44,7 @@ from testflows.runners.config import (
     Config,
     default_user_config,
     provider_factory,
+    apply_args,
 )
 from testflows.runners.dashboard import (
     start_http_server as start_dashboard_server,
@@ -1755,7 +1756,7 @@ if __name__ == "__main__":
             config.config_file = project_config["config_file"]
 
     # Update with command line arguments (higher precedence)
-    config.update(arguments)
+    apply_args(config, arguments)
 
     if config.debug:
         Action.debug = True

@@ -17,7 +17,12 @@ from types import SimpleNamespace
 from testflows.core import *
 
 from testflows.runners.args import provider_type
-from testflows.runners.config.config import Config, hetzner_provider, provider_list
+from testflows.runners.config.config import (
+    Config,
+    hetzner_provider,
+    provider_list,
+    apply_args,
+)
 from testflows.runners.config.parse import parse_config
 from testflows.runners.config.factory import provider_factory
 from testflows.runners.service import command_options
@@ -92,7 +97,7 @@ def hetzner_rebuild_cli_override_updates_nested_config(self):
         )
     )
     with When("the provider-specific CLI override is applied"):
-        cfg.update(SimpleNamespace(hetzner_recycle_with_rebuild=True))
+        apply_args(cfg, SimpleNamespace(hetzner_recycle_with_rebuild=True))
     with Then("the nested Hetzner setting is overridden"):
         assert cfg.providers.hetzner.recycle_with_rebuild is True
 
@@ -129,14 +134,14 @@ def service_command_does_not_inject_hetzner_provider(self):
 @TestScenario
 def optional_hetzner_flag_does_not_create_provider(self):
     cfg = Config(providers=provider_list())
-    cfg.update(SimpleNamespace(hetzner_recycle_with_rebuild=False))
+    apply_args(cfg, SimpleNamespace(hetzner_recycle_with_rebuild=False))
     assert cfg.providers.hetzner is None
 
 
 @TestScenario
 def explicit_hetzner_token_creates_provider(self):
     cfg = Config(providers=provider_list())
-    cfg.update(SimpleNamespace(hetzner_token="token"))
+    apply_args(cfg, SimpleNamespace(hetzner_token="token"))
     assert cfg.providers.hetzner.token == "token"
 
 

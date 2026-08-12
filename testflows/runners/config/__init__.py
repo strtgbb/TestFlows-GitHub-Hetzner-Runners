@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .config import Config, ConfigError
+from .config import Config, ConfigError, apply_args
 from .config import (
     check_setup_script,
     check_recycle_script,
@@ -34,6 +34,7 @@ from .factory import provider_factory
 __all__ = [
     "Config",
     "ConfigError",
+    "apply_args",
     "check_image",
     "check_location",
     "check_prices",

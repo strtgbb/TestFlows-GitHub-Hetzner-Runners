@@ -396,7 +396,7 @@ def argparser():
         action="append",
         dest="delete_id",
         help="delete by server id",
-        type=int,
+        type=str,
     )
 
     delete_parser.add_argument(
@@ -441,7 +441,7 @@ def argparser():
         action="append",
         dest="list_id",
         help="list by server id",
-        type=int,
+        type=str,
     )
 
     list_parser.add_argument(
@@ -463,7 +463,7 @@ def argparser():
         help="do not print volumes",
     )
 
-    list_parser.set_defaults(func=servers.list)
+    list_parser.set_defaults(func=servers.list_servers)
 
     ssh_client_parser = commands.add_parser(
         "ssh",

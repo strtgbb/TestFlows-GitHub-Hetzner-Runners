@@ -458,7 +458,7 @@ class HetznerCloudProvider(CloudProvider):
         """
         if isinstance(image_spec, str):
             from argparse import ArgumentTypeError
-            from ...args import image_type as _parse_hetzner_image
+            from ...argtypes import image_type as _parse_hetzner_image
 
             sep = ":" if ":" in image_spec else "-"
             try:

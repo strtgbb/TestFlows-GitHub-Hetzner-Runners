@@ -14,132 +14,28 @@
 # limitations under the License.
 import os
 import sys
-import argparse
-
-from hcloud.images.domain import Image
-from hcloud.locations.domain import Location
-from hcloud.server_types.domain import ServerType
 
 from argparse import ArgumentTypeError
-
 from traceback import print_exception
-from .ordered_set import OrderedSet as set
 
-file_type = argparse.FileType
-
-
-class ColumnsType(list):
-    pass
-
-
-def lines_type(v):
-    """Log lines type [+]num."""
-    offset = 0
-    if v.startswith("+"):
-        offset = 1
-    try:
-        assert int(v[offset:]) and int(v[offset:]) >= 0
-    except Exception as e:
-        raise ArgumentTypeError(f"{v} must be [+]num with num >= 0")
-    return v
-
-
-def columns_type(v):
-    """Log columns type name:width,..."""
-    columns = ColumnsType()
-    columns.value = v
-    try:
-        for c in v.split(","):
-            d = {}
-            c = str(c).rsplit(":", 1)
-            d["column"] = c[0]
-            if len(c) > 1:
-                c[1] = int(c[1])
-                assert c[1] > 0
-                d["width"] = c[1]
-            columns.append(d)
-    except Exception as e:
-        raise ArgumentTypeError(f"invalid format {v}")
-    return columns
-
-
-def end_of_life_type(v):
-    """Server end of life type."""
-    try:
-        v = int(v)
-        assert v > 0 and v < 60, f"{v} must be > 0 and < 60"
-    except AssertionError as e:
-        raise ArgumentTypeError(str(e))
-    return v
-
-
-def switch_type(v):
-    """Switch argument type."""
-    if v == "on":
-        return True
-    elif v == "off":
-        return False
-    raise ArgumentTypeError(f"invalid value {v}")
-
-
-def path_type(v, check_exists=True):
-    """Path argument type."""
-    try:
-        v = os.path.abspath(os.path.expanduser(v))
-        if check_exists:
-            os.path.exists(v)
-    except Exception as e:
-        raise ArgumentTypeError(str(e))
-    return v
-
-
-def count_type(v):
-    """Count argument type."""
-    v = int(v)
-    if not v >= 1:
-        raise ArgumentTypeError(f"{v} must be >= 0")
-    return v
-
-
-def image_type(v, separator=":"):
-    """Image type argument. Example: x86:system:ubuntu-22.04"""
-    try:
-        image_architecture, image_type, image_name = v.split(separator, 2)
-        assert image_type in ("system", "snapshot", "backup", "app")
-    except:
-        raise ArgumentTypeError(f"invalid image {v}")
-
-    if image_architecture in ("aarch64", "arm64"):
-        # support aarch64, arm64 alias for arm
-        image_architecture = "arm"
-
-    if image_type in ("system", "app"):
-        return Image(type=image_type, architecture=image_architecture, name=image_name)
-    else:
-        # backup or snapshot uses description
-        return Image(
-            type=image_type, architecture=image_architecture, description=image_name
-        )
-
-
-def location_type(v):
-    """Location type argument. Example: ash"""
-    if v is not None:
-        return Location(name=v)
-    return None
-
-
-def server_type(v):
-    """Server type argument. Example: cx23"""
-    return ServerType(name=v)
-
-
-def meta_label_type(v):
-    """Meta labels type argument."""
-    try:
-        return {l[0]: set(l[1].split(",") if l[1] else []) for l in v}
-    except Exception as e:
-        raise ArgumentTypeError(str(e))
+# Pure validators live in the leaf ``argtypes`` module; re-exported here so
+# existing ``args.<name>_type`` references (bin parser, providers) keep working.
+from .argtypes import (
+    file_type,
+    ColumnsType,
+    lines_type,
+    columns_type,
+    end_of_life_type,
+    switch_type,
+    path_type,
+    count_type,
+    image_type,
+    location_type,
+    server_type,
+    meta_label_type,
+    max_runners_for_label_type,
+    provider_type,
+)
 
 
 def config_type(v):
@@ -165,56 +61,3 @@ def config_type(v):
         raise ArgumentTypeError(str(e))
 
     return config
-
-
-def max_runners_for_label_type(value: str) -> tuple[set[str], int]:
-    """Parse max runners for label specification.
-
-    Format: label1,label2:count
-    Example: windows,gpu:3
-
-    Returns:
-        tuple[set[str], int]: Tuple of (set of labels, count)
-    """
-    try:
-        labels_str, count_str = value.rsplit(":", 1)
-        labels = [label.strip().lower() for label in labels_str.split(",")]
-        count = int(count_str)
-        if not labels or not count > 0:
-            raise ValueError
-        return (set(labels), count)
-    except (ValueError, TypeError):
-        raise ArgumentTypeError(
-            f"invalid max runners for label specification: {value}, "
-            "expected format: label1,label2:count"
-        )
-
-
-def provider_type(value: str) -> list[str]:
-    """Parse provider argument supporting comma-separated values.
-
-    Args:
-        value: Provider string, can be comma-separated (e.g., "hetzner,aws")
-
-    Returns:
-        list[str]: List of valid provider names
-
-    Raises:
-        ArgumentTypeError: If any provider is invalid
-    """
-    valid_providers = {"hetzner", "aws", "scaleway", "dedicated_static"}
-
-    # Split by comma and strip whitespace
-    providers = [p.strip() for p in value.split(",")]
-    parsed = []
-
-    for provider in providers:
-        if provider in valid_providers:
-            if provider not in parsed:  # Avoid duplicates
-                parsed.append(provider)
-        else:
-            raise ArgumentTypeError(
-                f"Unknown provider '{provider}'. Valid providers: {', '.join(sorted(valid_providers))}"
-            )
-
-    return parsed

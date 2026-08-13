@@ -220,7 +220,7 @@ def aws_conformance(self):
 def _make_hetzner_server(labels):
     label_dict = {"github-runner": "active"}
     for i, lbl in enumerate(labels):
-        label_dict[f"github-hetzner-runner-label-{i}"] = lbl
+        label_dict[f"github-runner-label-{i}"] = lbl
     s = MagicMock(spec=ProviderServer)
     s.labels = label_dict
     return s
@@ -230,7 +230,7 @@ def _hetzner_fixtures(provider):
     sample_labels = ["self-hosted", "linux", "x64"]
     valid_label_dict = {"github-runner": "active"}
     for i, lbl in enumerate(sample_labels):
-        valid_label_dict[f"github-hetzner-runner-label-{i}"] = lbl
+        valid_label_dict[f"github-runner-label-{i}"] = lbl
     sample_server_type = MagicMock(spec=ProviderServerType)
     sample_server_type.name = "cx23"
     return dict(

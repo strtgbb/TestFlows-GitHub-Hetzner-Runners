@@ -33,6 +33,7 @@ from ...constants import (
     recycle_timestamp_label,
     server_ssh_key_label,
     legacy_runner_labels,
+    runner_label_key_prefix,
     runner_volume_label,
     runner_volume_arch_label,
     runner_volume_os_label,
@@ -283,7 +284,7 @@ class HetznerCloudProvider(CloudProvider):
         )
 
     def is_runner_label_tag(self, key: str) -> bool:
-        return key.startswith("github-hetzner-runner-label")
+        return key.startswith(runner_label_key_prefix)
 
     def activate_recycled_server(
         self, claim: RecycleClaim
@@ -322,12 +323,12 @@ class HetznerCloudProvider(CloudProvider):
         """Return the job labels attached to this runner server.
 
         Hetzner stores each label value under a numbered key with the prefix
-        ``github-hetzner-runner-label``.  This extracts just the values.
+        ``github-runner-label``.  This extracts just the values.
         """
         return {
             value.lower()
             for key, value in server.labels.items()
-            if key.startswith("github-hetzner-runner-label")
+            if key.startswith(runner_label_key_prefix)
         }
 
     # ---------------------------------------------------------------------------
@@ -339,11 +340,11 @@ class HetznerCloudProvider(CloudProvider):
     ) -> dict[str, str]:
         """Return Hetzner tag dict for a runner server.
 
-        Each runner label is stored under a numbered ``github-hetzner-runner-label-{i}``
+        Each runner label is stored under a numbered ``github-runner-label-{i}``
         key so it satisfies Hetzner's label value constraints.
         """
         labels = {
-            f"github-hetzner-runner-label-{i}": value
+            f"{runner_label_key_prefix}-{i}": value
             for i, value in enumerate(runner_labels)
         }
         if ssh_key_name:

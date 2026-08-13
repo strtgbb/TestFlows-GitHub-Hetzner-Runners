@@ -608,7 +608,7 @@ class CloudProvider(ABC):
         """Return the tag/label dict to apply to a new (or recycled) runner server.
 
         The provider owns its own tag key naming scheme (e.g. Hetzner uses
-        ``github-hetzner-runner-label-{i}``).  The returned dict should include
+        ``github-runner-label-{i}``).  The returned dict should include
         both the per-label entries and the discovery marker
         ``github_runner_label = self._runner_tag`` (the controller identity),
         used for server discovery and per-controller isolation.

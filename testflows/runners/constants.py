@@ -10,6 +10,9 @@ server_ssh_key_label = "github-runner-ssh-key"
 # Server runner discovery label KEY. Its value is the controller identity (see
 # utils.derive_runner_tag); presence of the key marks a managed runner server.
 github_runner_label = "github-runner"
+# Key prefix for the per-job runner labels stored on a server (Hetzner numbers
+# them: "<prefix>-0", "<prefix>-1", ...).
+runner_label_key_prefix = "github-runner-label"
 # Volume labels marking a runner-owned volume + its image metadata.
 runner_volume_label = "github-runner-volume"
 runner_volume_arch_label = "github-runner-arch"

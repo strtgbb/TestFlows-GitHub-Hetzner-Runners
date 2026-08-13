@@ -17,8 +17,7 @@ def derive_runner_tag(github_repository: str, with_label) -> str:
     """
     labels = sorted(with_label or [])
     repo = github_repository or ""
-    # Hash the raw, unambiguously-joined identity (NUL can't occur in the
-    # inputs) so distinct inputs never collide, regardless of sanitization.
+    # Hash the raw NUL-joined identity (NUL can't occur in the inputs).
     digest = hashlib.sha256(
         "\x00".join([repo, *labels]).encode("utf-8")
     ).hexdigest()[:8]

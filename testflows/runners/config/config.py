@@ -5,8 +5,8 @@ import yaml
 from .. import errors
 from ..providers.hetzner import config as hetzner_config
 
-# Pure validators re-exported from the leaf argtypes module under their
-# historical names, so config.parse can keep doing `from .config import path`.
+# Validators re-exported from the argtypes leaf under their historical names
+# (config.parse still does `from .config import path`).
 from ..argtypes import (
     path_type as path,
     count_type as count,
@@ -17,9 +17,8 @@ from ..argtypes import (
     meta_label_type,
 )
 
-# Schema dataclasses live in the top-level config_schema leaf; re-exported here
-# so existing `from ...config.config import Config` / `hetzner_provider` keep
-# working. Providers import them from config_schema directly (never this module)
+# Schema dataclasses re-exported from the config_schema leaf for backward
+# compat. Providers import them from config_schema directly (never this module)
 # to avoid the config <-> providers import cycle.
 from ..config_schema import (
     standby_runner,
@@ -75,7 +74,7 @@ ServerTypeError = errors.ServerTypeError
 
 
 def apply_args(config, args):
-    """Apply command-line argument overrides onto a Config (was Config.update)."""
+    """Apply command-line argument overrides onto a Config."""
     for attr in vars(config):
         if attr in [
             "config_file",

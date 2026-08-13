@@ -70,12 +70,10 @@ def _runner_servers(config: Config) -> list[tuple[ProviderServer, CloudProvider]
 def _select(pairs, runners, *, names, server_names, ids, select_all):
     """Filter (server, provider) pairs and runners.
 
-    ``select_all`` takes everything. Otherwise selection is the union of:
-    ``names`` (name-prefix match on both servers and runners), ``server_names``
-    (exact server name), and ``ids`` (server id compared as a string, so
-    string ids like AWS ``i-...`` work). A server matched by server-name or id
-    also pulls the runner that shares its name. Results are deduplicated, so
-    overlapping filters never select the same server or runner twice.
+    ``select_all`` takes everything; otherwise the union of ``names``
+    (name-prefix, servers + runners), ``server_names`` (exact), and ``ids``
+    (server id, string-compared). A server matched by name/id also pulls the
+    runner sharing its name. Deduplicated.
     """
     if select_all:
         return list(pairs), list(runners)

@@ -33,7 +33,7 @@ deploy_scripts_folder = "/home/ubuntu/.tfs-runners/scripts/"
 deploy_configs_folder = "/home/ubuntu/.tfs-runners/"
 
 # The service is installed into a virtualenv (Ubuntu 24.04 blocks system-wide
-# pip); setup.sh creates it. All pip / tfs-runners invocations use its binaries.
+# pip); setup.sh creates it.
 deploy_venv = "/home/ubuntu/.tfs-runners/venv"
 deploy_pip = f"{deploy_venv}/bin/pip"
 deploy_tfs_runners = f"{deploy_venv}/bin/tfs-runners"

@@ -22,7 +22,14 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from ...actions import Action
-from ...constants import recycle_server_name_prefix, github_runner_label
+from ...constants import (
+    recycle_server_name_prefix,
+    github_runner_label,
+    runner_volume_label,
+    runner_volume_arch_label,
+    runner_volume_os_label,
+    runner_volume_os_version_label,
+)
 from ...utils import derive_runner_tag
 from . import estimate
 from ...cloud_provider import (
@@ -693,10 +700,10 @@ class ScalewayCloudProvider(CloudProvider):
     def build_volume_labels(self, arch: str, os_flavor: str, os_version: str) -> dict:
         """Return the tag dict for a runner volume (for future volume support)."""
         return {
-            "github-runner-volume": "active",
-            "github-runner-arch": arch,
-            "github-runner-os": os_flavor,
-            "github-runner-os-version": os_version,
+            runner_volume_label: "active",
+            runner_volume_arch_label: arch,
+            runner_volume_os_label: os_flavor,
+            runner_volume_os_version_label: os_version,
         }
 
     def validate_labels(self, labels: dict) -> tuple[bool, str]:

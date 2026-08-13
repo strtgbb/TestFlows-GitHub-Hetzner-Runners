@@ -404,7 +404,6 @@ class HetznerCloudProvider(CloudProvider):
             else:
                 updated_labels[k] = v
         native.update(labels=updated_labels)
-        # Keep the ProviderServer in sync.
         server.labels = updated_labels
 
     def has_matching_ssh_key(

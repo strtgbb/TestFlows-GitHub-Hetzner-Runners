@@ -19,6 +19,7 @@ import pandas as pd
 from .. import metrics
 from ..colors import STATE_COLORS
 from .. import chart, renderers
+from ...constants import standby_server_name_prefix
 
 
 def render_standby_pool_info(config=None):
@@ -119,7 +120,7 @@ def render_standby_servers_details():
     standby_servers = [
         server
         for server in all_servers
-        if server.get("name", "").startswith("github-hetzner-runner-standby-")
+        if server.get("name", "").startswith(standby_server_name_prefix)
     ]
 
     # Format using the existing servers formatting function

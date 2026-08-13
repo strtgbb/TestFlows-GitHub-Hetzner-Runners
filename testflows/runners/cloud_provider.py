@@ -553,8 +553,7 @@ class CloudProvider(ABC):
         Used to verify a server was created by this controller (with one of its
         SSH keys) before recycling or deleting it. Each provider stores the key
         name under its own tag; the default reads the shared
-        ``github-runner-ssh-key`` tag (used by AWS and Scaleway). Hetzner
-        overrides this to read its ``github-hetzner-runner-ssh-key`` label.
+        ``github-runner-ssh-key`` tag.
         """
         return server.labels.get("github-runner-ssh-key")
 

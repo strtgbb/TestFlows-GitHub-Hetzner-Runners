@@ -121,9 +121,7 @@ class AWSCloudProvider(CloudProvider):
         self._end_of_life = end_of_life
         self._recycle = recycle
         self._recycle_grace_period = recycle_grace_period
-        # Controller-identity value for the discovery tag; overridden in
-        # from_config with the derived id ("active" = legacy default for tests).
-        self._runner_tag = "active"
+        self._runner_tag = "active"  # controller id; set in from_config
 
         # Build subnet → AZ mapping from describe_subnets.
         # This is a single API call at init time; the result is cached for the

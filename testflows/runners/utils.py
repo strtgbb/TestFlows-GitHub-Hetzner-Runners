@@ -8,16 +8,12 @@ _RUNNER_TAG_DISALLOWED = re.compile(r"[^a-z0-9._-]+")
 
 
 def derive_runner_tag(github_repository: str, with_label) -> str:
-    """Derive a controller identity for the runner discovery-label value.
+    """Controller-id value for the runner discovery label.
 
-    Provider-portable and stable: a human-readable part (the repo plus the
-    sorted ``with_label`` set, lowercased and sanitized to the strictest label
-    charset — hcloud value ``[a-z0-9._-]``, start/end alphanumeric) plus an
-    always-appended short hash of the *unsanitized* identity. The hash makes the
-    id collision-free even when two different repo/label sets sanitize to the
-    same readable form; two controllers with a different repo or ``with_label``
-    set therefore never share an id (nor manage each other's servers). Total
-    length is capped at 63.
+    A sanitized readable part (repo + sorted ``with_label``, lowercased, hcloud
+    charset ``[a-z0-9._-]``, alphanumeric ends) plus an always-appended 8-hex
+    hash of the unsanitized identity, so distinct inputs never collide. Capped
+    at 63 chars.
     """
     labels = sorted(with_label or [])
     repo = github_repository or ""

@@ -118,9 +118,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
     ):
         self._default_image = None
         self._default_location = None
-        # Controller-identity value written into the discovery label; overridden
-        # in from_config ("active" = legacy default for direct construction).
-        self._runner_tag = "active"
+        self._runner_tag = "active"  # controller id; set in from_config
         # Minutes a claim marker stays authoritative before it is treated as
         # stale (a crashed/abandoned setup) and the host may be reclaimed.
         self._claim_ttl_minutes = claim_ttl_minutes

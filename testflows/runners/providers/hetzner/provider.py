@@ -131,10 +131,7 @@ class HetznerCloudProvider(CloudProvider):
         self._recycle = recycle
         self._recycle_grace_period = recycle_grace_period
         self._recycle_with_rebuild = recycle_with_rebuild
-        # Controller-identity value for the discovery label. Overridden in
-        # from_config with the derived id; "active" is the legacy default for
-        # direct construction (tests).
-        self._runner_tag = "active"
+        self._runner_tag = "active"  # controller id; set in from_config
 
     # ---------------------------------------------------------------------------
     # Identity

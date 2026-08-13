@@ -133,8 +133,8 @@ class CloudProvider(ABC):
     STATUS_DELETING = "deleting"
     STATUS_UNKNOWN = "unknown"
     _claim_state_init_lock = threading.Lock()
-    # Discovery-label value = controller identity; from_config sets the derived
-    # id, this default only applies to direct construction (tests).
+    # Discovery-label value = controller id (set in from_config; "active"
+    # default applies only to direct construction).
     _runner_tag = "active"
 
     # ---------------------------------------------------------------------------

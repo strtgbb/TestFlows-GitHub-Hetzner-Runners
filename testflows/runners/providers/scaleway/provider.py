@@ -152,9 +152,7 @@ class ScalewayCloudProvider(CloudProvider):
         self._block = BlockV1API(self._client)
         self._project_id = project_id
         self._zone = zone
-        # Controller-identity value for the discovery tag; overridden in
-        # from_config with the derived id ("active" = legacy default for tests).
-        self._runner_tag = "active"
+        self._runner_tag = "active"  # controller id; set in from_config
         # Zones this provider operates over (listing/prices/fallback). Derived
         # from in- labels by the factory; filtered to valid Scaleway zones here.
         self._zones = set()

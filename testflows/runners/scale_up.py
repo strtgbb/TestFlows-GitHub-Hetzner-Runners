@@ -49,6 +49,9 @@ from .constants import (
     standby_runner_name_prefix,
     github_runner_label,
     recycle_image_label,
+    runner_volume_arch_label,
+    runner_volume_os_label,
+    runner_volume_os_version_label,
 )
 
 from .server import wait_ssh, ssh
@@ -813,15 +816,15 @@ def get_server_bound_volumes(
                 # volume name does not match
                 continue
             if server_image.architecture != volume.labels.get(
-                "github-hetzner-runner-arch"
+                runner_volume_arch_label
             ):
                 # volume architecture does not match
                 continue
-            if server_image.os_flavor != volume.labels.get("github-hetzner-runner-os"):
+            if server_image.os_flavor != volume.labels.get(runner_volume_os_label):
                 # volume os flavor does not match
                 continue
             if server_image.os_version != volume.labels.get(
-                "github-hetzner-runner-os-version"
+                runner_volume_os_version_label
             ):
                 # volume os version does not match
                 continue
@@ -1755,17 +1758,12 @@ def scale_up(
                     level=logging.DEBUG,
                     interval=interval,
                 ):
-                    # Fan out across healthy providers; skip those without volumes.
+                    # Fan out across healthy providers; providers without
+                    # caching volumes return []. Legacy-tagged volumes are
+                    # adopted in place here (migration).
                     all_volumes = []
                     for _p in cycle_providers:
-                        try:
-                            all_volumes.extend(
-                                _p.list_volumes(
-                                    label_selector="github-hetzner-runner-volume=active"
-                                )
-                            )
-                        except NotImplementedError:
-                            pass
+                        all_volumes.extend(_p.list_runner_volumes())
                     # Filter to only available volumes for server attachment logic.
                     # Pass native objects so get_server_bound_volumes can resize/attach.
                     volumes = [

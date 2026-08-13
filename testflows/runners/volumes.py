@@ -19,6 +19,7 @@ from .config import Config
 from .actions import Action
 from .hclient import HClient as Client
 from .scale_up import get_volume_name
+from .constants import runner_volume_label
 
 from hcloud.volumes.client import BoundVolume
 from hcloud.volumes.domain import Volume
@@ -37,7 +38,7 @@ def list(args, config: Config):
         client = Client(token=config.hetzner_token)
 
     with Action("Getting a list of volumes"):
-        volumes = client.volumes.get_all(label_selector="github-hetzner-runner-volume")
+        volumes = client.volumes.get_all(label_selector=runner_volume_label)
         if not volumes:
             print("No volumes found", file=sys.stdout)
             return
@@ -91,7 +92,7 @@ def list(args, config: Config):
         print(
             icon,
             f"{volume.status:10}",
-            f"{volume.labels.get('github-hetzner-runner-volume', 'none') + ',':8}",
+            f"{volume.labels.get(runner_volume_label, 'none') + ',':8}",
             get_volume_name(volume.name) + ",",
             volume.name + ",",
             f"{volume.id},",
@@ -113,7 +114,7 @@ def delete(args, config: Config):
 
     with Action("Getting a list of volumes"):
         volumes: list[BoundVolume] = client.volumes.get_all(
-            label_selector="github-hetzner-runner-volume"
+            label_selector=runner_volume_label
         )
         if not volumes:
             print("No volumes found", file=sys.stdout)
@@ -170,7 +171,7 @@ def resize(args, config: Config):
 
     with Action("Getting a list of volumes"):
         volumes: list[BoundVolume] = client.volumes.get_all(
-            label_selector="github-hetzner-runner-volume"
+            label_selector=runner_volume_label
         )
         if not volumes:
             print("No volumes found", file=sys.stdout)
@@ -226,7 +227,7 @@ def activate_deactivate(args, config: Config, action: str):
 
     with Action("Getting a list of volumes"):
         volumes: list[BoundVolume] = client.volumes.get_all(
-            label_selector="github-hetzner-runner-volume"
+            label_selector=runner_volume_label
         )
         if not volumes:
             print("No volumes found", file=sys.stdout)
@@ -259,7 +260,7 @@ def activate_deactivate(args, config: Config, action: str):
             f"{icon}  {'Activating' if action == 'active' else 'Deactivating'} volume {volume.name} with id {volume.id} in {volume.location.name}",
             file=sys.stdout,
         )
-        volume.update(labels={"github-hetzner-runner-volume": action})
+        volume.update(labels={runner_volume_label: action})
 
 
 def activate(args, config: Config):

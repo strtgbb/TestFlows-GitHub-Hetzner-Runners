@@ -203,6 +203,48 @@ def list_runner_servers_claims_legacy_hetzner_server(self):
 
 
 @TestScenario
+def list_runner_volumes_claims_legacy_volume(self):
+    """A legacy caching volume is returned and retagged in place to the neutral
+    scheme (no orphaned cache)."""
+    with Given("a provider and a legacy caching volume"):
+        hclient, provider = hetzner_provider()
+        vol = MagicMock()
+        vol.id = 7
+        vol.labels = {
+            "github-hetzner-runner-volume": "active",
+            "github-hetzner-runner-arch": "x86",
+            "github-hetzner-runner-os": "ubuntu",
+            "github-hetzner-runner-os-version": "22.04",
+        }
+
+        def _get_all(label_selector=None, **kw):
+            return (
+                [vol]
+                if label_selector == "github-hetzner-runner-volume=active"
+                else []
+            )
+
+        hclient.volumes.get_all.side_effect = _get_all
+    with When("I list runner volumes"):
+        result = provider.list_runner_volumes()
+    with Then("the legacy volume is returned"):
+        assert len(result) == 1, result
+    with And("it was retagged in place to the neutral scheme"):
+        sent = vol.update.call_args[1]["labels"]
+        assert sent["github-runner-volume"] == "active", sent
+        assert sent["github-runner-arch"] == "x86", sent
+        assert sent["github-runner-os"] == "ubuntu", sent
+        assert sent["github-runner-os-version"] == "22.04", sent
+        for legacy in (
+            "github-hetzner-runner-volume",
+            "github-hetzner-runner-arch",
+            "github-hetzner-runner-os",
+            "github-hetzner-runner-os-version",
+        ):
+            assert legacy not in sent, (legacy, sent)
+
+
+@TestScenario
 def set_server_tags_deletes_on_none(self):
     with Given("a provider and a server carrying a legacy label"):
         _, provider = hetzner_provider()

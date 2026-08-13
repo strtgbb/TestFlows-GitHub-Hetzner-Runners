@@ -33,6 +33,11 @@ from ...constants import (
     recycle_timestamp_label,
     server_ssh_key_label,
     legacy_runner_labels,
+    runner_volume_label,
+    runner_volume_arch_label,
+    runner_volume_os_label,
+    runner_volume_os_version_label,
+    legacy_runner_volume_label,
 )
 from ...utils import derive_runner_tag
 
@@ -40,6 +45,11 @@ from ...utils import derive_runner_tag
 _HETZNER_LEGACY_RENAMES = {
     "github-hetzner-runner-ssh-key": server_ssh_key_label,
     "github-hetzner-recycle-timestamp": recycle_timestamp_label,
+}
+_HETZNER_VOLUME_RENAMES = {
+    "github-hetzner-runner-arch": runner_volume_arch_label,
+    "github-hetzner-runner-os": runner_volume_os_label,
+    "github-hetzner-runner-os-version": runner_volume_os_version_label,
 }
 from .utils import _HETZNER_DC_CODE_RE, _STATUS_MAP, _server_to_provider, _volume_to_provider
 
@@ -349,10 +359,10 @@ class HetznerCloudProvider(CloudProvider):
     ) -> dict[str, str]:
         """Return Hetzner tag dict for a runner volume."""
         return {
-            "github-hetzner-runner-volume": "active",
-            "github-hetzner-runner-arch": arch,
-            "github-hetzner-runner-os": os_flavor,
-            "github-hetzner-runner-os-version": os_version,
+            runner_volume_label: "active",
+            runner_volume_arch_label: arch,
+            runner_volume_os_label: os_flavor,
+            runner_volume_os_version_label: os_version,
         }
 
     def validate_labels(self, labels: dict[str, str]) -> tuple[bool, str]:
@@ -570,6 +580,41 @@ class HetznerCloudProvider(CloudProvider):
         """
         vols = self._client.volumes.get_all(label_selector=label_selector)
         return [_volume_to_provider(v) for v in vols]
+
+    def list_runner_volumes(self) -> list[ProviderVolume]:
+        """Active runner caching volumes, adopting legacy-tagged ones in place.
+
+        Persistent volumes don't roll over, so legacy-labelled caching volumes
+        are retagged to the neutral scheme when discovered (no orphaned cache).
+        """
+        by_id = {
+            v.id: v
+            for v in self._client.volumes.get_all(
+                label_selector=f"{runner_volume_label}=active"
+            )
+        }
+        for v in self._client.volumes.get_all(
+            label_selector=f"{legacy_runner_volume_label}=active"
+        ):
+            if v.id not in by_id:
+                self._claim_volume(v)
+                by_id[v.id] = v
+        return [_volume_to_provider(v) for v in by_id.values()]
+
+    def _claim_volume(self, volume: "BoundVolume") -> None:
+        """Retag a legacy caching volume to the neutral scheme in place."""
+        labels = dict(volume.labels or {})
+        new_labels = {
+            k: value
+            for k, value in labels.items()
+            if k != legacy_runner_volume_label and k not in _HETZNER_VOLUME_RENAMES
+        }
+        new_labels[runner_volume_label] = labels.get(legacy_runner_volume_label, "active")
+        for old, new in _HETZNER_VOLUME_RENAMES.items():
+            if old in labels:
+                new_labels[new] = labels[old]
+        volume.update(labels=new_labels)
+        volume.labels = new_labels
 
     def resize_volume(self, volume: ProviderVolume, size: int) -> None:
         """Resize a Hetzner volume."""

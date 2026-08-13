@@ -370,6 +370,10 @@ class CloudProvider(ABC):
         """Adopt an un-owned server in place: write this controller's id."""
         self.set_server_tags(server, {github_runner_label: self._runner_tag})
 
+    def list_runner_volumes(self) -> list["ProviderVolume"]:
+        """Runner caching volumes for reuse. Default: none (most providers)."""
+        return []
+
     def before_scale_up(self, managed_runner_names: frozenset[str]) -> None:
         """Optional hook before scale-up provider inventory is read."""
         del managed_runner_names

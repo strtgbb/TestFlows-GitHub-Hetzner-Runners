@@ -1796,7 +1796,7 @@ def scale_up(
                                 provider_name=p.name,
                             )
                             for p in cycle_providers
-                            for ps in p.list_runner_servers()
+                            for ps in p.list_runner_servers(claim=True)
                         ],
                         with_label,
                     )

@@ -183,8 +183,8 @@ def list_runner_servers_claims_legacy_hetzner_server(self):
             return [bound] if label_selector == "github-hetzner-runner=active" else []
 
         hclient.servers.get_all.side_effect = _get_all
-    with When("I call list_runner_servers"):
-        result = provider.list_runner_servers()
+    with When("I call list_runner_servers(claim=True)"):
+        result = provider.list_runner_servers(claim=True)
     with Then("the legacy server is returned, wrapping the bound server"):
         assert len(result) == 1 and result[0]._native is bound, result
     with And("it was retagged in place to the neutral scheme"):

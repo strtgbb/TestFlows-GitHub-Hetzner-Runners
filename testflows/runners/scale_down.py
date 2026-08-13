@@ -421,7 +421,7 @@ def scale_down(
                 server_providers: dict[str, CloudProvider] = {}
                 servers: list[ProviderServer] = []
                 for _lp in cycle_providers:
-                    for _ps in _lp.list_runner_servers():
+                    for _ps in _lp.list_runner_servers(claim=True):
                         servers.append(_ps)
                         server_providers[_ps.name] = _lp
 

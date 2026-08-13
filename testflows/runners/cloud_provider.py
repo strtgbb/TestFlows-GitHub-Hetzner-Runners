@@ -344,16 +344,15 @@ class CloudProvider(ABC):
     # Runner identification
     # ---------------------------------------------------------------------------
 
-    def list_runner_servers(self, claim: bool = True) -> list[ProviderServer]:
+    def list_runner_servers(self, claim: bool = False) -> list[ProviderServer]:
         """Active runner servers owned by this controller (plus un-owned legacy
         ones).
 
-        When ``claim`` is true (the scale loop), un-owned legacy-tagged servers
-        are adopted in place — retagged to this controller's id — so an upgraded
-        controller keeps managing a running fleet instead of orphaning it.
-        Isolation holds: only ``=active`` (un-owned) servers are ever claimed,
-        never one carrying another controller's id. Read-only callers (the CLI)
-        pass ``claim=False`` to list without mutating.
+        Read-only by default. Pass ``claim=True`` (the scale loop does) to adopt
+        un-owned legacy-tagged servers in place — retag them to this controller's
+        id — so an upgraded controller keeps managing a running fleet instead of
+        orphaning it. Isolation holds: only ``=active`` (un-owned) servers are
+        ever claimed, never one carrying another controller's id.
         """
         owned_selector = f"{github_runner_label}={self._runner_tag}"
         by_id = {s.id: s for s in self.list_servers(label_selector=owned_selector)}

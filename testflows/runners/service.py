@@ -78,7 +78,6 @@ def install(args, config):
     """Install service."""
     config.check()
     force = args.force
-    current_dir = os.path.dirname(__file__)
 
     with Action("Checking if service is already installed"):
         if os.path.exists(SERVICE):
@@ -93,9 +92,11 @@ def install(args, config):
         )
 
     with Action(f"Installing {SERVICE}"):
-        binary = os.path.join(
-            current_dir, "bin", "tfs-runners --service-mode"
-        )
+        # Run under the same interpreter this process uses — the deploy invokes
+        # the venv's tfs-runners, so sys.executable is the venv python and the
+        # unit picks up the venv's installed package (not system site-packages).
+        tfs_runners = os.path.join(os.path.dirname(sys.executable), "tfs-runners")
+        binary = f"{sys.executable} {tfs_runners} --service-mode"
         contents = (
             "[Unit]\n"
             "Description=Autoscaling GitHub Actions Runners\n"

@@ -4,6 +4,7 @@ set -x
 echo "Install required packages"
 apt-get update
 apt-get -y install python3-pip
+apt-get -y install python3-venv
 apt-get -y install openssh-client
 
 echo "Create and configure ubuntu user"
@@ -37,6 +38,9 @@ fi
 echo "Create scripts folder"
 mkdir -p /home/ubuntu/.tfs-runners/scripts
 mkdir -p /home/ubuntu/.tfs-runners/configs
+
+echo "Create Python virtualenv for the service (Ubuntu 24.04 blocks system pip)"
+sudo -u ubuntu python3 -m venv /home/ubuntu/.tfs-runners/venv
 
 # Ensure the deploy tree is owned by the service user so the controller can scp
 # scripts/config in as that user afterwards (on images where the login user is

@@ -32,6 +32,12 @@ current_dir = os.path.dirname(__file__)
 deploy_scripts_folder = "/home/ubuntu/.tfs-runners/scripts/"
 deploy_configs_folder = "/home/ubuntu/.tfs-runners/"
 
+# The service is installed into a virtualenv (Ubuntu 24.04 blocks system-wide
+# pip); setup.sh creates it. All pip / tfs-runners invocations use its binaries.
+deploy_venv = "/home/ubuntu/.tfs-runners/venv"
+deploy_pip = f"{deploy_venv}/bin/pip"
+deploy_tfs_runners = f"{deploy_venv}/bin/tfs-runners"
+
 # The deployed controller service runs as this Linux user (created by setup.sh on
 # images that don't already have it) and its home holds the deploy folders above.
 service_user = "ubuntu"
@@ -226,9 +232,9 @@ def deploy(args, config: Config, redeploy=False):
             if version.strip().lower() == "latest"
             else f"testflows.runners=={version}"
         )
-        pip_cmd = "pip3 install"
+        pip_cmd = f"{deploy_pip} install"
         if version.strip().lower() == "latest" and redeploy:
-            pip_cmd = "pip3 install --upgrade"
+            pip_cmd = f"{deploy_pip} install --upgrade"
         ssh(server, as_service_user(server, f"{pip_cmd} {pip_spec}"), stacklevel=4)
 
     with Action("Copying any custom scripts"):
@@ -315,7 +321,7 @@ def install(args, config: Config, server: ProviderServer = None):
 
     with Action("Installing service"):
         inner = (
-            "tfs-runners"
+            deploy_tfs_runners
             + command_options(
                 config,
                 github_token=config.github_token,
@@ -340,7 +346,7 @@ def upgrade(args, config: Config, server: ProviderServer = None):
             ssh(
                 server,
                 as_service_user(
-                    server, f"pip3 install testflows.runners=={upgrade_version}"
+                    server, f"{deploy_pip} install testflows.runners=={upgrade_version}"
                 ),
                 stacklevel=4,
             )
@@ -348,7 +354,7 @@ def upgrade(args, config: Config, server: ProviderServer = None):
         with Action(f"Upgrading tfs-runners the latest version"):
             ssh(
                 server,
-                as_service_user(server, "pip3 install --upgrade testflows.runners"),
+                as_service_user(server, f"{deploy_pip} install --upgrade testflows.runners"),
                 stacklevel=4,
             )
 
@@ -363,7 +369,7 @@ def uninstall(args, config: Config, server: ProviderServer = None):
     with Action("Uninstalling service"):
         ssh(
             server,
-            as_service_user(server, "tfs-runners service uninstall"),
+            as_service_user(server, f"{deploy_tfs_runners} service uninstall"),
             stacklevel=4,
         )
 
@@ -378,7 +384,7 @@ def delete(args, config: Config, server: ProviderServer = None):
     with Action("Uninstalling service", ignore_fail=True):
         ssh(
             server,
-            as_service_user(server, "tfs-runners service uninstall"),
+            as_service_user(server, f"{deploy_tfs_runners} service uninstall"),
             stacklevel=4,
         )
 
@@ -392,7 +398,7 @@ def log(args, config: Config, server: ProviderServer = None):
         server = get_server(config)
 
     inner = (
-        "tfs-runners service log"
+        f"{deploy_tfs_runners} service log"
         + (" -f" if args.follow else "")
         + (f" -c {args.columns.value}" if args.columns else "")
         + (f" -n {args.lines}" if args.lines else "")
@@ -423,7 +429,7 @@ def delete_log(args, config: Config, server: ProviderServer = None):
 
     ssh(
         server,
-        as_service_user(server, "tfs-runners service log delete"),
+        as_service_user(server, f"{deploy_tfs_runners} service log delete"),
         use_logger=False,
         stacklevel=4,
     )
@@ -435,7 +441,7 @@ def status(args, config: Config, server: ProviderServer = None):
         server = get_server(config)
 
     with Action("Getting status"):
-        ssh(server, as_service_user(server, "tfs-runners service status"), stacklevel=4)
+        ssh(server, as_service_user(server, f"{deploy_tfs_runners} service status"), stacklevel=4)
 
 
 def start(args, config: Config, server: ProviderServer = None):
@@ -444,7 +450,7 @@ def start(args, config: Config, server: ProviderServer = None):
         server = get_server(config)
 
     with Action("Starting service"):
-        ssh(server, as_service_user(server, "tfs-runners service start"), stacklevel=4)
+        ssh(server, as_service_user(server, f"{deploy_tfs_runners} service start"), stacklevel=4)
 
 
 def stop(args, config: Config, server: ProviderServer = None):
@@ -453,7 +459,7 @@ def stop(args, config: Config, server: ProviderServer = None):
         server = get_server(config)
 
     with Action("Stopping service"):
-        ssh(server, as_service_user(server, "tfs-runners service stop"), stacklevel=4)
+        ssh(server, as_service_user(server, f"{deploy_tfs_runners} service stop"), stacklevel=4)
 
 
 def ssh_client(args, config: Config, server: ProviderServer = None):

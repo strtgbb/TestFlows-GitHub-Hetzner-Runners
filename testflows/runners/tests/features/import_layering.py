@@ -77,7 +77,13 @@ def _scan_files():
         for name in names:
             if name.endswith(".py"):
                 files.append((os.path.join(root, name), False))
-    for leaf in ("cloud_provider.py", "config_schema.py", "argtypes.py"):
+    for leaf in (
+        "cloud_provider.py",
+        "config_schema.py",
+        "argtypes.py",
+        "utils.py",
+        "constants.py",
+    ):
         files.append((os.path.join(_PKG_ROOT, leaf), True))
     return files
 

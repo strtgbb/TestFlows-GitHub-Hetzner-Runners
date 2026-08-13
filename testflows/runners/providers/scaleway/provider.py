@@ -606,11 +606,6 @@ class ScalewayCloudProvider(CloudProvider):
     # Runner identification
     # ---------------------------------------------------------------------------
 
-    def list_runner_servers(self) -> list[ProviderServer]:
-        return self.list_servers(
-            label_selector=f"{github_runner_label}={self._runner_tag}"
-        )
-
     def is_recycled_server(self, server: ProviderServer) -> bool:
         return server.name.startswith(recycle_server_name_prefix)
 

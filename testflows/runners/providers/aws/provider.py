@@ -292,13 +292,6 @@ class AWSCloudProvider(CloudProvider):
     # ---------------------------------------------------------------------------
     # Runner identification
     # ---------------------------------------------------------------------------
-
-    def list_runner_servers(self) -> list[ProviderServer]:
-        return self.list_servers(
-            label_selector=f"{github_runner_label}={self._runner_tag}"
-        )
-
-    # ---------------------------------------------------------------------------
     # Runner label helpers
     # ---------------------------------------------------------------------------
 

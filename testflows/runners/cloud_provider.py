@@ -7,6 +7,8 @@ import hashlib
 import threading
 from typing import Any
 
+from .constants import github_runner_label
+
 
 @dataclass
 class ProviderServerType:
@@ -131,6 +133,9 @@ class CloudProvider(ABC):
     STATUS_DELETING = "deleting"
     STATUS_UNKNOWN = "unknown"
     _claim_state_init_lock = threading.Lock()
+    # Discovery-label value = controller identity; from_config sets the derived
+    # id, this default only applies to direct construction (tests).
+    _runner_tag = "active"
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -339,13 +344,31 @@ class CloudProvider(ABC):
     # Runner identification
     # ---------------------------------------------------------------------------
 
-    @abstractmethod
     def list_runner_servers(self) -> list[ProviderServer]:
-        """Return all servers managed by this provider for runner usage.
+        """Active runner servers owned by this controller.
 
-        The provider is responsible for filtering by its own internal tag/label
-        convention (e.g. Hetzner uses ``github-hetzner-runner=active``).
+        Adopts un-owned legacy-tagged servers in place (migration) so an
+        upgraded controller keeps managing a running fleet instead of orphaning
+        it. Isolation holds: only ``=active`` (un-owned) servers are claimed,
+        never one already carrying another controller's id.
         """
+        owned_selector = f"{github_runner_label}={self._runner_tag}"
+        by_id = {s.id: s for s in self.list_servers(label_selector=owned_selector)}
+        for selector in self._legacy_runner_selectors():
+            if selector == owned_selector:
+                continue
+            for server in self.list_servers(label_selector=selector):
+                self._claim_server(server)
+                by_id[server.id] = server
+        return list(by_id.values())
+
+    def _legacy_runner_selectors(self) -> list[str]:
+        """Selectors for un-owned servers to adopt (base: global =active)."""
+        return [f"{github_runner_label}=active"]
+
+    def _claim_server(self, server: ProviderServer) -> None:
+        """Adopt an un-owned server in place: write this controller's id."""
+        self.set_server_tags(server, {github_runner_label: self._runner_tag})
 
     def before_scale_up(self, managed_runner_names: frozenset[str]) -> None:
         """Optional hook before scale-up provider inventory is read."""

@@ -138,10 +138,13 @@ def list_runner_servers_label_selector(self):
     with When("I call list_runner_servers"):
         hclient.servers.get_all.return_value = []
         provider.list_runner_servers()
-    with Then("HClient.servers.get_all is called with the runner label selector"):
-        hclient.servers.get_all.assert_called_once_with(
-            label_selector="github-runner=active"
-        )
+    with Then("the owned selector and the legacy selectors are queried"):
+        selectors = {
+            c.kwargs["label_selector"]
+            for c in hclient.servers.get_all.call_args_list
+        }
+        assert "github-runner=active" in selectors, selectors
+        assert "github-hetzner-runner=active" in selectors, selectors
 
 
 @TestScenario
@@ -153,10 +156,50 @@ def list_runner_servers_uses_isolation_tag(self):
     with When("I call list_runner_servers"):
         hclient.servers.get_all.return_value = []
         provider.list_runner_servers()
-    with Then("the selector filters by github-runner=<id>"):
-        hclient.servers.get_all.assert_called_once_with(
-            label_selector="github-runner=acme-infra"
-        )
+    with Then("the owned selector uses github-runner=<id>"):
+        selectors = {
+            c.kwargs["label_selector"]
+            for c in hclient.servers.get_all.call_args_list
+        }
+        assert "github-runner=acme-infra" in selectors, selectors
+
+
+@TestScenario
+def list_runner_servers_claims_legacy_hetzner_server(self):
+    """A live legacy server is adopted in place: its legacy keys are renamed to
+    the neutral scheme and the discovery value becomes the controller id."""
+    with Given("a provider with an id and a legacy Hetzner server"):
+        hclient, provider = hetzner_provider()
+        provider._runner_tag = "acme-infra"
+        bound = _make_bound_server()
+        bound.labels = {
+            "github-hetzner-runner": "active",
+            "github-hetzner-runner-ssh-key": "key-1",
+            "github-hetzner-recycle-timestamp": "123",
+            "github-hetzner-runner-label-0": "self-hosted",
+        }
+
+        def _get_all(label_selector=None, **kw):
+            return [bound] if label_selector == "github-hetzner-runner=active" else []
+
+        hclient.servers.get_all.side_effect = _get_all
+    with When("I call list_runner_servers"):
+        result = provider.list_runner_servers()
+    with Then("the legacy server is returned, wrapping the bound server"):
+        assert len(result) == 1 and result[0]._native is bound, result
+    with And("it was retagged in place to the neutral scheme"):
+        sent = bound.update.call_args[1]["labels"]
+        assert sent["github-runner"] == "acme-infra", sent
+        assert sent["github-runner-ssh-key"] == "key-1", sent
+        assert sent["github-recycle-timestamp"] == "123", sent
+        assert sent["github-runner-label-0"] == "self-hosted", sent
+        for legacy_key in (
+            "github-hetzner-runner",
+            "github-hetzner-runner-ssh-key",
+            "github-hetzner-recycle-timestamp",
+            "github-hetzner-runner-label-0",
+        ):
+            assert legacy_key not in sent, (legacy_key, sent)
 
 
 @TestScenario
@@ -184,10 +227,14 @@ def set_server_tags_deletes_on_none(self):
 
 @TestScenario
 def list_runner_servers_returns_provider_server(self):
-    with Given("a Hetzner provider with one bound server"):
+    with Given("a Hetzner provider with one bound server owned by it"):
         hclient, provider = hetzner_provider()
         bound = _make_bound_server()
-        hclient.servers.get_all.return_value = [bound]
+
+        def _get_all(label_selector=None, **kw):
+            return [bound] if label_selector == "github-runner=active" else []
+
+        hclient.servers.get_all.side_effect = _get_all
     with When("I call list_runner_servers"):
         result = provider.list_runner_servers()
     with Then("one ProviderServer is returned, wrapping the bound server"):

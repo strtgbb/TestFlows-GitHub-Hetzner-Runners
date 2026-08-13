@@ -30,9 +30,17 @@ from . import config as hetzner_config
 from ...constants import (
     github_runner_label,
     recycle_server_name_prefix,
+    recycle_timestamp_label,
     server_ssh_key_label,
+    legacy_runner_labels,
 )
 from ...utils import derive_runner_tag
+
+# Legacy Hetzner label keys -> neutral names, renamed in place on claim.
+_HETZNER_LEGACY_RENAMES = {
+    "github-hetzner-runner-ssh-key": server_ssh_key_label,
+    "github-hetzner-recycle-timestamp": recycle_timestamp_label,
+}
 from .utils import _HETZNER_DC_CODE_RE, _STATUS_MAP, _server_to_provider, _volume_to_provider
 
 
@@ -230,11 +238,29 @@ class HetznerCloudProvider(CloudProvider):
     # Runner identification
     # ---------------------------------------------------------------------------
 
-    def list_runner_servers(self) -> list[ProviderServer]:
-        """Return all active runner servers using the Hetzner label convention."""
-        return self.list_servers(
-            label_selector=f"{github_runner_label}={self._runner_tag}"
-        )
+    def _legacy_runner_selectors(self) -> list[str]:
+        return super()._legacy_runner_selectors() + [
+            f"{key}=active" for key in legacy_runner_labels
+        ]
+
+    def _claim_server(self, server: ProviderServer) -> None:
+        """Adopt a legacy Hetzner server in place, renaming every legacy key to
+        the neutral scheme (server keeps running; no delete-recreate)."""
+        labels = server.labels or {}
+        changes = {github_runner_label: self._runner_tag}
+        for old, new in _HETZNER_LEGACY_RENAMES.items():
+            if old in labels:
+                changes[new] = labels[old]
+                changes[old] = None
+        for key in labels:
+            if key in legacy_runner_labels:
+                changes[key] = None
+            elif key.startswith("github-hetzner-runner-label"):
+                changes[key.replace("github-hetzner-runner-", "github-runner-", 1)] = (
+                    labels[key]
+                )
+                changes[key] = None
+        self.set_server_tags(server, changes)
 
     def is_recycled_server(self, server: ProviderServer) -> bool:
         return server.name.startswith(recycle_server_name_prefix)

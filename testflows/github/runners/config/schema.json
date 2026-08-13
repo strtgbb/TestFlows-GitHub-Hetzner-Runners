@@ -146,7 +146,7 @@
                                     "description": "AWS EC2 key pair name",
                                     "type": "string",
                                     "examples": [
-                                        "tfs-runners-keypair"
+                                        "tfs-github-runners-keypair"
                                     ]
                                 },
                                 "max_runners": {
@@ -701,10 +701,10 @@
                             ]
                         },
                         "server_name": {
-                            "description": "The deployment server name, default: tfs-runners-service.",
+                            "description": "The deployment server name, default: tfs-github-runners-service.",
                             "type": "string",
                             "examples": [
-                                "tfs-runners-service"
+                                "tfs-github-runners-service"
                             ]
                         },
                         "ssh_user": {

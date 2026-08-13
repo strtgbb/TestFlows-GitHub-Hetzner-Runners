@@ -10,20 +10,26 @@ _RUNNER_TAG_DISALLOWED = re.compile(r"[^a-z0-9._-]+")
 def derive_runner_tag(github_repository: str, with_label) -> str:
     """Derive a controller identity for the runner discovery-label value.
 
-    Stable and provider-portable: the repo plus the sorted ``with_label`` set,
-    lowercased and sanitized to the strictest label charset (hcloud label
-    value: ``[a-z0-9._-]``, <= 63 chars). Two controllers with a different repo
-    or a different ``with_label`` set get different ids, so they never manage
-    each other's servers. When the sanitized id would exceed the length limit
-    it is truncated with a short stable hash suffix to keep it unique.
+    Provider-portable and stable: a human-readable part (the repo plus the
+    sorted ``with_label`` set, lowercased and sanitized to the strictest label
+    charset — hcloud value ``[a-z0-9._-]``, start/end alphanumeric) plus an
+    always-appended short hash of the *unsanitized* identity. The hash makes the
+    id collision-free even when two different repo/label sets sanitize to the
+    same readable form; two controllers with a different repo or ``with_label``
+    set therefore never share an id (nor manage each other's servers). Total
+    length is capped at 63.
     """
-    parts = [github_repository or ""] + sorted(with_label or [])
-    base = "-".join(parts).lower()
-    tag = _RUNNER_TAG_DISALLOWED.sub("-", base).strip("-")
-    if len(tag) > _RUNNER_TAG_MAX:
-        digest = hashlib.sha256(tag.encode("utf-8")).hexdigest()[:8]
-        tag = tag[: _RUNNER_TAG_MAX - 9].strip("-") + "-" + digest
-    return tag
+    labels = sorted(with_label or [])
+    repo = github_repository or ""
+    # Hash the raw, unambiguously-joined identity (NUL can't occur in the
+    # inputs) so distinct inputs never collide, regardless of sanitization.
+    digest = hashlib.sha256(
+        "\x00".join([repo, *labels]).encode("utf-8")
+    ).hexdigest()[:8]
+    base = "-".join([repo, *labels]).lower()
+    readable = _RUNNER_TAG_DISALLOWED.sub("-", base).strip("-._")
+    readable = readable[: _RUNNER_TAG_MAX - 9].strip("-._")
+    return f"{readable}-{digest}" if readable else digest
 
 
 def format_runner_name(run_id, job_id, server_type: str) -> str:

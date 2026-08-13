@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from setuptools import setup
+from setuptools import setup, find_namespace_packages
 
 with open("README.rst", "r", encoding="utf-8") as fd:
     long_description = fd.read()
@@ -44,20 +44,14 @@ setup(
     ],
     python_requires=">=3.8",
     license="Apache-2.0",
-    packages=[
-        "testflows.github.runners",
-        "testflows.github.runners.bin",
-        "testflows.github.runners.config",
-        "testflows.github.runners.scripts",
-        "testflows.github.runners.scripts.deploy",
-        "testflows.github.runners.dashboard",
-        "testflows.github.runners.dashboard.panels",
-        "testflows.github.runners.dashboard.metrics",
-        "testflows.github.runners.providers",
-        "testflows.github.runners.providers.hetzner",
-        "testflows.github.runners.providers.aws",
-        "testflows.github.runners.providers.scaleway",
-    ],
+    # testflows and testflows.github are PEP 420 namespace packages (no
+    # __init__.py) shared with sibling testflows.* distributions, so discover
+    # the tree instead of hand-listing it (a hand list silently drops new
+    # subpackages). tests/ is excluded — it ships in git, not the wheel.
+    packages=find_namespace_packages(
+        include=["testflows.github.runners", "testflows.github.runners.*"],
+        exclude=["testflows.github.runners.tests", "testflows.github.runners.tests.*"],
+    ),
     package_data={
         "testflows.github.runners.config": ["*.json"],
         "testflows.github.runners.scripts": ["*.sh"],

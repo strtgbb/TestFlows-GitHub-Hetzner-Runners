@@ -442,7 +442,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
     # ---------------------------------------------------------------------------
     # Runner identification
     # ---------------------------------------------------------------------------
-    def list_runner_servers(self) -> list[ProviderServer]:
+    def list_runner_servers(self, claim: bool = True) -> list[ProviderServer]:
+        # Static hosts are discovered from config, not by tag scan, so there is
+        # nothing to claim; the param exists only to match the base signature.
+        del claim
         with self._lock:
             servers = [self._as_provider_server(host) for host in self._hosts]
         return [server for server in servers if server is not None]

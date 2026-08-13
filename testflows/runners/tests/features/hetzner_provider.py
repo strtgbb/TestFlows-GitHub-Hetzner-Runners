@@ -203,6 +203,26 @@ def list_runner_servers_claims_legacy_hetzner_server(self):
 
 
 @TestScenario
+def list_runner_servers_claim_false_does_not_mutate(self):
+    """Read-only discovery (CLI) lists legacy servers without retagging them."""
+    with Given("a provider and a legacy Hetzner server"):
+        hclient, provider = hetzner_provider()
+        provider._runner_tag = "acme-infra"
+        bound = _make_bound_server()
+        bound.labels = {"github-hetzner-runner": "active"}
+
+        def _get_all(label_selector=None, **kw):
+            return [bound] if label_selector == "github-hetzner-runner=active" else []
+
+        hclient.servers.get_all.side_effect = _get_all
+    with When("I list with claim=False"):
+        result = provider.list_runner_servers(claim=False)
+    with Then("the server is returned but not retagged"):
+        assert len(result) == 1, result
+        bound.update.assert_not_called()
+
+
+@TestScenario
 def list_runner_volumes_claims_legacy_volume(self):
     """A legacy caching volume is returned and retagged in place to the neutral
     scheme (no orphaned cache)."""

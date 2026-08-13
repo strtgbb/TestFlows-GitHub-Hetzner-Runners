@@ -58,11 +58,14 @@ def _github_runners(config: Config) -> list[SelfHostedActionsRunner]:
 
 
 def _runner_servers(config: Config) -> list[tuple[ProviderServer, CloudProvider]]:
-    """(server, provider) for every active runner server across all providers."""
+    """(server, provider) for every active runner server across all providers.
+
+    Read-only: ``claim=False`` so the list/delete/ssh CLI never retags servers.
+    """
     with Action("Getting a list of servers"):
         pairs = []
         for provider in provider_factory(config):
-            for server in provider.list_runner_servers():
+            for server in provider.list_runner_servers(claim=False):
                 pairs.append((server, provider))
         return pairs
 

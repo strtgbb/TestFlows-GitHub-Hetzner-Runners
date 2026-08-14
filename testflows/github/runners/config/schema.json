@@ -20,7 +20,7 @@
                     "type": "string",
                     "examples": [
                         "${GITHUB_REPOSITORY}",
-                        "testflows/testflows-github-runners"
+                        "testflows/github-runners"
                     ]
                 },
                 "providers": {

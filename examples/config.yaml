@@ -42,7 +42,7 @@ config:
     debug: false
     # cloud service deployment configuration
     cloud:
-        server_name: "tfs-github-runners-service"
+        server_name: "github-runners-service"
         deploy:
             server_type: cx23
             image: "x86:system:ubuntu-22.04"

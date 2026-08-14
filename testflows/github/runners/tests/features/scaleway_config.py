@@ -1006,6 +1006,45 @@ def reap_orphaned_volumes_deletes_detached_aged_only(self):
 
 
 @TestScenario
+def reap_orphaned_volumes_scans_all_zones(self):
+    """The reaper scans every operating zone, not just the default.
+
+    Regression: volumes are created in the zone the job's in-<zone> label
+    selects, so a reaper scoped to self._zone leaks volumes in non-default
+    zones (SbsVolumeSizeGb quota leak).
+    """
+    from datetime import datetime, timezone, timedelta
+
+    with Given("a provider over two zones"):
+        provider = scaleway_provider()
+        provider._zones = {"fr-par-1", "nl-ams-1"}
+    with And("a detached, aged orphan in the NON-default zone only"):
+        old = datetime.now(timezone.utc) - timedelta(minutes=10)
+        by_zone = {
+            "fr-par-1": [],
+            "nl-ams-1": [
+                SimpleNamespace(
+                    id="orphan-ams", references=[],
+                    last_detached_at=old, created_at=old,
+                )
+            ],
+        }
+        provider._block.list_volumes_all.side_effect = (
+            lambda zone, **k: by_zone.get(zone, [])
+        )
+    with When("the scale-down post-cycle hook runs"):
+        provider.after_scale_down()
+    with Then("both zones are listed"):
+        listed = {c.kwargs["zone"] for c in provider._block.list_volumes_all.call_args_list}
+        assert listed == {"fr-par-1", "nl-ams-1"}, listed
+    with And("the non-default-zone orphan is deleted in its own zone"):
+        assert provider._block.delete_volume.call_count == 1, provider._block.delete_volume.call_count
+        _, vkwargs = provider._block.delete_volume.call_args
+        assert vkwargs["volume_id"] == "orphan-ams", vkwargs
+        assert vkwargs["zone"] == "nl-ams-1", vkwargs
+
+
+@TestScenario
 def scale_up_hook_does_not_reap_volumes(self):
     with Given("a scaleway provider"):
         provider = scaleway_provider()

@@ -514,49 +514,55 @@ class ScalewayCloudProvider(CloudProvider):
         time; here we delete any that are detached (no references) and have been
         detached longer than a short grace, so we never race an in-flight
         create. Stateless and idempotent — safe to run every scale_down cycle.
-        """
-        try:
-            volumes = self._block.list_volumes_all(
-                zone=self._zone, tags=[_RUNNER_VOLUME_TAG], include_deleted=False
-            )
-        except Exception as exc:
-            with Action(
-                f"Could not list Scaleway volumes to reap: {exc}",
-                stacklevel=3,
-                ignore_fail=True,
-            ):
-                pass
-            return
 
+        Volumes are created in whatever zone the job's ``in-<zone>`` label
+        selects, so scan every operating zone (Block API list/delete are
+        zonal), not just the default — otherwise volumes in non-default zones
+        leak. A list failure in one zone is best-effort: skip to the next.
+        """
         now = datetime.now(timezone.utc)
-        for vol in volumes or []:
-            if getattr(vol, "references", None):
-                continue  # still attached to an instance
-            detached_at = getattr(vol, "last_detached_at", None) or getattr(
-                vol, "created_at", None
-            )
-            if (
-                detached_at is not None
-                and (now - detached_at).total_seconds() < _ORPHAN_VOLUME_GRACE_SECONDS
-            ):
-                continue  # too fresh; avoid racing an in-flight create
+        for zone in self._zones:
             try:
-                self._block.delete_volume(volume_id=vol.id, zone=self._zone)
-                with Action(
-                    f"Reaped orphaned Scaleway volume {vol.id}",
-                    stacklevel=3,
-                    level=logging.DEBUG,
-                ):
-                    pass
+                volumes = self._block.list_volumes_all(
+                    zone=zone, tags=[_RUNNER_VOLUME_TAG], include_deleted=False
+                )
             except Exception as exc:
-                if getattr(exc, "status_code", None) == 404:
-                    continue
                 with Action(
-                    f"Could not reap orphaned volume {vol.id}: {exc}",
+                    f"Could not list Scaleway volumes to reap in {zone}: {exc}",
                     stacklevel=3,
                     ignore_fail=True,
                 ):
                     pass
+                continue
+
+            for vol in volumes or []:
+                if getattr(vol, "references", None):
+                    continue  # still attached to an instance
+                detached_at = getattr(vol, "last_detached_at", None) or getattr(
+                    vol, "created_at", None
+                )
+                if (
+                    detached_at is not None
+                    and (now - detached_at).total_seconds() < _ORPHAN_VOLUME_GRACE_SECONDS
+                ):
+                    continue  # too fresh; avoid racing an in-flight create
+                try:
+                    self._block.delete_volume(volume_id=vol.id, zone=zone)
+                    with Action(
+                        f"Reaped orphaned Scaleway volume {vol.id}",
+                        stacklevel=3,
+                        level=logging.DEBUG,
+                    ):
+                        pass
+                except Exception as exc:
+                    if getattr(exc, "status_code", None) == 404:
+                        continue
+                    with Action(
+                        f"Could not reap orphaned volume {vol.id}: {exc}",
+                        stacklevel=3,
+                        ignore_fail=True,
+                    ):
+                        pass
 
     def get_server(self, name: str) -> ProviderServer | None:
         for zone in self._zones:

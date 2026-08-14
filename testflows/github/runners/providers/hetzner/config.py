@@ -147,7 +147,6 @@ def check_image(client: Client, image: Image):
             )
         return _image
     else:
-        # backup or snapshot
         try:
             return [
                 i

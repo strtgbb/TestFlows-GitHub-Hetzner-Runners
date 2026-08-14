@@ -42,7 +42,8 @@ from ...constants import (
 )
 from ...utils import derive_runner_tag
 
-# Legacy Hetzner label keys -> neutral names, renamed in place on claim.
+# Legacy Hetzner label keys -> neutral names, renamed in place on claim:
+# server labels here, volume-metadata labels below.
 _HETZNER_LEGACY_RENAMES = {
     "github-hetzner-runner-ssh-key": server_ssh_key_label,
     "github-hetzner-recycle-timestamp": recycle_timestamp_label,
@@ -132,7 +133,7 @@ class HetznerCloudProvider(CloudProvider):
         self._recycle = recycle
         self._recycle_grace_period = recycle_grace_period
         self._recycle_with_rebuild = recycle_with_rebuild
-        self._runner_tag = "active"  # controller id; set in from_config
+        self._runner_tag = "active"
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -463,11 +464,10 @@ class HetznerCloudProvider(CloudProvider):
     def get_server_type(self, name) -> ProviderServerType:
         """Validate and return a ProviderServerType for *name*.
 
-        Accepts either a plain string name or a ``ServerType`` object.
-        Delegates to the existing ``check_server_type`` helper.
+        Accepts either a plain string name or a ``ServerType`` object (the
+        latter from recycle_server, already validated). Delegates to the
+        existing ``check_server_type`` helper.
         """
-        # Accept either a plain string spec or a ServerType object (the latter
-        # arrives from recycle_server, which carries the validated type).
         native_name = name.name if isinstance(name, ServerType) else name
         native = hetzner_config.check_server_type(self._client, ServerType(name=native_name))
         return ProviderServerType(name=native.name, _native=native)

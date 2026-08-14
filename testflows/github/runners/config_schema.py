@@ -276,7 +276,6 @@ class Config:
         """Check mandatory configuration parameters."""
 
         if not parameters:
-            # Check GitHub credentials.
             for name in ("github_token", "github_repository"):
                 if not getattr(self, name):
                     print(
@@ -284,7 +283,6 @@ class Config:
                         file=sys.stderr,
                     )
                     sys.exit(1)
-            # Check that at least one provider is configured.
             has_hetzner = self.providers.hetzner is not None and bool(
                 self.providers.hetzner.token
             )

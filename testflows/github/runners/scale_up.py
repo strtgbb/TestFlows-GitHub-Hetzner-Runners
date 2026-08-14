@@ -125,7 +125,7 @@ class RunnerServer:
     server_location: str
     server_volumes: list[Volume] = None
     server_status: str = CloudProvider.STATUS_STARTING
-    runner_status: str = "initializing"  # busy, ready
+    runner_status: str = "initializing"  # initializing, ready, or busy
     server: ProviderServer = None
     provider_name: str = None
 
@@ -1596,7 +1596,6 @@ def scale_up(
                             futures.append(future)
                             raise StopIteration("maximum number of servers reached")
 
-                # Check per-provider runner cap
                 provider_max = resolved_provider.max_runners
                 if provider_max is not None:
                     provider_count = get_provider_server_count(
@@ -1925,7 +1924,6 @@ def scale_up(
                                         if job.raw_data["runner_name"] not in _runner_server_names:
                                             continue
 
-                                        # Only replenish if standbys are configured.
                                         if not standby_runners:
                                             continue
 

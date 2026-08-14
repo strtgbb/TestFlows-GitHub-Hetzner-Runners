@@ -500,18 +500,15 @@ def cloud_dashboard(args, config: Config, server: ProviderServer = None):
             remote_port=remote_port,
             action=action,
         ) as tunnel:
-            # Wait for the tunnel to be ready
             if not tunnel.wait_ready(timeout=timeout):
                 raise TimeoutError(
                     f"Failed to establish SSH tunnel from {server.name}:{remote_port} to local port {local_port}"
                 )
 
             with Action("Opening dashboard in browser"):
-                # Delay to ensure the tunnel is established
                 time.sleep(1)
                 webbrowser.open(f"http://localhost:{local_port}", 1)
                 action.note("Press Ctrl+C to exit and close the tunnel")
-                # Keep the tunnel open until no active connections or user interrupts
                 try:
                     while True:
                         time.sleep(10)

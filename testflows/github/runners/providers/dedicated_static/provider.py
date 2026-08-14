@@ -118,7 +118,7 @@ class DedicatedStaticCloudProvider(CloudProvider):
     ):
         self._default_image = None
         self._default_location = None
-        self._runner_tag = "active"  # controller id; set in from_config
+        self._runner_tag = "active"
         # Minutes a claim marker stays authoritative before it is treated as
         # stale (a crashed/abandoned setup) and the host may be reclaimed.
         self._claim_ttl_minutes = claim_ttl_minutes

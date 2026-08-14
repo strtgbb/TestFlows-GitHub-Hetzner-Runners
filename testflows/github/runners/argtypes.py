@@ -184,7 +184,6 @@ def provider_type(value: str) -> list[str]:
     """
     valid_providers = {"hetzner", "aws", "scaleway", "dedicated_static"}
 
-    # Split by comma and strip whitespace
     providers = [p.strip() for p in value.split(",")]
     parsed = []
 

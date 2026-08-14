@@ -159,7 +159,7 @@ class ScalewayCloudProvider(CloudProvider):
         self._block = BlockV1API(self._client)
         self._project_id = project_id
         self._zone = zone
-        self._runner_tag = "active"  # controller id; set in from_config
+        self._runner_tag = "active"
         # Zones this provider operates over (listing/prices/fallback). Derived
         # from in- labels by the factory; filtered to valid Scaleway zones here.
         self._zones = set()

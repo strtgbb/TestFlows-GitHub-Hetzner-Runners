@@ -29,7 +29,7 @@ from prometheus_client import start_http_server as start_prometheus_server
 from github import Auth, Github
 from github.Repository import Repository
 
-from argparse import ArgumentParser, RawTextHelpFormatter, ArgumentTypeError
+from argparse import ArgumentParser, RawTextHelpFormatter, ArgumentTypeError, SUPPRESS
 
 from testflows.github.runners import __version__, __license__
 from testflows.github.runners.actions import Action
@@ -352,9 +352,11 @@ def argparser():
     )
 
     parser.add_argument(
+        # Internal: used by `service log format` to suppress the informational
+        # "Using config file" line when reformatting piped log output.
         "--embedded-mode",
         action="store_true",
-        help="enable embedded mode, default: False",
+        help=SUPPRESS,
     )
 
     commands = parser.add_subparsers(
@@ -844,9 +846,12 @@ def argparser():
     upgrade_cloud_parser.add_argument(
         "--version",
         type=str,
-        metavar="version",
+        metavar="number|latest",
         dest="upgrade_version",
-        help="package version, default: the latest",
+        help=(
+            "service package version to upgrade to, either version number or 'latest',\n"
+            "default: latest"
+        ),
     )
 
     upgrade_cloud_parser.set_defaults(func=cloud.upgrade)

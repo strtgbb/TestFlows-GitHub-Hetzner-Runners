@@ -207,8 +207,8 @@ def unspecified_defaults_keep_dataclass_values(self):
         assert cfg.providers.aws.defaults.image == "ami-override"
         assert cfg.providers.aws.defaults.server_type == base.server_type
         assert cfg.providers.aws.defaults.location == base.location
-        assert cfg.providers.aws.defaults.volume_size == base.volume_size
-        assert cfg.providers.aws.defaults.volume_type == base.volume_type
+        assert cfg.providers.aws.defaults.disk_size == base.disk_size
+        assert cfg.providers.aws.defaults.disk_type == base.disk_type
 
 
 @TestScenario

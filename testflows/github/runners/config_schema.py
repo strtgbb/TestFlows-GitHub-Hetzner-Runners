@@ -49,9 +49,13 @@ class provider_defaults:
     image: str = None
     server_type: str = None
     location: str = None
-    volume_size: int = 20
+    # Root/boot disk of the runner server (AWS EBS, Scaleway SBS boot); the
+    # default for the disk- label. Not the caching volume.
+    disk_size: int = None
+    disk_type: str = None  # root disk type, e.g. AWS EBS "gp3"
+    # Caching volume attached via the volume- label (Hetzner only).
+    volume_size: int = None
     volume_location: str = None
-    volume_type: str = None  # Optional, provider-specific
 
 
 @dataclass
@@ -94,9 +98,8 @@ class aws_provider:
             image="ubuntu-22.04",
             server_type="t3.medium",
             location="us-east-1a",
-            volume_size=20,
-            volume_location="us-east-1a",
-            volume_type="gp3",
+            disk_size=20,
+            disk_type="gp3",
         )
     )
 
@@ -124,7 +127,7 @@ class scaleway_provider:
             image="ubuntu_jammy",
             server_type="dev1.m",
             location="fr-par-1",
-            volume_size=20,
+            disk_size=20,
         )
     )
 

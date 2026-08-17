@@ -114,7 +114,7 @@ class ScalewayCloudProvider(CloudProvider):
             default_image_spec=cfg.defaults.image,
             default_location_spec=cfg.defaults.location,
             default_server_type_spec=cfg.defaults.server_type,
-            default_volume_size=cfg.defaults.volume_size,
+            default_disk_size=cfg.defaults.disk_size,
             ssh_user=cfg.ssh_user,
             max_runners=cfg.max_runners,
             end_of_life=cfg.end_of_life,
@@ -137,7 +137,7 @@ class ScalewayCloudProvider(CloudProvider):
         default_image_spec: str = None,
         default_location_spec: str = None,
         default_server_type_spec: str = None,
-        default_volume_size: int = None,
+        default_disk_size: int = None,
         ssh_user: str = "root",
         max_runners: int = None,
         end_of_life: int = None,
@@ -173,8 +173,8 @@ class ScalewayCloudProvider(CloudProvider):
         self._default_image = default_image_spec
         self._default_location = default_location_spec
         self._default_server_type = default_server_type_spec
-        # Configured boot-volume size in GB (providers.scaleway.defaults.volume_size).
-        self._default_volume_size = default_volume_size
+        # Configured boot-disk size in GB (providers.scaleway.defaults.disk_size).
+        self._default_disk_size = default_disk_size
         self._ssh_user = ssh_user
         self._max_runners = max_runners
         self._end_of_life = end_of_life
@@ -286,7 +286,7 @@ class ScalewayCloudProvider(CloudProvider):
             # Grow the boot volume to the job's requested minimum (disk- label)
             # or the configured default size (GB -> bytes; Scaleway sizes are
             # binary GiB). The image snapshot size is the floor.
-            _boot_gb = root_disk_size or self._default_volume_size
+            _boot_gb = root_disk_size or self._default_disk_size
             requested_size = _boot_gb * 1024**3 if _boot_gb else None
             boot_volume_id = self._create_boot_volume(
                 image_uuid=image,

@@ -155,15 +155,15 @@ def add_arguments(parser):
     )
 
     aws_group.add_argument(
-        "--aws-default-volume-size",
+        "--aws-default-disk-size",
         metavar="GB",
         type=int,
-        help="Default AWS EBS volume size in GB (20)",
+        help="Default AWS EBS root disk size in GB (20)",
     )
 
     aws_group.add_argument(
-        "--aws-default-volume-type",
+        "--aws-default-disk-type",
         metavar="type",
         type=str,
-        help="Default AWS EBS volume type (gp3)",
+        help="Default AWS EBS root disk type (gp3)",
     )

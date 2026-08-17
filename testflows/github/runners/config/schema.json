@@ -196,22 +196,15 @@
                                                 "us-east-1a"
                                             ]
                                         },
-                                        "volume_size": {
-                                            "description": "Default volume size in GB",
+                                        "disk_size": {
+                                            "description": "Default root/boot disk size in GB",
                                             "type": "integer",
                                             "examples": [
                                                 20
                                             ]
                                         },
-                                        "volume_location": {
-                                            "description": "Default volume availability zone",
-                                            "type": "string",
-                                            "examples": [
-                                                "us-east-1a"
-                                            ]
-                                        },
-                                        "volume_type": {
-                                            "description": "Default EBS volume type",
+                                        "disk_type": {
+                                            "description": "Default EBS root disk type",
                                             "type": "string",
                                             "examples": [
                                                 "gp3"
@@ -308,8 +301,8 @@
                                                 "fr-par-1"
                                             ]
                                         },
-                                        "volume_size": {
-                                            "description": "Default volume size in GB",
+                                        "disk_size": {
+                                            "description": "Default root/boot disk size in GB",
                                             "type": "integer",
                                             "examples": [
                                                 20

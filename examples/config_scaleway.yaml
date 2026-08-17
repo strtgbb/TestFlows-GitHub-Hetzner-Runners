@@ -20,7 +20,7 @@ config:
         # DEV1-M) — the runner label grammar reserves '-' as a separator.
         server_type: dev1.m
         location: fr-par-1
-        volume_size: 20
+        disk_size: 20
 
 # Per-job overrides use labels, e.g.:
 #   runs-on: [self-hosted, type-gp1.xs, in-fr-par-2, image-my-custom-image]

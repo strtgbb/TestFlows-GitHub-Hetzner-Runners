@@ -55,8 +55,8 @@ class AWSCloudProvider(CloudProvider):
             default_location_spec=cfg.defaults.location,
             default_server_type_spec=cfg.defaults.server_type,
             ssh_user=cfg.ssh_user,
-            root_volume_size=cfg.defaults.volume_size,
-            root_volume_type=cfg.defaults.volume_type,
+            root_disk_size=cfg.defaults.disk_size,
+            root_disk_type=cfg.defaults.disk_type,
             max_runners=cfg.max_runners,
             end_of_life=cfg.end_of_life,
             recycle=cfg.recycle,
@@ -78,8 +78,8 @@ class AWSCloudProvider(CloudProvider):
         default_location_spec: str = None,
         default_server_type_spec: str = None,
         ssh_user: str = "ubuntu",
-        root_volume_size: int = 20,
-        root_volume_type: str = "gp3",
+        root_disk_size: int = 20,
+        root_disk_type: str = "gp3",
         max_runners: int = None,
         end_of_life: int = None,
         recycle: bool = None,
@@ -119,10 +119,9 @@ class AWSCloudProvider(CloudProvider):
         self._default_image = default_image_spec
         self._default_location = default_location_spec
         self._default_server_type = default_server_type_spec
-        self._default_volume_size = root_volume_size
         self._ssh_user = ssh_user
-        self._root_volume_size = root_volume_size
-        self._root_volume_type = root_volume_type
+        self._root_disk_size = root_disk_size
+        self._root_disk_type = root_disk_type
         self._max_runners = max_runners
         self._end_of_life = end_of_life
         self._recycle = recycle
@@ -229,11 +228,11 @@ class AWSCloudProvider(CloudProvider):
                 kwargs["Placement"] = {"AvailabilityZone": location}
 
         ebs = {
-            "VolumeSize": root_disk_size or self._root_volume_size,
+            "VolumeSize": root_disk_size or self._root_disk_size,
             "DeleteOnTermination": True,
         }
-        if self._root_volume_type:
-            ebs["VolumeType"] = self._root_volume_type
+        if self._root_disk_type:
+            ebs["VolumeType"] = self._root_disk_type
         kwargs["BlockDeviceMappings"] = [{"DeviceName": "/dev/sda1", "Ebs": ebs}]
 
         response = self._ec2.run_instances(**kwargs)

@@ -122,3 +122,10 @@ def add_arguments(parser):
         type=location_type,
         help="Default Scaleway zone (fr-par-1)",
     )
+
+    group.add_argument(
+        "--scaleway-default-disk-size",
+        metavar="GB",
+        type=int,
+        help="Default Scaleway SBS boot disk size in GB (20)",
+    )

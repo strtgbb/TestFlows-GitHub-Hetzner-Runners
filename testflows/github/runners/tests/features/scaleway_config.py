@@ -827,9 +827,9 @@ def create_server_local_mode_power_on_failure_removes_instance(self):
 @TestScenario
 def create_server_sizes_boot_volume_to_configured_default(self):
     """The boot volume grows to the configured default size, floored at the snapshot."""
-    with Given("a scaleway provider with a 200 GB configured default volume size"):
+    with Given("a scaleway provider with a 200 GB configured default disk size"):
         provider = scaleway_provider()
-        provider._default_volume_size = 200
+        provider._default_disk_size = 200
     with And("an SBS image whose snapshot is 120 GiB"):
         provider._instance.get_image.return_value = SimpleNamespace(
             image=SimpleNamespace(

@@ -23,9 +23,8 @@ def get_cli_fields():
         "default_image",
         "default_server_type",
         "default_location",
-        "default_volume_size",
-        "default_volume_location",
-        "default_volume_type",
+        "default_disk_size",
+        "default_disk_type",
     ]
 
 
@@ -60,12 +59,10 @@ def update_from_args(provider_config, args):
         provider_config.defaults.server_type = args.aws_default_server_type
     if getattr(args, "aws_default_location", None) is not None:
         provider_config.defaults.location = args.aws_default_location
-    if getattr(args, "aws_default_volume_size", None) is not None:
-        provider_config.defaults.volume_size = args.aws_default_volume_size
-    if getattr(args, "aws_default_volume_location", None) is not None:
-        provider_config.defaults.volume_location = args.aws_default_volume_location
-    if getattr(args, "aws_default_volume_type", None) is not None:
-        provider_config.defaults.volume_type = args.aws_default_volume_type
+    if getattr(args, "aws_default_disk_size", None) is not None:
+        provider_config.defaults.disk_size = args.aws_default_disk_size
+    if getattr(args, "aws_default_disk_type", None) is not None:
+        provider_config.defaults.disk_type = args.aws_default_disk_type
 
 
 # AWS-specific validation functions
@@ -130,18 +127,15 @@ def parse_config_section(section: dict) -> "aws_provider":
             _aws_defaults_raw, dict
         ), "config.providers.aws.defaults: is not a dictionary"
         base = aws_provider().defaults
-        _aws_volume_size = _aws_defaults_raw.get("volume_size", base.volume_size)
-        assert isinstance(_aws_volume_size, int) and _aws_volume_size > 0, (
-            "config.providers.aws.defaults.volume_size: must be an integer > 0 (in GB)"
+        _aws_disk_size = _aws_defaults_raw.get("disk_size", base.disk_size)
+        assert isinstance(_aws_disk_size, int) and _aws_disk_size > 0, (
+            "config.providers.aws.defaults.disk_size: must be an integer > 0 (in GB)"
         )
         _aws_kwargs["defaults"] = provider_defaults(
             image=_aws_defaults_raw.get("image", base.image),
             server_type=_aws_defaults_raw.get("server_type", base.server_type),
             location=_aws_defaults_raw.get("location", base.location),
-            volume_size=_aws_volume_size,
-            volume_location=_aws_defaults_raw.get(
-                "volume_location", base.volume_location
-            ),
-            volume_type=_aws_defaults_raw.get("volume_type", base.volume_type),
+            disk_size=_aws_disk_size,
+            disk_type=_aws_defaults_raw.get("disk_type", base.disk_type),
         )
     return aws_provider(**_aws_kwargs)

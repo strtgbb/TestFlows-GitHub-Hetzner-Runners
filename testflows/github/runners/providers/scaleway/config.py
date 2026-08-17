@@ -23,6 +23,7 @@ def get_cli_fields():
         "default_image",
         "default_server_type",
         "default_location",
+        "default_disk_size",
     ]
 
 
@@ -54,6 +55,8 @@ def update_from_args(provider_config, args):
         provider_config.defaults.server_type = args.scaleway_default_server_type
     if getattr(args, "scaleway_default_location", None) is not None:
         provider_config.defaults.location = args.scaleway_default_location
+    if getattr(args, "scaleway_default_disk_size", None) is not None:
+        provider_config.defaults.disk_size = args.scaleway_default_disk_size
 
 
 # Scaleway-specific validation
@@ -123,16 +126,16 @@ def parse_config_section(section: dict) -> "scaleway_provider":
                 f"dot-form (e.g. '{str(_scw_server_type).replace('-', '.')}') "
                 "not the dash-form; the runner label grammar reserves '-'"
             )
-        _scw_volume_size = _scaleway_defaults_raw.get(
-            "volume_size", base.volume_size
+        _scw_disk_size = _scaleway_defaults_raw.get(
+            "disk_size", base.disk_size
         )
-        assert isinstance(_scw_volume_size, int) and _scw_volume_size > 0, (
-            "config.providers.scaleway.defaults.volume_size: must be an integer > 0 (in GB)"
+        assert isinstance(_scw_disk_size, int) and _scw_disk_size > 0, (
+            "config.providers.scaleway.defaults.disk_size: must be an integer > 0 (in GB)"
         )
         _scaleway_kwargs["defaults"] = provider_defaults(
             image=_scaleway_defaults_raw.get("image", base.image),
             server_type=_scw_server_type,
             location=_scaleway_defaults_raw.get("location", base.location),
-            volume_size=_scw_volume_size,
+            disk_size=_scw_disk_size,
         )
     return scaleway_provider(**_scaleway_kwargs)

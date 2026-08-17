@@ -1300,7 +1300,7 @@ def argparser():
         action="append",
         dest="list_volumes_id",
         help="list by volume id",
-        type=int,
+        type=str,
     )
 
     volumes_list_parser.add_argument(
@@ -1346,7 +1346,7 @@ def argparser():
         action="append",
         dest="delete_volumes_id",
         help="delete by volume id",
-        type=int,
+        type=str,
     )
 
     volumes_delete_parser.add_argument(
@@ -1400,7 +1400,7 @@ def argparser():
         action="append",
         dest="resize_volumes_id",
         help="resize by volume id",
-        type=int,
+        type=str,
     )
 
     volumes_resize_parser.add_argument(
@@ -1456,7 +1456,7 @@ def argparser():
         action="append",
         dest="volumes_id",
         help="deactivate by volume id",
-        type=int,
+        type=str,
     )
 
     volumes_deactivate_parser.add_argument(
@@ -1505,7 +1505,7 @@ def argparser():
         action="append",
         dest="volumes_id",
         help="activate by volume id",
-        type=int,
+        type=str,
     )
 
     volumes_activate_parser.add_argument(

@@ -54,7 +54,7 @@ def list(args, config: Config):
         list_volumes += [v for v in volumes if v.name in args.list_volumes_volume_name]
 
     if args.list_volumes_id:
-        list_volumes += [v for v in volumes if v.id in args.list_volumes_id]
+        list_volumes += [v for v in volumes if str(v.id) in args.list_volumes_id]
 
     if (
         not args.list_volumes_name
@@ -133,7 +133,7 @@ def delete(args, config: Config):
         ]
 
     if args.delete_volumes_id:
-        delete_volumes += [v for v in volumes if v.id in args.delete_volumes_id]
+        delete_volumes += [v for v in volumes if str(v.id) in args.delete_volumes_id]
 
     if args.delete_volumes_all:
         delete_volumes = volumes[:]
@@ -190,7 +190,7 @@ def resize(args, config: Config):
         ]
 
     if args.resize_volumes_id:
-        resize_volumes += [v for v in volumes if v.id in args.resize_volumes_id]
+        resize_volumes += [v for v in volumes if str(v.id) in args.resize_volumes_id]
 
     if args.resize_volumes_all:
         resize_volumes = volumes[:]
@@ -244,7 +244,7 @@ def activate_deactivate(args, config: Config, action: str):
         selected_volumes += [v for v in volumes if v.name in args.volumes_volume_name]
 
     if args.volumes_id:
-        selected_volumes += [v for v in volumes if v.id in args.volumes_id]
+        selected_volumes += [v for v in volumes if str(v.id) in args.volumes_id]
 
     if args.volumes_all:
         selected_volumes = volumes[:]

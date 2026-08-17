@@ -360,13 +360,25 @@ def argparser():
         title="commands", metavar="command", description=None, help=None
     )
 
-    delete_parser = commands.add_parser(
+    servers_parser = commands.add_parser(
+        "servers",
+        help="manage runner servers",
+        description="List, delete, and SSH into runner servers.",
+        formatter_class=RawTextHelpFormatter,
+    )
+
+    servers_commands = servers_parser.add_subparsers(
+        title="commands", metavar="command", description=None, help=None
+    )
+
+    servers_commands.required = True
+
+    delete_parser = servers_commands.add_parser(
         "delete",
         help="delete servers",
         description=(
-            f"Delete servers and their runners.\n\n"
-            "Note that the cloud service server will not be deleted. If you do have one, use\n"
-            "the 'cloud delete' command to delete it."
+            f"Delete runner servers and their runners.\n\n"
+            "This does not delete the cloud service host; use 'cloud delete' for that."
         ),
         formatter_class=RawTextHelpFormatter,
     )
@@ -409,7 +421,7 @@ def argparser():
 
     delete_parser.set_defaults(func=servers.delete)
 
-    list_parser = commands.add_parser(
+    list_parser = servers_commands.add_parser(
         "list",
         help="list servers",
         description="List servers.",
@@ -466,7 +478,7 @@ def argparser():
 
     list_parser.set_defaults(func=servers.list_servers)
 
-    ssh_client_parser = commands.add_parser(
+    ssh_client_parser = servers_commands.add_parser(
         "ssh",
         help="ssh to a server",
         description="Open SSH client to a server.",

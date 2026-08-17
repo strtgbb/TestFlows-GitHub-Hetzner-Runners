@@ -63,12 +63,13 @@ from testflows.github.runners.providers import hetzner, aws, scaleway
 
 from requests_cache import DO_NOT_CACHE, EXPIRE_IMMEDIATELY, install_cache
 
-description = f"""Auto-scaling GitHub Actions runners service using Hetzner Cloud.
+description = f"""Auto-scaling GitHub Actions runners service across multiple cloud providers.
 
     Service that starts and monitors queued up GitHub Actions workflows.
-    When a new job is queued up, it creates new Hetzner Cloud server instance
-    that provides an ephemeral GitHub Actions runner. Server is automatically
-    powered off when job completes and then powered off servers are
+    When a new job is queued up, it creates a new cloud server instance
+    (on Hetzner Cloud, AWS EC2, Scaleway, or a dedicated static host) that
+    provides an ephemeral GitHub Actions runner. The server is automatically
+    powered off when the job completes and powered-off servers are then
     automatically deleted.
 
     Configuration can be specified through:
@@ -585,7 +586,11 @@ def argparser():
     deploy_cloud_parser = cloud_commands.add_parser(
         "deploy",
         help="deploy cloud service",
-        description="Deploy application as a service to a new server instance.",
+        description=(
+            "Deploy application as a service to a new server instance.\n\n"
+            "Note: deploy currently provisions the host on Hetzner Cloud; the\n"
+            "-l/-t/-i options use Hetzner location/type/image formats."
+        ),
         formatter_class=RawTextHelpFormatter,
     )
 
@@ -751,7 +756,7 @@ def argparser():
 
     start_cloud_parser = cloud_commands.add_parser(
         "start",
-        help="start cloud service ",
+        help="start cloud service",
         description="Start cloud service.",
         formatter_class=RawTextHelpFormatter,
     )
@@ -1311,7 +1316,7 @@ def argparser():
     volumes_delete_parser = volumes_commands.add_parser(
         "delete",
         help="delete volumes",
-        description=(f"Delete volumes."),
+        description="Delete volumes.",
         formatter_class=RawTextHelpFormatter,
     )
 
@@ -1365,7 +1370,7 @@ def argparser():
     volumes_resize_parser = volumes_commands.add_parser(
         "resize",
         help="resize volumes",
-        description=(f"Resize volumes."),
+        description="Resize volumes.",
         formatter_class=RawTextHelpFormatter,
     )
 
@@ -1419,8 +1424,8 @@ def argparser():
         "deactivate",
         help="deactivate volumes",
         description=(
-            f"Deactivate volumes. "
-            "This will prevent the volume to be attached to a new server."
+            "Deactivate volumes. "
+            "This will prevent the volume from being attached to a new server."
         ),
         formatter_class=RawTextHelpFormatter,
     )
@@ -1468,7 +1473,7 @@ def argparser():
         "activate",
         help="activate volumes",
         description=(
-            f"Activate volumes."
+            "Activate volumes. "
             "This will allow the volume to be attached to a new server."
         ),
         formatter_class=RawTextHelpFormatter,

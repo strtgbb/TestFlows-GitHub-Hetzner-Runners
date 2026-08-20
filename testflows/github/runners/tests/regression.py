@@ -37,6 +37,7 @@ def regression(self):
     Feature(run=load("testflows.github.runners.tests.features.cloud_deploy", "feature"))
     Feature(run=load("testflows.github.runners.tests.features.servers_cli", "feature"))
     Feature(run=load("testflows.github.runners.tests.features.import_layering", "feature"))
+    Feature(run=load("testflows.github.runners.tests.features.dashboard_charts", "feature"))
     Feature(run=load("testflows.github.runners.tests.features.runner_tag", "feature"))
 
 

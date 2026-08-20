@@ -19,7 +19,6 @@ from ...config import Config
 from ... import __version__
 
 
-@st.fragment()
 def render(config: Config):
     """Render a modern, compact header section with logo, title, and update interval selector."""
 

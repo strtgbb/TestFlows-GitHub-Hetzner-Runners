@@ -137,10 +137,10 @@ def main():
         # Tick tracker to ensure all metrics are updated
         tracker.tick()
 
+        configure_page()
+
         @st.fragment(run_every=update_interval.update_interval)
         def render_page():
-            configure_page()
-
             # Always visible panels (outside tabs)
             panels.header.render(config)
             panels.gauges.render()
@@ -161,7 +161,6 @@ def main():
             }
 
             st.session_state.tab_panels = tabbed_panels
-            # Render tabs with smart fragment-based navigation
             renderers.render_smart_tabs(tabbed_panels)
 
             # Footer panel at the bottom

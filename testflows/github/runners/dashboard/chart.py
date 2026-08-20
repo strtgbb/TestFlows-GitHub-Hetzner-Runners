@@ -51,7 +51,7 @@ def create_time_series_chart(
         y_type: Type of y-axis data ("count" for integers, "price" for floats)
 
     Returns:
-        alt.Chart: Configured Altair chart
+        (spec, df) for st.vega_lite_chart, or None if the window is empty.
     """
     if df.empty:
         return None
@@ -61,54 +61,34 @@ def create_time_series_chart(
         # Reset index to make time a column
         df = df.reset_index()
 
-    # Create proper time window
-    # Check if DataFrame has timezone-aware timestamps
     if not df.empty and df[x_column].dt.tz is not None:
         current_time = pd.Timestamp.now(tz=df[x_column].dt.tz)
     else:
         current_time = pd.Timestamp.now()
 
     time_window_start = current_time - pd.Timedelta(minutes=time_window_minutes)
-
-    # Filter data to time window
     window_df = df[df[x_column] >= time_window_start].copy()
 
     if window_df.empty:
         return None
 
-    # Calculate dynamic y-axis range based on data type
-    max_value = window_df[y_column].max()
-    if y_type == "price":
-        y_max = max(max_value * 1.1, 0.01)  # At least 0.01 for price visibility
-    else:  # count
-        y_max = max(max_value * 1.1, 1)  # At least 1 for count visibility
-
-    # Chart will be created later based on filtered data
-
-    # X-axis encoding
     x_encoding = alt.X(
         f"{x_column}:T",
         title="Time",
         axis=alt.Axis(format="%H:%M", tickCount=15),
-        scale=alt.Scale(domain=[time_window_start, current_time]),
     )
 
-    # Y-axis encoding
     if y_type == "price":
         y_encoding = alt.Y(
             f"{y_column}:Q",
             title=y_title or y_column,
-            scale=alt.Scale(domain=[0, y_max]),
             axis=alt.Axis(format=".3f", tickCount=6),
         )
-    else:  # count
+    else:
         y_encoding = alt.Y(
             f"{y_column}:Q",
             title=y_title or y_column,
-            scale=alt.Scale(domain=[0, y_max]),
-            axis=alt.Axis(
-                values=list(range(0, int(y_max) + 1)), format="d", tickCount=6
-            ),
+            axis=alt.Axis(format="d", tickCount=6),
         )
 
     # Tooltip configuration
@@ -163,24 +143,24 @@ def create_time_series_chart(
         chart_encoding["color"] = color_encoding
         tooltip.append(alt.Tooltip(f"{group_by}:N", title=group_by.title()))
 
-    # Create chart once
-    chart = alt.Chart(filtered_df).mark_line().encode(**chart_encoding)
-
-    # Configure chart with no zoom/pan interactions
-    final_chart = (
-        chart.configure_axis(grid=True, gridColor="lightgray", gridOpacity=0.5)
+    # NamedData keeps rows out of the spec so Streamlit can updateView
+    # instead of embed()-ing a new Vega view every refresh.
+    chart = (
+        alt.Chart(alt.NamedData("source"))
+        .mark_line()
+        .encode(**chart_encoding)
+        .configure_axis(grid=True, gridColor="lightgray", gridOpacity=0.5)
         .properties(
             width="container",
             height=height,
-            # Carry chart_id so render_chart can give st.altair_chart a stable
-            # key; without one, the run_every refresh remounts a new Vega view
-            # each tick and leaks memory in long-lived tabs.
             usermeta={"chart_id": chart_id},
         )
         .resolve_scale(color="independent")
     )
-
-    return final_chart
+    spec = chart.to_dict()
+    spec.pop("datasets", None)
+    spec["data"] = {"name": "source"}
+    return spec, filtered_df
 
 
 def create_series_selector(names, chart_id):

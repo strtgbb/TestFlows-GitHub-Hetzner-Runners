@@ -130,7 +130,6 @@ def render_run_times_chart(selected_label_sets):
     )
 
 
-@st.fragment
 def render_jobs_chart():
     """Render all job charts with optional label set filtering."""
 

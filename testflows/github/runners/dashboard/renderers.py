@@ -15,7 +15,6 @@
 
 """Common rendering utilities for dashboard panels."""
 
-import time
 import streamlit as st
 import pandas as pd
 import logging
@@ -202,7 +201,6 @@ def render_details_dataframe(
     )
 
 
-@st.fragment
 def render_chart(
     chart_func,
     no_data_message="No data available yet. The chart will appear once data is collected.",
@@ -211,27 +209,22 @@ def render_chart(
     """Render a chart with standardized error handling and fallback messages.
 
     Args:
-        chart_func: Function that returns an Altair chart
+        chart_func: Function that returns (vega_lite_spec, dataframe) or None
         no_data_message: Message to show when no data is available
         message: Base message for exceptions
     """
-    chart = chart_func()
+    result = chart_func()
 
-    if chart is not None:
-        # Stable key (from the chart's usermeta) lets Streamlit reuse one
-        # element across run_every refreshes instead of remounting the Vega
-        # view every tick — see create_time_series_chart.
-        usermeta = getattr(chart, "usermeta", None)
-        key = usermeta.get("chart_id") if isinstance(usermeta, dict) else None
-        st.altair_chart(chart, use_container_width=True, key=key)
+    if result is not None:
+        spec, df = result
+        key = spec.get("usermeta", {}).get("chart_id") if isinstance(spec, dict) else None
+        st.vega_lite_chart(df, spec, use_container_width=True, key=key)
     else:
         st.info(no_data_message)
-    time.sleep(0.1)
 
 
-@st.fragment
 def render_smart_tabs(tabbed_panels):
-    """Render tabs using buttons and fragments for clean real-time tab switching."""
+    """Render tabs using buttons for real-time tab switching."""
 
     with errors(f"rendering tabs"):
         tab_names = list(tabbed_panels.keys())
@@ -257,18 +250,7 @@ def render_smart_tabs(tabbed_panels):
                 ):
                     # Tab button clicked - switch to this tab
                     st.session_state.selected_tab_index = i
-                    st.rerun(scope="fragment")
 
-        # Create the fragment for the selected tab
-        def render_active_tab():
-            """Fragment that renders only the active tab with real-time updates."""
-
-            current_tab_name = tab_names[st.session_state.selected_tab_index]
-            current_panel_func = tabbed_panels[current_tab_name]
-
-            # Show loading spinner while rendering the active tab content
-            with st.spinner(f"Loading ..."):
-                current_panel_func()
-
-        # Render the active tab
-        render_active_tab()
+        current_tab_name = tab_names[st.session_state.selected_tab_index]
+        current_panel_func = tabbed_panels[current_tab_name]
+        current_panel_func()

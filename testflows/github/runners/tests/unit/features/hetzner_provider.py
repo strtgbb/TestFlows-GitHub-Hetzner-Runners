@@ -9,7 +9,7 @@ from testflows.core import *
 
 from testflows.github.runners.cloud_provider import CloudProvider, ProviderServer
 from testflows.github.runners.providers.hetzner.provider import HetznerCloudProvider
-from testflows.github.runners.tests.steps.hetzner import hetzner_provider
+from testflows.github.runners.tests.unit.steps.hetzner import hetzner_provider
 
 
 # ---------------------------------------------------------------------------

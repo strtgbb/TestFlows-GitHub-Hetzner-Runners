@@ -12,8 +12,8 @@ from testflows.core import *
 
 from testflows.github.runners.cloud_provider import CloudProvider, ProviderServer, ProviderServerType
 from testflows.github.runners.utils import get_runner_server_type
-from testflows.github.runners.tests.steps.aws import aws_provider
-from testflows.github.runners.tests.steps.hetzner import hetzner_provider
+from testflows.github.runners.tests.unit.steps.aws import aws_provider
+from testflows.github.runners.tests.unit.steps.hetzner import hetzner_provider
 
 
 # ---------------------------------------------------------------------------

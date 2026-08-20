@@ -28,8 +28,8 @@ from testflows.github.runners.providers.scaleway import utils, args as scw_args
 from testflows.github.runners.scale_up import get_server_types, get_runner_server_type
 from testflows.github.runners.utils import format_runner_name
 from testflows.github.runners.constants import runner_name_prefix
-from testflows.github.runners.tests.steps.config import write_config
-from testflows.github.runners.tests.steps.scaleway import mock_scaleway_sdk, scaleway_provider
+from testflows.github.runners.tests.unit.steps.config import write_config
+from testflows.github.runners.tests.unit.steps.scaleway import mock_scaleway_sdk, scaleway_provider
 
 
 class _FakeImage:
@@ -1382,7 +1382,7 @@ def provider_sdk_calls_match_real_signatures(self):
 def provider_zone_set_filters_and_includes_default(self):
     """zones is filtered to valid Scaleway zones; the default zone is always in."""
     with Given("a scaleway provider given mixed zones (incl. non-Scaleway)"):
-        from testflows.github.runners.tests.steps.scaleway import mock_scaleway_sdk
+        from testflows.github.runners.tests.unit.steps.scaleway import mock_scaleway_sdk
         mock_scaleway_sdk()
         from testflows.github.runners.providers.scaleway.provider import ScalewayCloudProvider
         provider = ScalewayCloudProvider(

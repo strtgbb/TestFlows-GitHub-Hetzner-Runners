@@ -19,7 +19,7 @@ import os
 
 from testflows.core import *
 
-_REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", "..", ".."))
+_REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", "..", "..", ".."))
 _PKG_ROOT = os.path.join(_REPO_ROOT, "testflows", "github", "runners")
 
 _CONFIG = "testflows.github.runners.config"

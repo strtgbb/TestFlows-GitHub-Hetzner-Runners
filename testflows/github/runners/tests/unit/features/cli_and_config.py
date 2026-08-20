@@ -28,7 +28,7 @@ from testflows.github.runners.config.factory import provider_factory
 from testflows.github.runners.service import command_options
 
 # Repo root so the CLI subprocess can find the package without an install.
-_REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", "..", ".."))
+_REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", "..", "..", ".."))
 _CLI_SCRIPT = os.path.join(_REPO_ROOT, "testflows", "github", "runners", "bin", "tfs-github-runners")
 _SCHEMA_PATH = os.path.join(_REPO_ROOT, "testflows", "github", "runners", "config", "schema.json")
 

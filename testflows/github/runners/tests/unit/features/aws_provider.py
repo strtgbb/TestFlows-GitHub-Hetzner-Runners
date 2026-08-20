@@ -22,7 +22,7 @@ from testflows.github.runners.errors import (
     LocationError,
 )
 from testflows.github.runners.providers.aws.args import image_type
-from testflows.github.runners.tests.steps.aws import mock_ec2, aws_provider
+from testflows.github.runners.tests.unit.steps.aws import mock_ec2, aws_provider
 
 
 # ---------------------------------------------------------------------------

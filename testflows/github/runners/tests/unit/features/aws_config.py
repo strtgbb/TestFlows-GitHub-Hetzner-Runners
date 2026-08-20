@@ -10,8 +10,8 @@ from testflows.github.runners.config.parse import parse_config
 from testflows.github.runners.config.factory import provider_factory
 from testflows.github.runners.utils import derive_runner_tag
 from testflows.github.runners.providers.aws.provider import AWSCloudProvider
-from testflows.github.runners.tests.steps.aws import mock_ec2
-from testflows.github.runners.tests.steps.config import write_config
+from testflows.github.runners.tests.unit.steps.aws import mock_ec2
+from testflows.github.runners.tests.unit.steps.config import write_config
 
 
 # ---------------------------------------------------------------------------

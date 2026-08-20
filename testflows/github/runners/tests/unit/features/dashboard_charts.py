@@ -17,7 +17,7 @@ from testflows.core import *
 
 from testflows.github.runners.dashboard import chart as dashboard_chart
 
-_REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", "..", ".."))
+_REPO_ROOT = os.path.abspath(os.path.join(current_dir(), "..", "..", "..", "..", "..", ".."))
 _DASHBOARD = os.path.join(_REPO_ROOT, "testflows", "github", "runners", "dashboard")
 _MD5_NAME = re.compile(r"^[0-9a-f]{32}$")
 

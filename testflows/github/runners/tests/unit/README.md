@@ -11,13 +11,13 @@ Requires TestFlows: `pip install testflows`.
 
 ```bash
 # from the repo root (or this directory) — runs the whole suite
-python testflows/runners/tests/regression.py
+python testflows/github/runners/tests/unit/regression.py
 
 # run one feature (match by its @Name path)
-python testflows/runners/tests/regression.py --only "/runners/dedicated static provider/*"
+python testflows/github/runners/tests/unit/regression.py --only "/runners/dedicated static provider/*"
 
 # run one scenario
-python testflows/runners/tests/regression.py --only "/runners/scale_up helpers/get volume name*"
+python testflows/github/runners/tests/unit/regression.py --only "/runners/scale_up helpers/get volume name*"
 ```
 
 At the end you get a `Passing`/`Failing` summary with counts of features,

@@ -145,7 +145,7 @@ def activate_recycled_server(
                 current = provider.get_server(server.name) or server
                 provider.power_off_server(current)
             except Exception:
-                pass
+                logger.debug(f"best-effort power-off of {server.name} failed")
         raise
     finally:
         provider.release_recycle_claim(claim)
@@ -171,15 +171,13 @@ def retire_to_recycle_pool(
     if provider.is_recycle_claimed(server):
         return RetirementResult("claimed", original_name)
 
-    created = server.created
-    if created.tzinfo is None:
-        created = created.replace(tzinfo=timezone.utc)
-    minutes = int((datetime.now(timezone.utc) - created).total_seconds() // 60) % 60
     now = int(time.time())
 
+    # Both remaining paths retire a stopped server, so ensure it is off first.
+    if server.status != CloudProvider.STATUS_OFF:
+        provider.power_off_server(server)
+
     if provider.is_recycled_server(server):
-        if server.status != CloudProvider.STATUS_OFF:
-            provider.power_off_server(server)
         recycle_timestamp = provider.get_server_tag(server, recycle_timestamp_label)
         try:
             recycle_timestamp = int(recycle_timestamp)
@@ -187,26 +185,29 @@ def retire_to_recycle_pool(
             recycle_timestamp = 0
 
         if recycle_timestamp <= 0:
-            provider.set_server_tags(
-                server, {recycle_timestamp_label: str(now)}
-            )
+            provider.set_server_tags(server, {recycle_timestamp_label: str(now)})
             return RetirementResult("pooled", original_name)
 
-        if minutes >= end_of_life:
-            if now - recycle_timestamp >= recycle_grace_period:
-                if not provider.reserve_recycled_server(server):
-                    return RetirementResult("claimed", original_name)
-                try:
-                    provider.delete_server(server)
-                except Exception:
-                    provider.release_recycled_server(server)
-                    raise
-                provider.mark_recycled_server_deleting(server)
-                return RetirementResult("deleted", original_name)
+        # Retire only in the tail of the billing hour: `minutes` is the age
+        # modulo 60, so the server is deleted near the top of the next hour
+        # instead of partway through one already paid for.
+        created = server.created
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        minutes = int((datetime.now(timezone.utc) - created).total_seconds() // 60) % 60
+
+        if minutes >= end_of_life and now - recycle_timestamp >= recycle_grace_period:
+            if not provider.reserve_recycled_server(server):
+                return RetirementResult("claimed", original_name)
+            try:
+                provider.delete_server(server)
+            except Exception:
+                provider.release_recycled_server(server)
+                raise
+            provider.mark_recycled_server_deleting(server)
+            return RetirementResult("deleted", original_name)
         return RetirementResult("pooled", original_name)
 
-    if server.status != CloudProvider.STATUS_OFF:
-        provider.power_off_server(server)
     labels = dict(server.labels)
     labels[recycle_timestamp_label] = str(now)
     provider.update_server(

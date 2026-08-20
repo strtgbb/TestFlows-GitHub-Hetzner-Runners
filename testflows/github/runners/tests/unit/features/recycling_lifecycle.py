@@ -374,6 +374,53 @@ def recycled_server_before_end_of_life_is_retained(self):
 
 
 @TestScenario
+def retirement_aligns_to_billing_hour_not_absolute_age(self):
+    """A server past an hour old but early in its current hour is retained.
+
+    Retirement tracks minutes-into-the-billing-hour (age % 60), not absolute
+    age. At 70 minutes the server sits at minute 10 of its second hour, below
+    the 50-minute EOL, so it is kept until the tail of the hour even though its
+    grace window has long expired. Absolute age alone would wrongly delete it.
+    """
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    server.created = datetime.now(timezone.utc) - timedelta(minutes=70)
+    server.labels[recycle_timestamp_label] = str(int(time.time()) - 3600)
+    provider = _provider(server)
+    provider.is_recycled_server.return_value = True
+    result = retire_to_recycle_pool(
+        provider,
+        server,
+        recycle_enabled=True,
+        ssh_key_names={"ours"},
+        end_of_life=50,
+        recycle_grace_period=60,
+    )
+    assert result.action == "pooled"
+    provider.delete_server.assert_not_called()
+
+
+@TestScenario
+def retirement_fires_in_tail_of_a_later_billing_hour(self):
+    """The hour-wrap still retires: 115 minutes -> minute 55, past the 50-min EOL."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    server.created = datetime.now(timezone.utc) - timedelta(minutes=115)
+    server.labels[recycle_timestamp_label] = str(int(time.time()) - 120)
+    provider = _provider(server)
+    provider.is_recycled_server.return_value = True
+    provider.get_server_tag.return_value = server.labels[recycle_timestamp_label]
+    result = retire_to_recycle_pool(
+        provider,
+        server,
+        recycle_enabled=True,
+        ssh_key_names={"ours"},
+        end_of_life=50,
+        recycle_grace_period=60,
+    )
+    assert result.action == "deleted"
+    provider.delete_server.assert_called_once_with(server)
+
+
+@TestScenario
 def running_recycled_server_is_powered_off(self):
     """A pooled server found running is powered back off before being retained."""
     server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_RUNNING)

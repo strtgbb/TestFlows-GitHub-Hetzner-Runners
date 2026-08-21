@@ -10,6 +10,7 @@ from hcloud.server_types.domain import ServerType
 
 from testflows.github.runners.scale_up import (
     _resolve_provider,
+    _resolve_locations,
     expand_meta_label,
     get_server_locations,
     get_server_net_config,
@@ -21,7 +22,11 @@ from testflows.github.runners.scale_up import (
     parse_volume_size,
 )
 from testflows.github.runners.cloud_provider import ProviderServerType
-from testflows.github.runners.errors import ServerTypeError, ImageSpecFormatError
+from testflows.github.runners.errors import (
+    ServerTypeError,
+    ImageSpecFormatError,
+    LocationError,
+)
 from testflows.github.runners.providers.hetzner.provider import HetznerCloudProvider
 
 
@@ -589,6 +594,58 @@ def base_fixed_root_disk_defaults_none(self):
     from testflows.github.runners.cloud_provider import CloudProvider
 
     assert CloudProvider.fixed_root_disk(p, MagicMock()) is None
+
+
+# ---------------------------------------------------------------------------
+# _resolve_locations
+# ---------------------------------------------------------------------------
+
+
+def _location_provider(valid):
+    """A provider that recognises only *valid* locations (identity expansion)."""
+    provider = MagicMock()
+    provider.name = "aws"
+    provider.default_location = "us-east-1a"
+    provider.expand_location_label.side_effect = lambda loc: [loc]
+
+    def _get_location(loc):
+        if loc in valid:
+            return loc
+        raise LocationError(f"{loc} not found")
+
+    provider.get_location.side_effect = _get_location
+    return provider
+
+
+@TestScenario
+def resolve_locations_skips_unrecognised(self):
+    """A location the provider does not recognise is skipped, not fatal.
+
+    Regression: a Hetzner workflow run against AWS carries leaked `in-hel1...`
+    labels; resolution must skip them and place on the labels AWS understands,
+    rather than raising and aborting the job (as the recycle loop once did).
+    """
+    provider = _location_provider(valid={"us-east-1a"})
+    resolved = list(
+        _resolve_locations(provider, ["hel1-fsn1-nbg1", "nbg1", "us-east-1a"], "job")
+    )
+    assert resolved == [("us-east-1a", "us-east-1a")], resolved
+
+
+@TestScenario
+def resolve_locations_uses_default_for_none(self):
+    """A None candidate (no in- label) resolves through the provider default."""
+    provider = _location_provider(valid={"us-east-1a"})
+    resolved = list(_resolve_locations(provider, [None], "job"))
+    assert resolved == [(None, "us-east-1a")], resolved
+
+
+@TestScenario
+def resolve_locations_all_unrecognised_yields_nothing(self):
+    """When no candidate is recognised, nothing is yielded (caller falls through)."""
+    provider = _location_provider(valid=set())
+    resolved = list(_resolve_locations(provider, ["hel1", "nbg1"], "job"))
+    assert resolved == [], resolved
 
 
 # ---------------------------------------------------------------------------

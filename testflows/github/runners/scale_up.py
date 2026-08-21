@@ -667,6 +667,31 @@ def _expand_locations(
     return result
 
 
+def _resolve_locations(provider: CloudProvider, server_locations, name):
+    """Yield ``(label_name, resolved_location)`` for each candidate the provider
+    recognises, skipping any it does not.
+
+    A job may carry ``in-`` labels meant for other providers (e.g. a Hetzner
+    workflow run against AWS). Those are skipped here rather than aborting, so a
+    provider places on the labels it understands. Both the recycle and create
+    phases iterate this, so their skip behaviour cannot drift apart.
+    """
+    for loc_name in _expand_locations(server_locations, provider):
+        effective_loc = loc_name if loc_name is not None else provider.default_location
+        try:
+            resolved = provider.get_location(effective_loc)
+        except LocationError:
+            with Action(
+                f"Skipping location {effective_loc!r} for provider {provider.name}: location not recognised",
+                stacklevel=3,
+                level=logging.DEBUG,
+                server_name=name,
+            ):
+                pass
+            continue
+        yield loc_name, resolved
+
+
 def _resolve_provider(
     type_name: str, providers: list
 ) -> tuple[CloudProvider, ProviderServerType]:
@@ -1429,9 +1454,9 @@ def scale_up(
                 if not _effective_recycle(resolved_provider):
                     continue
                 provider_ssh_keys = ssh_keys.get(resolved_provider.name, [])
-                for loc_name in _expand_locations(server_locations, resolved_provider):
-                    effective_loc = loc_name if loc_name is not None else resolved_provider.default_location
-                    server_location = resolved_provider.get_location(effective_loc)
+                for loc_name, server_location in _resolve_locations(
+                    resolved_provider, server_locations, name
+                ):
                     startup_script = get_startup_script(
                         scripts=scripts,
                         provider=resolved_provider,
@@ -1528,19 +1553,9 @@ def scale_up(
                     pass
                 continue
             provider_ssh_keys = ssh_keys.get(resolved_provider.name, [])
-            for loc_name in _expand_locations(server_locations, resolved_provider):
-                effective_loc = loc_name if loc_name is not None else resolved_provider.default_location
-                try:
-                    server_location = resolved_provider.get_location(effective_loc)
-                except LocationError:
-                    with Action(
-                        f"Skipping location {effective_loc!r} for provider {resolved_provider.name}: location not recognised",
-                        stacklevel=3,
-                        level=logging.DEBUG,
-                        server_name=name,
-                    ):
-                        pass
-                    continue
+            for loc_name, server_location in _resolve_locations(
+                resolved_provider, server_locations, name
+            ):
                 # pre-increment the attempt number that starts from 0
                 create_server_attempt += 1
 

@@ -528,8 +528,9 @@ def _recycle_request(
     )
 
 
-def _recycle_provider():
+def _recycle_provider(supports_volumes=True):
     provider = MagicMock()
+    provider.supports_volumes = supports_volumes
     provider.is_recycled_server.side_effect = (
         lambda server: server.name.startswith(recycle_server_name_prefix)
     )
@@ -569,6 +570,19 @@ def recyclable_volume_mismatch(self):
     assert recyclable_server_matches(
         _recycle_provider(), server, _recycle_request(volume_names=["other"])
     ) is False
+
+
+@TestScenario
+def recyclable_ignores_volumes_when_provider_lacks_support(self):
+    """A provider without volume support reuses a volume-less pooled server even
+    when the job requests a caching volume — the request is ignored (a caching
+    optimisation), so the server is still a valid reuse candidate."""
+    server = _recyclable_server(volume_names=[])
+    assert recyclable_server_matches(
+        _recycle_provider(supports_volumes=False),
+        server,
+        _recycle_request(volume_names=["cache"]),
+    ) is True
 
 
 @TestScenario

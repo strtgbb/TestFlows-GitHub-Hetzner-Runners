@@ -1544,14 +1544,16 @@ def scale_up(
 
         for type_name, resolved_provider, validated_type, server_image, setup_script in resolved:
             if server_volumes and not resolved_provider.supports_volumes:
+                # A volume- request is a caching optimisation, not a correctness
+                # requirement, so provision without it rather than refusing the
+                # job (the provider ignores the volumes arg at create time).
                 with Action(
-                    f"Skipping provider {resolved_provider.name} for {name}: job requires volumes but provider does not support them",
+                    f"Provider {resolved_provider.name} does not support caching volumes; ignoring the volume request for {name}",
                     stacklevel=3,
                     level=logging.DEBUG,
                     server_name=name,
                 ):
                     pass
-                continue
             provider_ssh_keys = ssh_keys.get(resolved_provider.name, [])
             for loc_name, server_location in _resolve_locations(
                 resolved_provider, server_locations, name

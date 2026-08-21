@@ -79,22 +79,26 @@ def recyclable_server_matches(
         if have != want:
             return reject(f"recycle image tag {have!r} != requested {want!r}")
 
-    if len(server.volumes) != len(request.volume_names):
-        return reject(
-            f"volume count {len(server.volumes)} != requested {len(request.volume_names)}"
+    # Only match volumes on providers that support them. Elsewhere a volume-
+    # request is ignored (a caching optimisation), so a volume-less pooled
+    # server is still a valid reuse candidate.
+    if provider.supports_volumes:
+        if len(server.volumes) != len(request.volume_names):
+            return reject(
+                f"volume count {len(server.volumes)} != requested {len(request.volume_names)}"
+            )
+        volumes_ok = all(
+            any(
+                volume.name == name or volume.name.startswith(f"{name}-")
+                for volume in server.volumes
+            )
+            for name in request.volume_names
         )
-    volumes_ok = all(
-        any(
-            volume.name == name or volume.name.startswith(f"{name}-")
-            for volume in server.volumes
-        )
-        for name in request.volume_names
-    )
-    if not volumes_ok:
-        return reject(
-            f"volumes {[v.name for v in server.volumes]!r} "
-            f"do not cover requested {set(request.volume_names)!r}"
-        )
+        if not volumes_ok:
+            return reject(
+                f"volumes {[v.name for v in server.volumes]!r} "
+                f"do not cover requested {set(request.volume_names)!r}"
+            )
     logger.debug(f"recyclable {server.name} matched {request.name}")
     return True
 

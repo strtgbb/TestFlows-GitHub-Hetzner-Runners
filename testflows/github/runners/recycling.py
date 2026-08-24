@@ -14,6 +14,7 @@ from .cloud_provider import (
     RetirementResult,
 )
 from .constants import (
+    powered_off_since_label,
     recycle_image_label,
     recycle_server_name_prefix,
     recycle_timestamp_label,
@@ -103,6 +104,30 @@ def recyclable_server_matches(
     return True
 
 
+def powered_off_retire_action(
+    provider: CloudProvider,
+    server: ProviderServer,
+    now: int,
+    max_powered_off_time: int,
+) -> str:
+    """Decide what to do with a powered-off, non-recycle server this cycle.
+
+    The grace is anchored to an authoritative ``powered_off_since`` tag on the
+    server, not to in-memory observation, so a missed listing or a controller
+    restart never resets it. Returns ``"stamp"`` (record the powered-off time
+    and start the grace), ``"retire"`` (grace elapsed — retire it), or
+    ``"wait"`` (grace not yet elapsed).
+    """
+    since = provider.get_server_tag(server, powered_off_since_label)
+    if since is None:
+        return "stamp"
+    try:
+        since_ts = int(since)
+    except (TypeError, ValueError):
+        return "stamp"
+    return "retire" if now - since_ts > max_powered_off_time else "wait"
+
+
 def activate_recycled_server(
     provider: CloudProvider,
     claim: RecycleClaim,
@@ -132,6 +157,9 @@ def activate_recycled_server(
 
         labels = provider.labels_for_recycled_server(server, request.labels)
         labels.pop(recycle_timestamp_label, None)
+        # Reuse starts a fresh lifecycle; drop the previous powered-off stamp so
+        # the grace restarts when this server next powers off.
+        labels.pop(powered_off_since_label, None)
         valid, error = provider.validate_labels(labels)
         if not valid:
             raise ValueError(f"invalid server labels {labels}: {error}")
@@ -213,6 +241,7 @@ def retire_to_recycle_pool(
         return RetirementResult("pooled", original_name)
 
     labels = dict(server.labels)
+    labels.pop(powered_off_since_label, None)
     labels[recycle_timestamp_label] = str(now)
     provider.update_server(
         server,

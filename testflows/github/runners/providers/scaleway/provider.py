@@ -577,7 +577,18 @@ class ScalewayCloudProvider(CloudProvider):
         tags = [label_selector] if label_selector and "=" in label_selector else None
         result = []
         for zone in self._zones:
-            servers = self._instance.list_servers_all(zone=zone, tags=tags)
+            try:
+                servers = self._instance.list_servers_all(zone=zone, tags=tags)
+            except Exception as exc:
+                # Best-effort per zone: one zone erroring must not drop the whole
+                # listing, which would make scale_down "forget" live servers.
+                with Action(
+                    f"Could not list Scaleway servers in {zone}: {exc}",
+                    stacklevel=3,
+                    ignore_fail=True,
+                ):
+                    pass
+                continue
             result.extend(
                 _server_to_provider(s, ssh_user=self._ssh_user)
                 for s in (servers or [])

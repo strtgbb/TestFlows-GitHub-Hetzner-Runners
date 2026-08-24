@@ -1415,6 +1415,26 @@ def list_servers_fans_out_across_zones(self):
 
 
 @TestScenario
+def list_servers_skips_a_failing_zone(self):
+    """One zone erroring must not drop the whole listing — otherwise scale_down
+    'forgets' live servers and resets their powered-off retirement grace."""
+    with Given("a provider over two zones, one of which errors on list"):
+        provider = scaleway_provider()
+        provider._zones = {"fr-par-1", "nl-ams-1"}
+
+        def _list(zone, **k):
+            if zone == "nl-ams-1":
+                raise RuntimeError("zone temporarily unavailable")
+            return [_running_native(name="a")]
+
+        provider._instance.list_servers_all.side_effect = _list
+    with When("list_servers runs"):
+        result = provider.list_servers()
+    with Then("the healthy zone's servers are still returned"):
+        assert sorted(s.name for s in result) == ["a"], result
+
+
+@TestScenario
 def get_server_type_missing_in_all_zones_raises(self):
     """A type offered in no configured zone raises ServerTypeError."""
     with Given("a provider over two zones that offer no matching type"):

@@ -23,6 +23,10 @@ legacy_runner_volume_label = "github-hetzner-runner-volume"
 # Recycle timestamp label (stores epoch seconds when server was marked for recycling)
 recycle_timestamp_label = "github-recycle-timestamp"
 recycle_image_label = "github-runner-recycle-image"
+# Epoch seconds a server was first observed powered off. Authoritative source
+# for the powered-off retirement grace, so it survives missed listings and
+# controller restarts (unlike an in-memory clock).
+powered_off_since_label = "github-runner-powered-off-since"
 
 # Legacy discovery-label KEYS recognized only during migration: an un-owned
 # (``=active``) server carrying one of these is adopted by the first controller

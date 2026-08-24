@@ -30,7 +30,9 @@ from .constants import (
     standby_runner_name_prefix,
     recycle_server_name_prefix,
     recycle_timestamp_label,
+    powered_off_since_label,
 )
+from .recycling import powered_off_retire_action
 from .scale_up import (
     StandbyRunner,
     ScaleUpFailureMessage,
@@ -69,15 +71,6 @@ class ScaleDownFailureMessage:
     labels: set[str]
     server_name: str
     exception: Exception
-
-
-@dataclass
-class PoweredOffServer:
-    """Powered off server."""
-
-    time: float
-    server: ProviderServer
-    observed_interval: float
 
 
 @dataclass
@@ -360,7 +353,6 @@ def scale_down(
     max_unused_runner_time: int = config.max_unused_runner_time
     max_runner_registration_time: int = config.max_runner_registration_time
     provider_prices: dict[str, dict] = config.server_prices or {}
-    powered_off_servers: dict[str, PoweredOffServer] = {}
     unused_runners: dict[str, UnusedRunner] = {}
     zombie_servers: dict[str, ZombieServer] = {}
     scaleup_failures: dict[str, ScaleUpFailure] = {}
@@ -451,30 +443,12 @@ def scale_down(
                                     recyclable_servers[ps.name] = (ps, _sp)
 
             with Action(
-                "Looking for powered off or zombie servers",
+                "Looking for zombie servers",
                 level=logging.DEBUG,
                 interval=interval,
             ):
                 for ps in servers:
-                    if ps.status == CloudProvider.STATUS_OFF:
-                        if not ps.name.startswith(recycle_server_name_prefix):
-                            if ps.name not in powered_off_servers:
-                                with Action(
-                                    f"Found new powered off server {ps.name}",
-                                    server_name=ps.name,
-                                    interval=interval,
-                                ):
-                                    powered_off_servers[ps.name] = PoweredOffServer(
-                                        time=current_interval,
-                                        server=ps,
-                                        observed_interval=current_interval,
-                                    )
-                            powered_off_servers[ps.name].server = ps
-                            powered_off_servers[ps.name].observed_interval = (
-                                current_interval
-                            )
-
-                    elif ps.status == CloudProvider.STATUS_RUNNING:
+                    if ps.status == CloudProvider.STATUS_RUNNING:
                         if not any(
                             [
                                 runner.name
@@ -600,56 +574,52 @@ def scale_down(
                         continue
 
             with Action(
-                "Checking which powered off servers need to be deleted",
+                "Retiring powered off servers past their grace",
                 level=logging.DEBUG,
                 interval=interval,
             ):
-                for server_name in list(powered_off_servers.keys()):
-                    powered_off_server = powered_off_servers[server_name]
-
-                    if powered_off_server.observed_interval != current_interval:
+                # Grace is anchored to an authoritative powered_off_since tag on
+                # the server (set on first sighting), not to in-memory
+                # observation, so a missed listing or a controller restart never
+                # resets it. Recycle-named servers are handled by the recyclable
+                # path above.
+                now_ts = int(time.time())
+                for ps in servers:
+                    if ps.status != CloudProvider.STATUS_OFF:
+                        continue
+                    if ps.name.startswith(recycle_server_name_prefix):
+                        continue
+                    _sp = server_providers.get(ps.name)
+                    if _sp is None:
+                        continue
+                    decision = powered_off_retire_action(
+                        _sp, ps, now_ts, max_powered_off_time
+                    )
+                    if decision == "stamp":
                         with Action(
-                            f"Forgetting about powered off server {server_name}",
-                            server_name=server_name,
+                            f"Recording powered-off time for {ps.name}",
+                            server_name=ps.name,
                             interval=interval,
                         ):
-                            powered_off_servers.pop(server_name)
-
-                    else:
-                        if (
-                            current_interval - powered_off_server.time
-                            > max_powered_off_time
-                        ):
-                            age_intervals = current_interval - powered_off_server.time
-                            _sp = server_providers.get(powered_off_server.server.name)
-                            with Action(
-                                "Scale-down decision for powered off server",
-                                level=logging.DEBUG,
-                                server_name=server_name,
-                                interval=interval,
-                            ) as action:
-                                action.note(
-                                    f"age_intervals={age_intervals}, threshold={max_powered_off_time}, "
-                                    f"provider={(getattr(_sp, 'name', 'unknown') if _sp is not None else 'none')}, "
-                                    f"recycle={recycle}"
-                                )
-                            if _sp is not None:
-                                result = recycle_server(
-                                    reason="powered_off",
-                                    server=powered_off_server.server,
-                                    provider=_sp,
-                                    ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
-                                    end_of_life=_effective_end_of_life(_sp),
-                                    recycle_grace_period=_effective_recycle_grace(_sp),
-                                    recycle_enabled=_effective_recycle(_sp),
-                                )
-                                if result.action == "deleted":
-                                    metrics.record_server_deletion(
-                                        server_type=powered_off_server.server.server_type,
-                                        location=powered_off_server.server.location,
-                                        reason="powered_off",
-                                    )
-                            powered_off_servers.pop(server_name)
+                            _sp.set_server_tags(
+                                ps, {powered_off_since_label: str(now_ts)}
+                            )
+                    elif decision == "retire":
+                        result = recycle_server(
+                            reason="powered_off",
+                            server=ps,
+                            provider=_sp,
+                            ssh_key_names=provider_ssh_key_names.get(_sp.name, set()),
+                            end_of_life=_effective_end_of_life(_sp),
+                            recycle_grace_period=_effective_recycle_grace(_sp),
+                            recycle_enabled=_effective_recycle(_sp),
+                        )
+                        if result.action == "deleted":
+                            metrics.record_server_deletion(
+                                server_type=ps.server_type,
+                                location=ps.location,
+                                reason="powered_off",
+                            )
 
             with Action(
                 "Checking which zombie servers need to be deleted",

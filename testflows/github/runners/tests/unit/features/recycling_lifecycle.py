@@ -15,12 +15,14 @@ from testflows.github.runners.cloud_provider import (
     RecycleRequest,
 )
 from testflows.github.runners.constants import (
+    powered_off_since_label,
     recycle_image_label,
     recycle_server_name_prefix,
     recycle_timestamp_label,
 )
 from testflows.github.runners.recycling import (
     activate_recycled_server,
+    powered_off_retire_action,
     retire_to_recycle_pool,
 )
 from testflows.github.runners.providers.hetzner.provider import HetznerCloudProvider
@@ -487,6 +489,37 @@ def reimage_failure_returns_server_to_pool(self):
     provider.delete_server.assert_not_called()
     provider.power_off_server.assert_called_once()
     provider.release_recycle_claim.assert_called_once()
+
+
+@TestScenario
+def powered_off_grace_is_derived_from_tag(self):
+    """The powered-off grace reads an authoritative powered_off_since tag, so it
+    is immune to missed listings and restarts (no in-memory clock to reset)."""
+    server = _server()
+    provider = _provider(server)
+    with When("the server has no powered_off_since tag"):
+        assert powered_off_retire_action(provider, server, 1000, 60) == "stamp"
+    with And("the tag is within the grace window"):
+        server.labels[powered_off_since_label] = "970"  # 30s ago, grace 60
+        assert powered_off_retire_action(provider, server, 1000, 60) == "wait"
+    with And("the tag is older than the grace window"):
+        server.labels[powered_off_since_label] = "900"  # 100s ago, grace 60
+        assert powered_off_retire_action(provider, server, 1000, 60) == "retire"
+    with And("the tag is unparseable, it is re-stamped rather than trusted"):
+        server.labels[powered_off_since_label] = "garbage"
+        assert powered_off_retire_action(provider, server, 1000, 60) == "stamp"
+
+
+@TestScenario
+def activation_clears_the_powered_off_tag(self):
+    """Reuse starts a fresh lifecycle, so activation drops any powered_off_since
+    tag — otherwise a stale stamp would retire the server prematurely next time."""
+    server = _server(f"{recycle_server_name_prefix}one", CloudProvider.STATUS_OFF)
+    server.labels[powered_off_since_label] = "500"
+    provider = _provider(server)
+    activate_recycled_server(provider, _claim(server), rebuild=False)
+    labels = provider.update_server.call_args.kwargs["labels"]
+    assert powered_off_since_label not in labels, labels
 
 
 @TestFeature

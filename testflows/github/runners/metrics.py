@@ -1006,25 +1006,32 @@ def update_pools(servers, standby_runners, count_available_fn=None):
                 pass
 
 
-def record_scale_up_failure(
-    error_type, server_name, server_type, server_location, error_details, cache=[]
-):
-    """Record a scale up failure or success.
+# Rolling 1-hour windows of scale failures. Module-level so the window is an
+# explicit, named owner instead of a mutable default argument that persists
+# across calls by accident. Scale-up and scale-down keep separate windows.
+_SCALE_UP_FAILURE_WINDOW = []
+_SCALE_DOWN_FAILURE_WINDOW = []
 
-    Args:
-        error_type: Type of the error or "success" for successful scale up
-        server_name: Name of the server
-        server_type: Type of the server
-        location: Location of the server
-        error_details: Details about the error or success details
-        cache: List to store error messages (optional)
+
+def _record_failure(
+    window,
+    count_gauge,
+    details_gauge,
+    error_type,
+    server_name,
+    server_type,
+    server_location,
+    error_details,
+):
+    """Append a failure to a 1-hour window and rebuild its detail metrics.
+
+    A "success" error_type records nothing but still prunes the window and
+    refreshes the gauges, so a quiet hour decays the count back to zero.
     """
     current_time = time.time()
 
-    # Only track failures in the cache
     if error_type != "success":
-        # Add new error to cache with timestamp
-        cache.append(
+        window.append(
             {
                 "timestamp": current_time,
                 "error_type": error_type,
@@ -1035,97 +1042,61 @@ def record_scale_up_failure(
             }
         )
 
-    # Clean up timestamps older than 1 hour
-    while cache and cache[0]["timestamp"] < current_time - 3600:  # 1 hour in seconds
-        cache.pop(0)
+    # Drop entries older than 1 hour.
+    while window and window[0]["timestamp"] < current_time - 3600:
+        window.pop(0)
 
-    SCALE_UP_FAILURES_LAST_HOUR.set(len(cache))
+    count_gauge.set(len(window))
 
-    # Clear all existing failure details metrics
-    SCALE_UP_FAILURE_DETAILS_LAST_HOUR._metrics.clear()
+    # Clear-and-rebuild the detail series from the current window.
+    details_gauge._metrics.clear()
+    for error in window:
+        timestamp_iso = (
+            datetime.fromtimestamp(error["timestamp"])
+            .replace(tzinfo=dateutil.tz.UTC)
+            .isoformat()
+        )
+        details_gauge.labels(
+            error_type=error["error_type"],
+            server_name=error["server_name"],
+            server_type=error["server_type"],
+            server_location=error["server_location"] or "",
+            timestamp_iso=timestamp_iso,
+            server_labels=str(error["error_details"]["labels"]),
+            error=str(error["error_details"]["error"]),
+        ).set(1)
 
-    # Only create new metrics if there are failures
-    if cache:
-        # Update metrics from cache
-        for error in cache:
-            # Convert timestamps
-            timestamp_iso = (
-                datetime.fromtimestamp(error["timestamp"])
-                .replace(tzinfo=dateutil.tz.UTC)
-                .isoformat()
-            )
 
-            # Set gauge to 1 for each error
-            SCALE_UP_FAILURE_DETAILS_LAST_HOUR.labels(
-                error_type=error["error_type"],
-                server_name=error["server_name"],
-                server_type=error["server_type"],
-                server_location=error["server_location"] or "",
-                timestamp_iso=timestamp_iso,
-                server_labels=str(error["error_details"]["labels"]),
-                error=str(error["error_details"]["error"]),
-            ).set(1)
+def record_scale_up_failure(
+    error_type, server_name, server_type, server_location, error_details
+):
+    """Record a scale up failure (or a success that only prunes the window)."""
+    _record_failure(
+        _SCALE_UP_FAILURE_WINDOW,
+        SCALE_UP_FAILURES_LAST_HOUR,
+        SCALE_UP_FAILURE_DETAILS_LAST_HOUR,
+        error_type,
+        server_name,
+        server_type,
+        server_location,
+        error_details,
+    )
 
 
 def record_scale_down_failure(
-    error_type, server_name, server_type, server_location, error_details, cache=[]
+    error_type, server_name, server_type, server_location, error_details
 ):
-    """Record a scale down failure or success.
-
-    Args:
-        error_type: Type of the error or "success" for successful scale down
-        server_name: Name of the server
-        server_type: Type of the server
-        server_location: Location of the server
-        error_details: Details about the error or success details
-        cache: List to store error messages (optional)
-    """
-    current_time = time.time()
-
-    # Only track failures in the cache
-    if error_type != "success":
-        # Add new error to cache with timestamp
-        cache.append(
-            {
-                "timestamp": current_time,
-                "error_type": error_type,
-                "server_name": server_name,
-                "server_type": server_type,
-                "server_location": server_location,
-                "error_details": error_details,
-            }
-        )
-
-    # Clean up timestamps older than 1 hour
-    while cache and cache[0]["timestamp"] < current_time - 3600:  # 1 hour in seconds
-        cache.pop(0)
-
-    SCALE_DOWN_FAILURES_LAST_HOUR.set(len(cache))
-
-    # Clear all existing failure details metrics
-    SCALE_DOWN_FAILURE_DETAILS_LAST_HOUR._metrics.clear()
-
-    # Only create new metrics if there are failures
-    if cache:
-        # Update metrics from cache
-        for error in cache:
-            # Convert timestamps
-            timestamp_iso = (
-                datetime.fromtimestamp(error["timestamp"])
-                .replace(tzinfo=dateutil.tz.UTC)
-                .isoformat()
-            )
-
-            # Set gauge to 1 for each error
-            SCALE_DOWN_FAILURE_DETAILS_LAST_HOUR.labels(
-                error_type=error["error_type"],
-                server_name=error["server_name"],
-                server_type=error["server_type"],
-                server_location=error["server_location"] or "",
-                timestamp_iso=timestamp_iso,
-                server_labels=str(error["error_details"]["labels"]),
-                error=str(error["error_details"]["error"]),
-            ).set(1)
+    """Record a scale down failure (or a success that only prunes the window)."""
+    _record_failure(
+        _SCALE_DOWN_FAILURE_WINDOW,
+        SCALE_DOWN_FAILURES_LAST_HOUR,
+        SCALE_DOWN_FAILURE_DETAILS_LAST_HOUR,
+        error_type,
+        server_name,
+        server_type,
+        server_location,
+        error_details,
+    )
 
 
 def update_github_api(current_calls: int, total_calls: int, reset_time: float):

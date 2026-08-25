@@ -269,6 +269,56 @@ def delete_recyclable_excludes_claimed_servers(self):
 
 
 @TestScenario
+def delete_recyclable_respects_per_provider_grace_override(self):
+    """A provider's own recycle_grace_period overrides the passed global grace.
+
+    A server recycled 100s ago is inside a provider's 300s grace, so eviction
+    retains it even though the 60s global grace has elapsed.
+    """
+    import time as _time
+
+    provider = MagicMock()
+    provider.name = "scaleway"
+    provider.recycle_grace_period = 300
+    provider.is_recycle_claimed.return_value = False
+    provider.reserve_recycled_server.return_value = True
+    provider.get_server_tag.return_value = str(int(_time.time()) - 100)
+    s = _server(f"{recycle_server_name_prefix}one")
+    with When("eviction runs with a 60s global grace"):
+        deleted = delete_recyclable_server(
+            server_name="github-runner-9-0-cx22",
+            recyclable_servers=[(s, provider)],
+            provider_prices={},
+            recycle_grace_period=60,
+        )
+    with Then("the provider's longer grace retains it"):
+        assert deleted is None, deleted
+        provider.delete_server.assert_not_called()
+
+
+@TestScenario
+def delete_recyclable_uses_global_grace_without_override(self):
+    """With no provider override, the passed global grace applies."""
+    import time as _time
+
+    provider = MagicMock()
+    provider.name = "scaleway"
+    provider.recycle_grace_period = None
+    provider.is_recycle_claimed.return_value = False
+    provider.reserve_recycled_server.return_value = True
+    provider.get_server_tag.return_value = str(int(_time.time()) - 100)
+    s = _server(f"{recycle_server_name_prefix}one")
+    deleted = delete_recyclable_server(
+        server_name="github-runner-9-0-cx22",
+        recyclable_servers=[(s, provider)],
+        provider_prices={},
+        recycle_grace_period=60,
+    )
+    assert deleted == s.name, deleted
+    provider.delete_server.assert_called_once_with(s)
+
+
+@TestScenario
 def delete_recyclable_falls_back_to_random_across_currencies(self):
     """Mixed provider currencies disable price comparison and force a random pick."""
     p_eur = MagicMock()

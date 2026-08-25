@@ -166,12 +166,20 @@ def delete_recyclable_server(
                     )
                 continue
 
+            # Respect a per-provider grace override; fall back to the passed
+            # (global) grace. The pool can span providers, so this is decided
+            # per candidate rather than once at the call site.
+            effective_grace = (
+                provider.recycle_grace_period
+                if provider.recycle_grace_period is not None
+                else recycle_grace_period
+            )
             time_since_recycle = now_ts - recycle_ts
-            if time_since_recycle < recycle_grace_period:
+            if time_since_recycle < effective_grace:
                 with Action(
                     f"Skipping recyclable server {server.name} deletion "
                     f"as it has only been recycled for {time_since_recycle}s "
-                    f"(need {recycle_grace_period}s)",
+                    f"(need {effective_grace}s)",
                     stacklevel=stack_level + 1,
                     level=logging.DEBUG,
                     server_name=server_name,
@@ -803,7 +811,7 @@ def scale_down(
                     if terminate.is_set():
                         break
                     recyclable_server, recyclable_provider = recyclable_servers[server_name]
-                    recycle_server(
+                    result = recycle_server(
                         reason="unused_recyclable",
                         server=recyclable_server,
                         provider=recyclable_provider,
@@ -814,7 +822,11 @@ def scale_down(
                         recycle_grace_period=_effective_recycle_grace(recyclable_provider),
                         recycle_enabled=_effective_recycle(recyclable_provider),
                     )
-                    recyclable_servers.pop(server_name)
+                    # Keep still-alive (pooled/claimed) servers in the pool so the
+                    # failure block below can evict one to free capacity; only drop
+                    # the ones actually deleted.
+                    if result.action == "deleted":
+                        recyclable_servers.pop(server_name)
 
             with Action(
                 "Checking which recyclable servers need to be deleted to try to resolve scale up failures",
@@ -876,7 +888,7 @@ def scale_down(
                                         provider_prices=provider_prices,
                                         recycle_grace_period=recycle_grace_period,
                                         stack_level=3,
-                                        server_name=server_name,
+                                        server_name=scaleup_failure.server_name,
                                     )
                                 )
                                 if deleted_recyclable_server_name is not None:

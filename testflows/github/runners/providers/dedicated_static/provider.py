@@ -43,6 +43,11 @@ class _StaticHost:
     ssh_port: int
     ssh_key_path: str | None
     static_name: str
+    # Routing facts extracted from the labels once at construction: the type-
+    # and in- suffixes this host serves. A group may carry more than one of
+    # each, so these are sets and request matching is set membership.
+    server_types: set[str]
+    locations: set[str]
     # In-memory cache of the current lease, re-derived each cycle from the live
     # GitHub runner list (pre-cycle hooks). NOT the source of truth for
     # in-flight setups — that is the durable claim marker on the host itself.
@@ -142,15 +147,10 @@ class DedicatedStaticCloudProvider(CloudProvider):
             group_ssh_user = group.get("ssh_user") or default_ssh_user
             group_ssh_port = group.get("ssh_port", 22)
             group_ssh_key_path = group.get("ssh_key_path")
-            for label in group_labels:
-                if label.startswith(self._type_label_prefix):
-                    self._supported_types.add(
-                        label.split(self._type_label_prefix, 1)[1]
-                    )
-                elif label.startswith(self._loc_label_prefix):
-                    self._supported_locations.add(
-                        label.split(self._loc_label_prefix, 1)[1]
-                    )
+            group_types = self._suffixes(group_labels, self._type_label_prefix)
+            group_locations = self._suffixes(group_labels, self._loc_label_prefix)
+            self._supported_types |= group_types
+            self._supported_locations |= group_locations
 
             for index, endpoint in enumerate(group["hosts"]):
                 host_id = f"{group_name}:{index}"
@@ -170,8 +170,17 @@ class DedicatedStaticCloudProvider(CloudProvider):
                         ssh_port=group_ssh_port,
                         ssh_key_path=group_ssh_key_path,
                         static_name=static_name,
+                        server_types=set(group_types),
+                        locations=set(group_locations),
                     )
                 )
+
+    @staticmethod
+    def _suffixes(labels, prefix: str) -> set[str]:
+        """Return the suffixes of *labels* that start with *prefix*."""
+        return {
+            label.split(prefix, 1)[1] for label in labels if label.startswith(prefix)
+        }
 
     # ---------------------------------------------------------------------------
     # Identity
@@ -215,22 +224,11 @@ class DedicatedStaticCloudProvider(CloudProvider):
 
         labels = self.build_server_labels(sorted(host.labels))
         name = host.lease_name if host.lease_name else host.static_name
-        location = next(
-            (
-                label.split(self._loc_label_prefix, 1)[1]
-                for label in sorted(host.labels)
-                if label.startswith(self._loc_label_prefix)
-            ),
-            "",
-        )
-        server_type = next(
-            (
-                label.split(self._type_label_prefix, 1)[1]
-                for label in sorted(host.labels)
-                if label.startswith(self._type_label_prefix)
-            ),
-            "dedicated",
-        )
+        # A host always has a type label (config validates it) and may serve
+        # several; the lowest-sorted is the representative, matching the prior
+        # first-label behavior. Location is optional.
+        location = min(host.locations) if host.locations else ""
+        server_type = min(host.server_types)
 
         return ProviderServer(
             id=host.host_id,
@@ -292,9 +290,9 @@ class DedicatedStaticCloudProvider(CloudProvider):
     def _host_matches_request(
         self, host: _StaticHost, server_type_name: str, location_name: str | None
     ) -> bool:
-        if f"{self._type_label_prefix}{server_type_name}" not in host.labels:
+        if server_type_name not in host.server_types:
             return False
-        if location_name and f"{self._loc_label_prefix}{location_name}" not in host.labels:
+        if location_name and location_name not in host.locations:
             return False
         return True
 

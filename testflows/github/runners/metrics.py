@@ -26,7 +26,6 @@ from .constants import recycle_server_name_prefix
 from .providers.hetzner.estimate import get_server_price as hetzner_get_price
 from .providers.aws.estimate import get_server_price as aws_get_price
 from .providers.scaleway.estimate import get_server_price as scaleway_get_price
-from .providers.aws.utils import _az_to_region
 
 # Server metrics
 SERVERS_TOTAL = Gauge(
@@ -601,14 +600,11 @@ def update_servers(servers, server_prices=None, ipv4_price=0.0008, ipv6_price=0.
                             ipv4_price=server_ipv4_cost,
                             ipv6_price=server_ipv6_cost,
                         )
-                    elif provider_name == "aws":
-                        # AWS prices are keyed by region; location may be an AZ.
-                        total_cost = price_fn(
-                            prices, server_type, _az_to_region(location)
-                        )
                     else:
-                        # Scaleway (and any future provider) keys prices by the
-                        # location as-is (zone); no region translation.
+                        # Each provider's get_server_price resolves its own
+                        # location: an exact match when the key is present,
+                        # otherwise the single fetched entry (AWS keys by region
+                        # but the AZ still resolves; Scaleway keys by zone).
                         total_cost = price_fn(prices, server_type, location)
 
                     if total_cost is not None:

@@ -72,20 +72,17 @@ def get_server_price(
     ipv4_price and ipv6_price are accepted for interface compatibility but
     ignored — AWS billing for Elastic IPs is separate and outside scope.
 
-    server_location may be an AZ (e.g. 'us-east-1a') or a region ('us-east-1');
-    prices are always stored by region so we try both.
+    server_location may be an AZ (e.g. 'us-east-1a'), a region ('us-east-1'), or
+    None; check_prices fetches exactly one region, so an exact match wins and
+    anything else (an AZ, or None) falls back to that single entry.
     """
-    from .utils import _az_to_region
-
-    price = None
     try:
         region_prices = server_prices[server_type]
-        price = region_prices.get(server_location) or region_prices.get(
-            _az_to_region(server_location)
-        )
     except (KeyError, TypeError):
-        pass
-    return price
+        return None
+    if server_location is not None and server_location in region_prices:
+        return region_prices[server_location]
+    return next(iter(region_prices.values()), None)
 
 
 def get_runner_server_price_per_second(

@@ -47,6 +47,27 @@ def runner_price_per_second_routes_scaleway(self):
         assert price == 3.0 / 3600, price
 
 
+@TestScenario
+def aws_price_resolves_outside_us_east_1_and_for_none_location(self):
+    """AWS pricing works in any region and with a None location.
+
+    Regression: get_server_price fell back to _az_to_region(None) == "us-east-1",
+    so a eu-west-1 deployment -- and the runner path, which passes location=None
+    -- silently priced None.
+    """
+    from testflows.github.runners.providers.aws.estimate import get_server_price
+
+    prices = {"t3.medium": {"eu-west-1": 4.0}}
+    with Then("a None location falls back to the single fetched region"):
+        assert get_server_price(prices, "t3.medium", None) == 4.0
+    with And("an AZ (not a price key) falls back too"):
+        assert get_server_price(prices, "t3.medium", "eu-west-1a") == 4.0
+    with And("an exact region match is used"):
+        assert get_server_price(prices, "t3.medium", "eu-west-1") == 4.0
+    with And("an unknown type returns None"):
+        assert get_server_price(prices, "nope.type", None) is None
+
+
 @TestFeature
 @Name("estimate")
 def feature(self):

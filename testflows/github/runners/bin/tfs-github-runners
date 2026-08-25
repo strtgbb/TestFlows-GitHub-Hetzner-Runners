@@ -212,6 +212,7 @@ def argparser():
     parser.add_argument(
         "--delete-random",
         action="store_true",
+        default=None,
         help=(
             "delete random recyclable server when maximum number of servers is reached, by default uses server prices"
         ),

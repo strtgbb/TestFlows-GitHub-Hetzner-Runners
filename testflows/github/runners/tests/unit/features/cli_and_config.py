@@ -145,6 +145,27 @@ def explicit_hetzner_token_creates_provider(self):
     assert cfg.providers.hetzner.token == "token"
 
 
+@TestScenario
+def unset_boolean_flag_does_not_clobber_yaml_value(self):
+    """A store_true flag left unset (None) must not overwrite the YAML value.
+
+    Regression: --delete-random lacked default=None, so argparse defaulted it to
+    False and apply_args reset `delete_random: true` on every CLI run.
+    """
+    with Given("delete_random enabled from YAML"):
+        cfg = Config()
+        cfg.delete_random = True
+    with When("apply_args runs with the flag unset (None)"):
+        apply_args(cfg, SimpleNamespace(delete_random=None))
+    with Then("the YAML value survives"):
+        assert cfg.delete_random is True, cfg.delete_random
+    with And("an explicitly passed flag still overrides"):
+        cfg2 = Config()
+        cfg2.delete_random = False
+        apply_args(cfg2, SimpleNamespace(delete_random=True))
+        assert cfg2.delete_random is True, cfg2.delete_random
+
+
 # ---------------------------------------------------------------------------
 # 2. provider_type() whitelist
 # ---------------------------------------------------------------------------

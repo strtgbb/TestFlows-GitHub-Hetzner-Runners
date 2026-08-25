@@ -113,16 +113,12 @@ def extend_workflow_run(run: WorkflowRun):
 
 # Pricing dispatch: the estimate CLI works on historical runner names, which
 # carry no provider, so route by which provider's price map holds the type
-# (server_prices is keyed per-provider, like metrics.py and the runtime).
-_PROVIDER_PRICE_FNS = {
-    "hetzner": hetzner_estimate.get_server_price,
-    "aws": aws_estimate.get_server_price,
-    "scaleway": scaleway_estimate.get_server_price,
-}
-_PROVIDER_RUNNER_PRICE_FNS = {
-    "hetzner": hetzner_estimate.get_runner_server_price_per_second,
-    "aws": aws_estimate.get_runner_server_price_per_second,
-    "scaleway": scaleway_estimate.get_runner_server_price_per_second,
+# (server_prices is keyed per-provider, like metrics.py and the runtime). One
+# module per provider owns both price functions; adding a provider is one line.
+_PROVIDER_ESTIMATE = {
+    "hetzner": hetzner_estimate,
+    "aws": aws_estimate,
+    "scaleway": scaleway_estimate,
 }
 
 
@@ -145,7 +141,7 @@ def get_server_price(
     name = _provider_for_type(server_prices, server_type)
     if name is None:
         return None
-    return _PROVIDER_PRICE_FNS[name](
+    return _PROVIDER_ESTIMATE[name].get_server_price(
         server_prices[name]["prices"], server_type, server_location,
         ipv4_price, ipv6_price,
     )
@@ -162,7 +158,7 @@ def get_runner_server_price_per_second(
     name = _provider_for_type(server_prices, server_type)
     if name is None:
         return None, server_type
-    return _PROVIDER_RUNNER_PRICE_FNS[name](
+    return _PROVIDER_ESTIMATE[name].get_runner_server_price_per_second(
         server_prices[name]["prices"], runner_name, ipv4_price, ipv6_price,
     )
 

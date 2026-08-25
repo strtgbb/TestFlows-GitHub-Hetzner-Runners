@@ -2141,7 +2141,7 @@ def scale_up(
                                     server_type=getattr(future.server_type, "name", None) or str(future.server_type or ""),
                                     server_location=getattr(future.server_location, "name", None) or str(future.server_location or ""),
                                     server_volumes=future.server_volumes,
-                                    server_status=future.server_volumes,
+                                    server_status=CloudProvider.STATUS_STARTING,
                                     labels=set(future.server_labels),
                                     provider_name=getattr(future, "provider_name", None),
                                 )

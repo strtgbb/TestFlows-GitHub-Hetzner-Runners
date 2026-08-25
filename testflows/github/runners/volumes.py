@@ -30,6 +30,31 @@ status_icon = {
 }
 
 
+def _select_volumes(volumes, *, names, volume_names, ids, select_all):
+    """Select volumes by the union of the criteria, deduplicated by id.
+
+    ``select_all`` takes everything; otherwise the union of ``names`` (decoded
+    volume name), ``volume_names`` (full name), and ``ids`` (string-compared).
+    Without dedup a volume matching two criteria is deleted/resized twice, and
+    the second call raises. With no criteria and ``select_all`` False, nothing
+    is selected.
+    """
+    if select_all:
+        return [*volumes]
+    selected, seen = [], set()
+    for v in volumes:
+        if v.id in seen:
+            continue
+        if (
+            (names and get_volume_name(v.name) in names)
+            or (volume_names and v.name in volume_names)
+            or (ids and str(v.id) in ids)
+        ):
+            seen.add(v.id)
+            selected.append(v)
+    return selected
+
+
 def list(args, config: Config):
     """List all volumes."""
     config.check("hetzner_token")
@@ -43,29 +68,19 @@ def list(args, config: Config):
             print("No volumes found", file=sys.stdout)
             return
 
-    list_volumes = []
-
-    if args.list_volumes_name:
-        list_volumes += [
-            v for v in volumes if get_volume_name(v.name) in args.list_volumes_name
-        ]
-
-    if args.list_volumes_volume_name:
-        list_volumes += [v for v in volumes if v.name in args.list_volumes_volume_name]
-
-    if args.list_volumes_id:
-        list_volumes += [v for v in volumes if str(v.id) in args.list_volumes_id]
-
-    if (
-        not args.list_volumes_name
-        and not args.list_volumes_volume_name
-        and not args.list_volumes_id
-    ):
-        # list all volumes by default
-        args.list_volumes_all = True
-
-    if args.list_volumes_all:
-        list_volumes = volumes[:]
+    list_volumes = _select_volumes(
+        volumes,
+        names=args.list_volumes_name,
+        volume_names=args.list_volumes_volume_name,
+        ids=args.list_volumes_id,
+        # list defaults to all when no criteria are given
+        select_all=args.list_volumes_all
+        or not (
+            args.list_volumes_name
+            or args.list_volumes_volume_name
+            or args.list_volumes_id
+        ),
+    )
 
     if not list_volumes:
         print("No volumes selected", file=sys.stderr)
@@ -120,23 +135,13 @@ def delete(args, config: Config):
             print("No volumes found", file=sys.stdout)
             return
 
-    delete_volumes = []
-
-    if args.delete_volumes_name:
-        delete_volumes += [
-            v for v in volumes if get_volume_name(v.name) in args.delete_volumes_name
-        ]
-
-    if args.delete_volumes_volume_name:
-        delete_volumes += [
-            v for v in volumes if v.name in args.delete_volumes_volume_name
-        ]
-
-    if args.delete_volumes_id:
-        delete_volumes += [v for v in volumes if str(v.id) in args.delete_volumes_id]
-
-    if args.delete_volumes_all:
-        delete_volumes = volumes[:]
+    delete_volumes = _select_volumes(
+        volumes,
+        names=args.delete_volumes_name,
+        volume_names=args.delete_volumes_volume_name,
+        ids=args.delete_volumes_id,
+        select_all=args.delete_volumes_all,
+    )
 
     if not delete_volumes:
         print("No volumes selected", file=sys.stderr)
@@ -177,23 +182,13 @@ def resize(args, config: Config):
             print("No volumes found", file=sys.stdout)
             return
 
-    resize_volumes = []
-
-    if args.resize_volumes_name:
-        resize_volumes += [
-            v for v in volumes if get_volume_name(v.name) in args.resize_volumes_name
-        ]
-
-    if args.resize_volumes_volume_name:
-        resize_volumes += [
-            v for v in volumes if v.name in args.resize_volumes_volume_name
-        ]
-
-    if args.resize_volumes_id:
-        resize_volumes += [v for v in volumes if str(v.id) in args.resize_volumes_id]
-
-    if args.resize_volumes_all:
-        resize_volumes = volumes[:]
+    resize_volumes = _select_volumes(
+        volumes,
+        names=args.resize_volumes_name,
+        volume_names=args.resize_volumes_volume_name,
+        ids=args.resize_volumes_id,
+        select_all=args.resize_volumes_all,
+    )
 
     if not resize_volumes:
         print("No volumes selected", file=sys.stderr)
@@ -233,21 +228,13 @@ def activate_deactivate(args, config: Config, action: str):
             print("No volumes found", file=sys.stdout)
             return
 
-    selected_volumes = []
-
-    if args.volumes_name:
-        selected_volumes += [
-            v for v in volumes if get_volume_name(v.name) in args.volumes_name
-        ]
-
-    if args.volumes_volume_name:
-        selected_volumes += [v for v in volumes if v.name in args.volumes_volume_name]
-
-    if args.volumes_id:
-        selected_volumes += [v for v in volumes if str(v.id) in args.volumes_id]
-
-    if args.volumes_all:
-        selected_volumes = volumes[:]
+    selected_volumes = _select_volumes(
+        volumes,
+        names=args.volumes_name,
+        volume_names=args.volumes_volume_name,
+        ids=args.volumes_id,
+        select_all=args.volumes_all,
+    )
 
     if not selected_volumes:
         print("No volumes selected", file=sys.stderr)

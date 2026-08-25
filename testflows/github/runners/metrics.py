@@ -545,6 +545,7 @@ def update_servers(servers, server_prices=None, ipv4_price=0.0008, ipv6_price=0.
     SERVER_INFO._metrics.clear()
     SERVER_LABELS._metrics.clear()
     SERVER_STATUS._metrics.clear()
+    COST_ESTIMATE._metrics.clear()
 
     total_servers = 0
 
@@ -961,6 +962,11 @@ def update_jobs(run_jobs: list[(WorkflowRun, WorkflowJob)]):
 
 def update_pools(servers, standby_runners, count_available_fn=None):
     """Update all pool-related metrics."""
+    # Clear-and-rebuild so series for servers, types, or locations that are
+    # gone this tick do not linger as stale gauges.
+    RUNNER_POOL_STATUS._metrics.clear()
+    RUNNER_POOL_CAPACITY._metrics.clear()
+    RUNNER_POOL_AVAILABLE._metrics.clear()
     for server in servers:
         try:
             pool_type = (

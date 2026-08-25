@@ -560,9 +560,6 @@ class DedicatedStaticCloudProvider(CloudProvider):
             labels[server_ssh_key_label] = ssh_key_name
         return labels
 
-    def build_volume_labels(self, arch: str, os_flavor: str, os_version: str) -> dict[str, str]:
-        return {}
-
     def validate_labels(self, labels: dict[str, str]) -> tuple[bool, str]:
         for key, value in labels.items():
             if len(key) > 128:

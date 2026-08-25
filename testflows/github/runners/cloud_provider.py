@@ -7,7 +7,13 @@ import hashlib
 import threading
 from typing import Any
 
-from .constants import github_runner_label
+from .constants import (
+    github_runner_label,
+    runner_volume_label,
+    runner_volume_arch_label,
+    runner_volume_os_label,
+    runner_volume_os_version_label,
+)
 
 
 @dataclass
@@ -617,11 +623,22 @@ class CloudProvider(ABC):
         used for server discovery and per-controller isolation.
         """
 
-    @abstractmethod
     def build_volume_labels(
         self, arch: str, os_flavor: str, os_version: str
     ) -> dict[str, str]:
-        """Return the tag/label dict to apply to a new runner volume."""
+        """Return the tag/label dict to apply to a new runner volume.
+
+        The same standard set for every provider (mirrors ``recycle_image_id``).
+        Providers without volume support never reach this: the base volume
+        operations raise ``NotImplementedError`` and the orchestrator only builds
+        volume labels on the volume path, so the returned dict is discarded there.
+        """
+        return {
+            runner_volume_label: "active",
+            runner_volume_arch_label: arch,
+            runner_volume_os_label: os_flavor,
+            runner_volume_os_version_label: os_version,
+        }
 
     @abstractmethod
     def validate_labels(self, labels: dict[str, str]) -> tuple[bool, str]:

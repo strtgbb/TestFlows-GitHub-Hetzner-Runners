@@ -25,10 +25,6 @@ from ...actions import Action
 from ...constants import (
     recycle_server_name_prefix,
     github_runner_label,
-    runner_volume_label,
-    runner_volume_arch_label,
-    runner_volume_os_label,
-    runner_volume_os_version_label,
 )
 from ...utils import derive_runner_tag
 from . import estimate
@@ -719,15 +715,6 @@ class ScalewayCloudProvider(CloudProvider):
             labels[_SSH_KEY_TAG] = ssh_key_name
         labels[github_runner_label] = self._runner_tag
         return labels
-
-    def build_volume_labels(self, arch: str, os_flavor: str, os_version: str) -> dict:
-        """Return the tag dict for a runner volume (for future volume support)."""
-        return {
-            runner_volume_label: "active",
-            runner_volume_arch_label: arch,
-            runner_volume_os_label: os_flavor,
-            runner_volume_os_version_label: os_version,
-        }
 
     def validate_labels(self, labels: dict) -> tuple[bool, str]:
         """Validate Scaleway tag constraints.

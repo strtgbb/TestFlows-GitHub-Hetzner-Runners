@@ -353,17 +353,6 @@ class HetznerCloudProvider(CloudProvider):
         labels[github_runner_label] = self._runner_tag
         return labels
 
-    def build_volume_labels(
-        self, arch: str, os_flavor: str, os_version: str
-    ) -> dict[str, str]:
-        """Return Hetzner tag dict for a runner volume."""
-        return {
-            runner_volume_label: "active",
-            runner_volume_arch_label: arch,
-            runner_volume_os_label: os_flavor,
-            runner_volume_os_version_label: os_version,
-        }
-
     def validate_labels(self, labels: dict[str, str]) -> tuple[bool, str]:
         """Validate labels against Hetzner's label constraints."""
         from hcloud.helpers.labels import LabelValidator

@@ -2,11 +2,6 @@
 
 import json
 
-from github import Github
-from github.Repository import Repository
-
-from ...actions import Action
-from ...config_schema import Config
 from ...utils import get_runner_server_type
 
 
@@ -102,25 +97,3 @@ def get_runner_server_price_per_second(
         price_per_second = server_price_per_hour / 3600
 
     return price_per_second, server_type
-
-
-def login_and_get_prices(
-    args, config: Config
-) -> tuple[Repository, dict[str, dict[str, float]]]:
-    """Login to GitHub and fetch on-demand EC2 prices for the configured region."""
-
-    config.check("github_token")
-    config.check("github_repository")
-
-    region = getattr(config, "aws_region", None) or "us-east-1"
-
-    with Action("Logging in to GitHub"):
-        github_client = Github(login_or_token=config.github_token, per_page=100)
-
-    with Action(f"Getting repository {config.github_repository}"):
-        repo: Repository = github_client.get_repo(config.github_repository)
-
-    with Action(f"Getting EC2 on-demand prices for {region}"):
-        server_prices = check_prices(region)
-
-    return (repo, server_prices)

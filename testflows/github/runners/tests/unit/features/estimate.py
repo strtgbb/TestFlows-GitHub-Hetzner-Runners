@@ -68,6 +68,24 @@ def aws_price_resolves_outside_us_east_1_and_for_none_location(self):
         assert get_server_price(prices, "nope.type", None) is None
 
 
+@TestScenario
+def hetzner_price_resolves_for_none_location(self):
+    """Hetzner runner estimates work with a None location.
+
+    Regression: get_server_price did server_prices[type][None] -> KeyError, so
+    every Hetzner runner-name estimate priced None.
+    """
+    from testflows.github.runners.providers.hetzner.estimate import get_server_price
+
+    prices = {"cx23": {"nbg1": 5.0}}
+    with Then("a None location falls back to the single region, plus IP costs"):
+        assert get_server_price(prices, "cx23", None, 1.0, 0.5) == 6.5
+    with And("an exact location match is used"):
+        assert get_server_price(prices, "cx23", "nbg1", 0.0, 0.0) == 5.0
+    with And("an unknown type returns None"):
+        assert get_server_price(prices, "nope", None, 0.0, 0.0) is None
+
+
 @TestFeature
 @Name("estimate")
 def feature(self):

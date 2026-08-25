@@ -1,13 +1,6 @@
 """Hetzner Cloud cost estimation implementation."""
 
-from github import Github
-from github.Repository import Repository
-
-from ...actions import Action
-from ...config_schema import Config
-from ...hclient import HClient as Client
 from ...utils import get_runner_server_type
-from .config import check_prices
 
 
 def get_server_price(
@@ -17,15 +10,23 @@ def get_server_price(
     ipv4_price: float,
     ipv6_price: float,
 ) -> float:
-    """Get server price for Hetzner Cloud."""
-    price = None
-    if ipv4_price is None:
-        ipv4_price = 0
+    """Get server price for Hetzner Cloud.
+
+    server_location may be None (the runner path passes it), so fall back to the
+    single fetched location -- check_prices fetches exactly one -- rather than
+    looking up server_prices[type][None] and getting nothing.
+    """
+    ipv4_price = ipv4_price or 0
+    ipv6_price = ipv6_price or 0
     try:
-        price = server_prices[server_type][server_location] + ipv4_price + ipv6_price
-    except KeyError:
-        pass
-    return price
+        location_prices = server_prices[server_type]
+    except (KeyError, TypeError):
+        return None
+    if server_location is not None and server_location in location_prices:
+        base = location_prices[server_location]
+    else:
+        base = next(iter(location_prices.values()), None)
+    return None if base is None else base + ipv4_price + ipv6_price
 
 
 def get_runner_server_price_per_second(
@@ -47,27 +48,3 @@ def get_runner_server_price_per_second(
         price_per_second = server_price_per_hour / 3600
 
     return price_per_second, server_type
-
-
-def login_and_get_prices(
-    args, config: Config
-) -> tuple[Repository, dict[str, dict[str, float]]]:
-    """Login and get prices for Hetzner Cloud."""
-
-    config.check("github_token")
-    config.check("github_repository")
-    config.check("hetzner_token")
-
-    with Action("Logging in to Hetzner Cloud"):
-        client = Client(token=config.hetzner_token)
-
-    with Action("Logging in to GitHub"):
-        github_client = Github(login_or_token=config.github_token, per_page=100)
-
-    with Action(f"Getting repository {config.github_repository}"):
-        repo: Repository = github_client.get_repo(config.github_repository)
-
-    with Action("Getting current server prices"):
-        server_prices = check_prices(client)
-
-    return (repo, server_prices)

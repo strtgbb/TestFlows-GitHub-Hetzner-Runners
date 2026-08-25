@@ -7,11 +7,6 @@ which we key by the canonical dot-form so ``get_runner_server_type`` (which
 decodes the runner name to the canonical form) hits the map.
 """
 
-from github import Github
-from github.Repository import Repository
-
-from ...actions import Action
-from ...config_schema import Config
 from ...utils import get_runner_server_type
 from .utils import canonical_type
 
@@ -77,36 +72,3 @@ def get_runner_server_price_per_second(
         price_per_second = server_price_per_hour / 3600
 
     return price_per_second, server_type
-
-
-def login_and_get_prices(
-    args, config: Config
-) -> tuple[Repository, dict[str, dict[str, float]]]:
-    """Login to GitHub and fetch hourly Scaleway instance prices."""
-    from scaleway import Client
-
-    config.check("github_token")
-    config.check("github_repository")
-
-    scw = config.providers.scaleway
-    zone = (scw.defaults.location if scw else None) or "fr-par-1"
-
-    with Action("Logging in to Scaleway"):
-        client = Client(
-            access_key=scw.access_key,
-            secret_key=scw.secret_key,
-            default_project_id=scw.project_id,
-            default_organization_id=scw.organization_id,
-            default_zone=zone,
-        )
-
-    with Action("Logging in to GitHub"):
-        github_client = Github(login_or_token=config.github_token, per_page=100)
-
-    with Action(f"Getting repository {config.github_repository}"):
-        repo: Repository = github_client.get_repo(config.github_repository)
-
-    with Action(f"Getting Scaleway instance prices for {zone}"):
-        server_prices = check_prices(client, zones=[zone])
-
-    return (repo, server_prices)

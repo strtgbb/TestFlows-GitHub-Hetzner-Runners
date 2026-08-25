@@ -9,32 +9,6 @@ from ... import errors
 from ...config_schema import hetzner_provider, provider_defaults
 
 
-def is_enabled(provider_config):
-    """Check if Hetzner provider is enabled (has required credentials)."""
-    return provider_config and provider_config.token
-
-
-def get_cli_fields():
-    """Get list of all CLI field names for Hetzner provider."""
-    return [
-        "token",
-        "recycle_with_rebuild",
-        "default_image",
-        "default_server_type",
-        "default_location",
-        "default_volume_size",
-        "default_volume_location",
-    ]
-
-
-def has_cli_args(args):
-    """Check if any Hetzner CLI arguments are provided."""
-    return any(
-        getattr(args, f"hetzner_{field}", None) is not None
-        for field in get_cli_fields()
-    )
-
-
 def update_from_args(provider_config, args):
     """Update Hetzner provider configuration from CLI arguments."""
     if not provider_config:

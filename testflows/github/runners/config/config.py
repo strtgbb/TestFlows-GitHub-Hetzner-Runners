@@ -98,8 +98,7 @@ def apply_args(config, args):
     if config.providers.hetzner is not None:
         hetzner_config.update_from_args(config.providers.hetzner, args)
     elif getattr(args, "hetzner_token", None):
-        if config.providers.hetzner is None:
-            config.providers.hetzner = hetzner_provider()
+        config.providers.hetzner = hetzner_provider()
         hetzner_config.update_from_args(config.providers.hetzner, args)
 
     if getattr(args, "cloud_server_name", None) is not None:

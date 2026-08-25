@@ -73,23 +73,49 @@ StartupScriptError = errors.StartupScriptError
 ServerTypeError = errors.ServerTypeError
 
 
+# Top-level Config fields that have a matching CLI flag. apply_args copies a
+# provided (non-None) arg onto each of these. It is an allow-list on purpose:
+# a newly added Config field is not overridable until it is listed here, which
+# fails safe. A forgotten entry merely drops a CLI override; a deny-list would
+# instead let a forgotten entry clobber structural config. Nested/structural
+# fields (providers, cloud, standby_runners, ...) are applied through their own
+# seams below, not here.
+_CLI_OVERRIDABLE_FIELDS = (
+    "github_token",
+    "github_repository",
+    "ssh_key",
+    "with_label",
+    "label_prefix",
+    "meta_label",
+    "recycle",
+    "recycle_grace_period",
+    "end_of_life",
+    "delete_random",
+    "max_runners",
+    "max_runners_for_label",
+    "max_runners_in_workflow_run",
+    "workers",
+    "scripts",
+    "max_powered_off_time",
+    "max_unused_runner_time",
+    "max_runner_registration_time",
+    "max_server_ready_time",
+    "scale_up_interval",
+    "scale_down_interval",
+    "metrics_port",
+    "metrics_host",
+    "dashboard_port",
+    "dashboard_host",
+    "debug",
+    "service_mode",
+    "embedded_mode",
+)
+
+
 def apply_args(config, args):
     """Apply command-line argument overrides onto a Config."""
-    for attr in vars(config):
-        if attr in [
-            "config_file",
-            "logger_config",
-            "logger_format",
-            "cloud",
-            "standby_runners",
-            "additional_ssh_keys",
-            "server_prices",
-            "providers",
-        ]:
-            continue
-
+    for attr in _CLI_OVERRIDABLE_FIELDS:
         arg_value = getattr(args, attr, None)
-
         if arg_value is not None:
             setattr(config, attr, arg_value)
 

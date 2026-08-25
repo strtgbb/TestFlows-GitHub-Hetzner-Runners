@@ -166,6 +166,57 @@ def unset_boolean_flag_does_not_clobber_yaml_value(self):
         assert cfg2.delete_random is True, cfg2.delete_random
 
 
+@TestScenario
+def apply_args_allow_list_overrides_a_scalar_field(self):
+    """A listed field takes the CLI value; unrelated fields are untouched."""
+    with Given("a default config"):
+        cfg = Config()
+        cfg.max_runners = 10
+    with When("apply_args runs with max_runners set and nothing else"):
+        apply_args(cfg, SimpleNamespace(max_runners=99))
+    with Then("the listed field is overridden"):
+        assert cfg.max_runners == 99, cfg.max_runners
+    with And("an unset field keeps its default"):
+        assert cfg.workers == Config().workers, cfg.workers
+
+
+@TestScenario
+def apply_args_never_touches_structural_fields(self):
+    """Structural/nested fields must never be in the scalar allow-list.
+
+    They carry their own apply seams (providers, cloud) or must not be
+    CLI-overridable at all (server_prices, standby_runners, config_file).
+    Listing one here would let a stray same-named arg clobber it.
+    """
+    from testflows.github.runners.config.config import _CLI_OVERRIDABLE_FIELDS
+
+    structural = {
+        "providers",
+        "cloud",
+        "standby_runners",
+        "additional_ssh_keys",
+        "server_prices",
+        "logger_config",
+        "logger_format",
+        "config_file",
+    }
+    with Then("no structural field appears in the allow-list"):
+        overlap = structural & set(_CLI_OVERRIDABLE_FIELDS)
+        assert not overlap, overlap
+
+
+@TestScenario
+def apply_args_allow_list_names_only_real_fields(self):
+    """Every allow-listed name must be an actual Config field (drift guard)."""
+    import dataclasses
+    from testflows.github.runners.config.config import _CLI_OVERRIDABLE_FIELDS
+
+    field_names = {f.name for f in dataclasses.fields(Config)}
+    with Then("each allow-listed name resolves to a Config field"):
+        unknown = set(_CLI_OVERRIDABLE_FIELDS) - field_names
+        assert not unknown, unknown
+
+
 # ---------------------------------------------------------------------------
 # 2. provider_type() whitelist
 # ---------------------------------------------------------------------------

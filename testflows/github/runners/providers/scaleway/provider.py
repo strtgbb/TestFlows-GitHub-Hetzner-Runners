@@ -327,37 +327,43 @@ class ScalewayCloudProvider(CloudProvider):
         server = self._power_on_and_wait(created.server, zone, name)
         return _server_to_provider(server, ssh_user=self._ssh_user)
 
-    def fixed_root_disk(self, server_type) -> int | None:
-        """Local-boot types have a fixed local disk capped by ``l_ssd.max_size``.
+    @staticmethod
+    def _l_ssd_max_bytes(server_type) -> int:
+        """Local SSD capacity of *server_type* in bytes, 0 if it has none.
 
-        For a local-bootable type the root disk is the local SSD, whose size is
-        bounded by the type's ``per_volume_constraint.l_ssd.max_size`` (bytes) —
-        returned here in GB so a ``disk-`` minimum larger than the type can hold
-        rejects it during resolution. SBS types have a user-sized boot volume
-        (resizable), so return None for them.
+        Reads ``per_volume_constraint.l_ssd.max_size`` off the native type. A
+        bare ``ProviderServerType`` with no ``_native`` (the orchestrator's and
+        the test default) and any SBS-only type report 0. Single source for the
+        two local-storage facts below, which must agree: the ``disk-`` gate at
+        resolution and the LOCAL/SBS boot create path.
         """
         native = getattr(server_type, "_native", None)
         pvc = getattr(native, "per_volume_constraint", None)
         l_ssd = getattr(pvc, "l_ssd", None) if pvc else None
-        max_size = getattr(l_ssd, "max_size", 0) or 0
+        return getattr(l_ssd, "max_size", 0) or 0
+
+    def fixed_root_disk(self, server_type) -> int | None:
+        """Local-boot types have a fixed local disk capped by ``l_ssd.max_size``.
+
+        For a local-bootable type the root disk is the local SSD, returned here
+        in GB so a ``disk-`` minimum larger than the type can hold rejects it
+        during resolution. SBS types have a user-sized boot volume (resizable),
+        so return None for them.
+        """
+        max_size = self._l_ssd_max_bytes(server_type)
         if not max_size:
             return None
         return int(max_size // (1024**3))
 
-    @staticmethod
-    def _is_local_bootable(server_type) -> bool:
+    @classmethod
+    def _is_local_bootable(cls, server_type) -> bool:
         """Whether *server_type* has local (l_ssd) storage for a local boot volume.
 
-        SBS-only types report ``per_volume_constraint.l_ssd.max_size == 0`` (or no
-        l_ssd constraint). A bare ``ProviderServerType`` with no ``_native`` (the
-        orchestrator's default and the test default) is treated as SBS, so the
-        SBS path stays the default and only an explicitly local-capable type (from
+        SBS-only types report zero local capacity, so the SBS path stays the
+        default and only an explicitly local-capable type (from
         ``get_server_type``) selects local boot.
         """
-        native = getattr(server_type, "_native", None)
-        pvc = getattr(native, "per_volume_constraint", None)
-        l_ssd = getattr(pvc, "l_ssd", None) if pvc else None
-        return bool(getattr(l_ssd, "max_size", 0) or 0)
+        return bool(cls._l_ssd_max_bytes(server_type))
 
     def _power_on_and_wait(self, server, zone, name):
         """Power on *server* and wait until running; remove it on failure.

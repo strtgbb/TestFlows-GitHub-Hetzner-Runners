@@ -1698,12 +1698,12 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
             raise
 
         finally:
-            with Action("Waiting for scale up service to terminate", ignore_fail=True):
-                scale_down_service.result(timeout=terminate_timeout)
-
             with Action(
                 "Waiting for scale down service to terminate", ignore_fail=True
             ):
+                scale_down_service.result(timeout=terminate_timeout)
+
+            with Action("Waiting for scale up service to terminate", ignore_fail=True):
                 scale_up_service.result(timeout=terminate_timeout)
 
             with Action(

@@ -61,22 +61,33 @@ def wait_ssh(server, timeout: float):
             time.sleep(5)
 
 
+def _connection_options(server, port_flag: str) -> str:
+    """Build the shared port and identity options for ssh/scp.
+
+    ``port_flag`` is ``-p`` for ssh and ``-P`` for scp; the identity flag is
+    ``-i`` for both. Returns a trailing-spaced string (empty when the server
+    carries neither), ready to splice into the command.
+    """
+    options = ""
+    if server is not None:
+        if getattr(server, "ssh_port", None):
+            options += f"{port_flag} {server.ssh_port} "
+        if getattr(server, "ssh_key_path", None):
+            options += f"-i {shlex.quote(server.ssh_key_path)} "
+    return options
+
+
 def ssh_command(server, options: str = ""):
     """Return ssh command."""
     ip = ip_address(server=server)
     user = server.ssh_user if isinstance(server, ProviderServer) else "root"
-    port_option = ""
-    if isinstance(server, ProviderServer) and getattr(server, "ssh_port", None):
-        port_option = f'-p {server.ssh_port} '
-    identity_option = ""
-    if isinstance(server, ProviderServer) and getattr(server, "ssh_key_path", None):
-        identity_option = f'-i {shlex.quote(server.ssh_key_path)} '
+    conn_options = _connection_options(server, "-p")
     # No user (direct --host without one): let ssh resolve it, e.g. from
     # ~/.ssh/config for a host alias, instead of forcing a wrong login.
     destination = f"{user}@{ip}" if user else f"{ip}"
     return (
         f'ssh -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
-        f"{port_option}{identity_option}{options}{' ' if options else ''}{destination}"
+        f"{conn_options}{options}{' ' if options else ''}{destination}"
     )
 
 
@@ -93,16 +104,10 @@ def ssh(server, cmd: str, *args, stacklevel=3, **kwargs):
 
 def scp(source: str, destination: str, *args, server=None, **kwargs):
     """Execute copy over SSH."""
-    port_option = ""
-    identity_option = ""
-    if server is not None:
-        if getattr(server, "ssh_port", None):
-            port_option = f"-P {server.ssh_port} "
-        if getattr(server, "ssh_key_path", None):
-            identity_option = f"-i {shlex.quote(server.ssh_key_path)} "
+    conn_options = _connection_options(server, "-P")
     scp_command = (
         'scp -q -o "StrictHostKeyChecking no" -o "UserKnownHostsFile=/dev/null" '
-        f"{port_option}{identity_option}{source} {destination}"
+        f"{conn_options}{source} {destination}"
     )
     return shell(f"{scp_command}", *args, **kwargs)
 

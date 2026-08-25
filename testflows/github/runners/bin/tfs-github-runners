@@ -1622,13 +1622,7 @@ def main(config, worker_pool: ThreadPoolExecutor, terminate_timeout=60):
             if not config.delete_random:
                 with Action(f"Getting server prices ({p.name})"):
                     try:
-                        if p.name == "aws":
-                            from testflows.github.runners.providers.aws.estimate import (
-                                check_prices as aws_check_prices,
-                            )
-                            prices = aws_check_prices(p._region, session=p._session)
-                        else:
-                            prices = p.get_prices()
+                        prices = p.get_prices()
                         config.server_prices = config.server_prices or {}
                         config.server_prices[p.name] = {
                             "prices": prices,

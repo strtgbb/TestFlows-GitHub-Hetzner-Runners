@@ -116,6 +116,30 @@ def format_runner_name_round_trips_to_type(self):
 
 
 @TestScenario
+def parse_runner_name_round_trips_all_fields(self):
+    """parse_runner_name recovers run_id, job_id, and type (inverse of format).
+
+    Regression: the logger parsed with rsplit("-", 2)[-2:], which put the job id
+    in run_id and the type in job_id.
+    """
+    from testflows.github.runners.utils import format_runner_name, parse_runner_name
+
+    for t in ("cx22", "c8g.2xlarge", "basic2.a16c.32g"):
+        name = format_runner_name(1787, 456, t)
+        assert parse_runner_name(name) == ("1787", "456", t), name
+
+
+@TestScenario
+def parse_runner_name_rejects_non_job_names(self):
+    """Names without a run/job id (standby, wrong prefix) return None."""
+    from testflows.github.runners.utils import parse_runner_name
+
+    assert parse_runner_name(f"{RUNNER_PREFIX}standby-1787577842392436") is None
+    assert parse_runner_name("other-runner-1-2-cx22") is None
+    assert parse_runner_name("") is None
+
+
+@TestScenario
 def get_runner_server_type_valid(self):
     assert get_runner_server_type(_runner_name("cx22")) == "cx22"
 

@@ -37,17 +37,24 @@ def format_runner_name(run_id, job_id, server_type: str) -> str:
     return f"{runner_name_prefix}{run_id}-{job_id}-{server_type}"
 
 
-def get_runner_server_type(runner_name: str) -> str | None:
-    """Return the server type embedded in a runner name, or None.
+def parse_runner_name(runner_name: str) -> tuple[str, str, str] | None:
+    """Parse a canonical runner name into ``(run_id, job_id, server_type)``.
 
-    Runner names follow the pattern:
-      github-runner-{run_id}-{job_id}-{server_type}
-
-    The server type may contain dots (e.g. 'c8g.2xlarge') so the split is
-    capped at 4 splits to capture everything after the fourth dash as the type.
+    Inverse of format_runner_name for names shaped
+    ``{prefix}{run_id}-{job_id}-{server_type}``. The server type may contain
+    dots (e.g. 'c8g.2xlarge') but never dashes, so everything after the second
+    dash past the prefix is the type. Returns None when the name is not in this
+    format (e.g. standby names, which have no run/job id).
     """
-    if runner_name and runner_name.startswith(runner_name_prefix):
-        parts = runner_name.split("-", 4)
-        if len(parts) == 5:
-            return parts[4]
-    return None
+    if not runner_name or not runner_name.startswith(runner_name_prefix):
+        return None
+    parts = runner_name[len(runner_name_prefix):].split("-", 2)
+    if len(parts) != 3:
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def get_runner_server_type(runner_name: str) -> str | None:
+    """Return the server type embedded in a runner name, or None."""
+    parsed = parse_runner_name(runner_name)
+    return parsed[2] if parsed is not None else None

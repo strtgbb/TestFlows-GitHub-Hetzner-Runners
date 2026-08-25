@@ -18,6 +18,8 @@ import logging
 import logging.handlers
 import tempfile
 
+from .utils import parse_runner_name
+
 logger = logging.getLogger("testflows.github.runners")
 
 encoded_message_prefix = "✉ "
@@ -97,15 +99,19 @@ class LoggerAdapter(logging.LoggerAdapter):
 
         if kwargs.get("extra"):
             if kwargs["extra"].get("server_name"):
-                server_name = kwargs["extra"]["server_name"]
-                try:
-                    run_id, job_id = server_name.rsplit("-", 2)[-2:]
-                    if kwargs["extra"]["run_id"] in ("-", ""):
-                        kwargs["extra"]["run_id"] = int(run_id)
-                    if kwargs["extra"]["job_id"] in ("-", ""):
-                        kwargs["extra"]["job_id"] = int(job_id)
-                except Exception:
-                    pass
+                parsed = parse_runner_name(kwargs["extra"]["server_name"])
+                if parsed is not None:
+                    try:
+                        run_id, job_id = int(parsed[0]), int(parsed[1])
+                    except (TypeError, ValueError):
+                        pass
+                    else:
+                        # Set both or neither; only real job runners carry
+                        # numeric ids (standby/static names don't parse to ints).
+                        if kwargs["extra"]["run_id"] in ("-", ""):
+                            kwargs["extra"]["run_id"] = run_id
+                        if kwargs["extra"]["job_id"] in ("-", ""):
+                            kwargs["extra"]["job_id"] = job_id
 
         return msg, kwargs
 

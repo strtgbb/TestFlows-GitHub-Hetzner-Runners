@@ -205,7 +205,7 @@ class Config:
     additional_ssh_keys: list[str] = None
     with_label: list[str] = None
     label_prefix: str = ""
-    meta_label: dict[str, set[str]] = None
+    meta_label: dict[str, list[str]] = None
     recycle: bool = True
     recycle_grace_period: int = 1200
     end_of_life: int = 50

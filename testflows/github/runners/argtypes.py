@@ -142,7 +142,9 @@ def server_type(v):
 def meta_label_type(v):
     """Meta labels type argument."""
     try:
-        return {l[0]: set(l[1].split(",") if l[1] else []) for l in v}
+        return {
+            l[0]: list(dict.fromkeys(l[1].split(",") if l[1] else [])) for l in v
+        }
     except Exception as e:
         raise ArgumentTypeError(str(e))
 

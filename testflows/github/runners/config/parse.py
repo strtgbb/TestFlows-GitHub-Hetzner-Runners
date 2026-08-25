@@ -95,7 +95,9 @@ def parse_config(filename: str):
                 assert isinstance(
                     v, str
                 ), f"config.meta_label.{meta}[{j}]: is not a string"
-            doc["meta_label"][meta] = set(doc["meta_label"][meta])
+            # Preserve declaration order (deduped): scale_up consumes it as the
+            # cross-provider fallback priority, so a set would randomize it.
+            doc["meta_label"][meta] = list(dict.fromkeys(doc["meta_label"][meta]))
 
         doc["meta_label"] = {
             meta.lower().strip(): [

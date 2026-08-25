@@ -259,6 +259,40 @@ def _write_minimal_with_provider(provider_name):
 
 
 @TestScenario
+def meta_label_preserves_declaration_order(self):
+    """Meta-label values parse to an ordered list, not a set.
+
+    scale_up consumes the order as the cross-provider fallback priority, so a
+    set (hash-randomized per process) would make routing nondeterministic.
+    """
+    import os
+    import tempfile
+
+    cfg = _MINIMAL_BASE + (
+        "  meta_label:\n"
+        "    build:\n"
+        "      - type-hetzner-cx41\n"
+        "      - type-scaleway-dev1.m\n"
+        "      - type-aws-m8g.xlarge\n"
+    )
+    with Given("a config whose meta_label lists types in a specific order"):
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
+        f.write(cfg)
+        f.close()
+    try:
+        with When("parse_config runs"):
+            parsed = parse_config(f.name)
+        with Then("the value is a list in declaration order"):
+            assert parsed.meta_label["build"] == [
+                "type-hetzner-cx41",
+                "type-scaleway-dev1.m",
+                "type-aws-m8g.xlarge",
+            ], parsed.meta_label["build"]
+    finally:
+        os.unlink(f.name)
+
+
+@TestScenario
 def config_rejects_removed_providers(self):
     for provider_name in ("azure", "gcp"):
         with Given(f"a config referencing the removed provider {provider_name!r}"):

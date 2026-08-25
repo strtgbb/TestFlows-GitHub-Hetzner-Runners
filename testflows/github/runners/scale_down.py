@@ -405,7 +405,7 @@ def scale_down(
                 sequence=interval,
                 managed_runner_names=managed_runner_names,
             )
-            cycle_providers = list(provider_selection.providers)
+            cycle_providers = list(provider_selection)
 
             with Action(
                 "Getting list of servers", level=logging.DEBUG, interval=interval

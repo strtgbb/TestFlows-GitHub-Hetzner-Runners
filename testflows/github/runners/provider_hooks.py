@@ -1,22 +1,9 @@
 """Provider-neutral orchestration hook dispatch."""
 
 import logging
-from dataclasses import dataclass
 
 from .actions import Action
 from .cloud_provider import CloudProvider
-
-
-@dataclass(frozen=True)
-class ProviderCycleSelection:
-    """Providers available after pre-cycle hooks have run."""
-
-    providers: tuple[CloudProvider, ...]
-    failed: tuple[CloudProvider, ...]
-
-    @property
-    def inventory_complete(self) -> bool:
-        return not self.failed
 
 
 def _run_hooks(
@@ -25,11 +12,13 @@ def _run_hooks(
     hook_name: str,
     sequence: int,
     managed_runner_names: set[str],
-) -> ProviderCycleSelection:
-    """Run provider hooks independently and isolate failures for this cycle."""
+) -> list[CloudProvider]:
+    """Run provider hooks independently, returning the providers that succeeded.
+
+    A provider whose hook raises is dropped for this cycle (failure isolation).
+    """
     frozen_runner_names = frozenset(managed_runner_names)
     healthy = []
-    failed = []
     for provider in providers:
         try:
             with Action(
@@ -39,10 +28,9 @@ def _run_hooks(
             ):
                 getattr(provider, hook_name)(frozen_runner_names)
         except Exception:
-            failed.append(provider)
-        else:
-            healthy.append(provider)
-    return ProviderCycleSelection(tuple(healthy), tuple(failed))
+            continue
+        healthy.append(provider)
+    return healthy
 
 
 def run_before_scale_up_hooks(
@@ -50,7 +38,7 @@ def run_before_scale_up_hooks(
     *,
     sequence: int,
     managed_runner_names: set[str],
-) -> ProviderCycleSelection:
+) -> list[CloudProvider]:
     return _run_hooks(
         providers,
         hook_name="before_scale_up",
@@ -64,7 +52,7 @@ def run_before_scale_down_hooks(
     *,
     sequence: int,
     managed_runner_names: set[str],
-) -> ProviderCycleSelection:
+) -> list[CloudProvider]:
     return _run_hooks(
         providers,
         hook_name="before_scale_down",

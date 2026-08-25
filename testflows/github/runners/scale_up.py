@@ -1767,7 +1767,7 @@ def scale_up(
                     sequence=interval,
                     managed_runner_names=registered_runner_names,
                 )
-                cycle_providers = list(provider_selection.providers)
+                cycle_providers = list(provider_selection)
 
                 with Action(
                     "Getting list of available volumes",

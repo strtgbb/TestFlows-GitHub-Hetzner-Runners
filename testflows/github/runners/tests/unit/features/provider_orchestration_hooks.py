@@ -22,16 +22,14 @@ def failing_provider_is_isolated_for_one_cycle(self):
     healthy = MagicMock()
     healthy.name = "healthy"
 
-    selection = run_before_scale_up_hooks(
+    healthy_providers = run_before_scale_up_hooks(
         [failing, healthy],
         sequence=7,
         managed_runner_names={"runner-a"},
     )
 
-    assert selection.providers == (healthy,)
-    assert selection.failed == (failing,)
-    assert selection.inventory_complete is False
-    for provider in selection.providers:
+    assert healthy_providers == [healthy], healthy_providers
+    for provider in healthy_providers:
         provider.list_runner_servers()
     failing.list_runner_servers.assert_not_called()
     healthy.list_runner_servers.assert_called_once()
@@ -54,8 +52,8 @@ def isolated_provider_is_retried_next_cycle(self):
         managed_runner_names=set(),
     )
 
-    assert first.providers == ()
-    assert second.providers == (provider,)
+    assert first == [], first
+    assert second == [provider], second
     assert provider.before_scale_down.call_count == 2
 
 

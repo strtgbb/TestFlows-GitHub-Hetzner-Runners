@@ -1,138 +1,211 @@
-# AGENTS.md — GitHub Hetzner Runners
+# AGENTS.md — TestFlows GitHub Runners
 
-Reference for AI agents working in this codebase. Covers architecture, conventions, and design decisions relevant to ongoing development.
+Reference for AI agents working in this codebase. Covers architecture,
+conventions, and the design decisions that aren't obvious from the code.
+
+Two more AGENTS.md files add local detail:
+`testflows/github/runners/AGENTS.md` (core) and
+`testflows/github/runners/config/AGENTS.md` (config).
 
 ---
 
 ## What This Project Does
 
-`github-hetzner-runners` is a self-hosted GitHub Actions autoscaler. It monitors a GitHub repository for queued workflow jobs, provisions cloud VMs to run them as ephemeral GitHub Actions runners, and cleans them up when done. The service runs continuously, typically as a systemd unit or as a cloud-deployed service on a small VM.
+`tfs-github-runners` is a self-hosted GitHub Actions autoscaler. It watches a
+GitHub repository for queued workflow jobs, provisions cloud VMs to run them as
+ephemeral runners, and cleans them up when they go idle. It runs continuously,
+usually as a systemd unit or on a small cloud VM.
+
+The project started as Hetzner-only and still carries that name in places (the
+repo URL, the legacy `testflows.github.hetzner.runners` distribution). The
+package is now multi-provider: Hetzner, Scaleway, AWS, and static dedicated
+hosts.
 
 ---
 
 ## Source Layout
 
-All source lives under `testflows/github/hetzner/runners/`. Key files:
+All source lives under `testflows/github/runners/`. Do not look for
+`testflows/github/hetzner/runners/` — that path is gone.
 
-| File | Role |
+| Path | Role |
 |---|---|
-| `bin/github-hetzner-runners` | CLI entry point and main runner loop |
-| `scale_up.py` | Job detection → VM provisioning → runner registration (~70KB, most complex) |
-| `scale_down.py` | Idle runner detection → VM cleanup (~37KB) |
-| `config/config.py` | Dataclass-based config: YAML parsing, env var expansion, validation |
-| `hclient.py` | Thin wrapper around the Hetzner `hcloud.Client` (21 lines) |
-| `cloud.py` | Deploys the runner service itself to a cloud VM |
-| `server.py` | SSH utilities, IP extraction, server age; `MockServer` for direct-host connections |
-| `actions.py` | Context manager for structured action logging |
-| `constants.py` | Label names and naming conventions |
-| `args.py` | CLI argument type validators |
+| `bin/tfs-github-runners` | CLI entry point, argument parser, and service main loop |
+| `scale_up.py` | Job detection → VM provisioning → runner registration (largest file) |
+| `scale_down.py` | Idle runner detection → power-off, recycle, or delete |
+| `api_watch.py` | Polls the GitHub API for queued jobs; publishes to the mailbox |
+| `cloud_provider.py` | `CloudProvider` abstract base plus the shared provider dataclasses |
+| `providers/` | One package per provider: `hetzner`, `scaleway`, `aws`, `dedicated_static` |
+| `config_schema.py` | Config dataclasses only — a leaf module with no package imports |
+| `config/` | YAML parsing, env expansion, validation, CLI merge, provider factory |
+| `constants.py` | Server and runner name prefixes, label names |
+| `recycling.py` | Shared mechanics for providers with a stopped-server recycle pool |
+| `provider_hooks.py` | Dispatches the orchestration hooks across configured providers |
+| `servers.py`, `volumes.py` | CLI subcommands for listing and deleting resources |
+| `estimate.py` | Cost estimation |
+| `metrics.py` | Prometheus metrics |
 | `logger.py` | Structured CSV logging with context-aware field injection |
-| `metrics.py` | Prometheus metrics (server creation, job counts, cost) |
-| `dashboard/` | Streamlit monitoring dashboard |
-| `scripts/deploy/` | Server setup/startup shell scripts |
+| `actions.py` | `Action` context manager for structured operation logging |
+| `cloud.py`, `service.py` | Deploy the runner service itself to a cloud VM or systemd |
+| `dashboard/` | Streamlit monitoring dashboard (`panels/`, `metrics/`) |
+| `scripts/` | Runner setup, startup, and recycle shell scripts; `scripts/deploy/` for the service |
+| `tests/unit/` | TestFlows unit suite — see `tests/unit/README.md` |
 
 ---
 
 ## Runtime Architecture
 
-Three threads run concurrently:
+The service submits three long-running tasks to a `ThreadPoolExecutor`:
 
 ```
-api_watch()    — polls GitHub API for queued jobs; publishes to mailbox queue
-scale_up()     — consumes mailbox; provisions VMs; registers runners
-scale_down()   — independently monitors runners; powers off and deletes idle VMs
+api_watch()    — polls GitHub for queued jobs; publishes to the mailbox queue
+scale_up()     — consumes the mailbox; provisions VMs; registers runners
+scale_down()   — independently powers off, recycles, and deletes servers
 ```
 
-The mailbox is a thread-safe queue. `scale_up` is the largest and most complex component. All VM operations use SSH — setup and startup scripts run on the remote server after creation.
+The mailbox is a thread-safe queue. `scale_up` also uses the worker pool for
+concurrent server creation. All VM setup happens over SSH after creation.
+
+`scale_up` is stateless by design: every pass rebuilds its picture from the
+provider APIs and GitHub. Do not add cooldown dicts, dedup caches, or other
+cross-pass memory to it — if a job is being handled twice, the cause is in
+label or config resolution.
 
 ---
 
 ## Label System
 
-Jobs declare their hardware requirements via GitHub runner labels. The runner parses these at job-dispatch time.
+Jobs declare what they need through GitHub runner labels, parsed at dispatch
+time in `scale_up.py`.
 
-| Label format | Meaning |
+| Label | Meaning |
 |---|---|
-| `type-{name}` | Request a specific server type (e.g. `type-cx23`) |
-| `in-{name}` | Request a specific location (e.g. `in-nbg1` for Hetzner, `in-us-east-1a` for AWS AZ) |
-| `image-{arch}-{kind}-{name}` | Request a specific image (e.g. `image-x86-system-ubuntu-22.04`) |
-| `setup-{name}` | Run `{name}.sh` from `--scripts` dir during server setup |
-| `startup-{name}` | Run `{name}.sh` from `--scripts` dir on each runner start |
+| `type-{name}` | Server type, e.g. `type-cx23`. Multiple allowed — see fallback below |
+| `in-{name}` | Location, mapped to each provider's native concept |
+| `image-{arch}-{kind}-{name}` | Image, e.g. `image-x86-system-ubuntu-22.04` |
+| `disk-{N}` | Minimum root disk size in GB, e.g. `disk-100` or `disk-100GB` |
+| `volume-{...}` | Attach a separate cache block volume (Hetzner only) |
+| `provider-{name}` | Pin the job to one configured provider, e.g. `provider-aws` |
+| `net-ipv4`, `net-ipv6` | Restrict public networking. Neither label means both |
+| `setup-{name}` | Run `{name}.sh` from `--scripts` during server setup |
+| `startup-{name}` | Run `{name}.sh` from `--scripts` on each runner start |
+| `recycle-{name}` | Run `{name}.sh` instead of `recycle.sh` when reactivating a server |
 
-Multiple `type-` labels are supported. `get_server_types()` in `scale_up.py` returns all of them as a list; the provisioning loop tries each in order — this is the fallback mechanism.
+`disk-` and `volume-` are different things. `disk-` sizes the server's own root
+disk and is a **minimum** — resizable providers (AWS, Scaleway SBS) provision it
+directly, fixed-disk providers (Hetzner, Scaleway local-boot) are checked
+against it. `volume-` attaches a separate cache volume.
 
-Server type names containing `-` are skipped by `get_server_types` (they are treated as composite label fragments, not type names). This is intentional.
+`get_server_types()` returns every `type-` label as a list, and the
+provisioning loop tries them in order. That's the fallback mechanism. A type
+name containing `-` is skipped — it's treated as a composite label fragment,
+not a type name. This is why Scaleway types are configured in dot-form
+(`dev1.s`), not Scaleway's native `DEV1-S`.
+
+`in-` maps to whatever the provider calls a location: a Hetzner DC (`nbg1`), an
+AWS availability zone (`us-east-1a`), a Scaleway zone (`fr-par-1`). AWS uses AZ
+granularity rather than region because EBS volumes are AZ-scoped.
 
 ### Meta-Labels
 
-A single label can expand to a full set of labels via config:
+One label can expand to a full set through config:
 
 ```yaml
 meta_label:
   test-arm: [self-hosted, type-cax21, image-arm-system-ubuntu-22.04]
-  test-x86: [self-hosted, type-cpx21, image-x86-system-ubuntu-22.04]
 ```
 
-A job using `runs-on: [test-arm]` is equivalent to `runs-on: [test-arm, self-hosted, type-cax21, image-arm:system:ubuntu-22.04]`. Meta-labels always include themselves in the expansion. The `expand_meta_label()` function in `scale_up.py` handles this.
+A meta-label always includes itself in the expansion. `expand_meta_label()` in
+`scale_up.py` handles this. Meta-labels are also the multi-provider mechanism
+for jobs — one can expand to `type-` labels from different providers, and the
+existing fallback loop tries each. No new label syntax, no workflow changes.
 
 ### Label Prefix
 
-A custom label prefix can be set so multiple runner instances can share a repository without conflicting. With prefix `team-a`, the runner only responds to labels starting with `team-a-` (e.g. `team-a-type-cx23`).
+Set a prefix so several controllers can share a repository. With prefix
+`team-a`, only labels starting with `team-a-` are recognized (`team-a-type-cx23`).
+
+---
+
+## Providers
+
+Every provider subclasses `CloudProvider` in `cloud_provider.py` and lives in
+its own package under `providers/`, each with the same file names: `config.py`
+(dataclass helpers), `args.py` (CLI arguments), `provider.py` (the
+implementation), `estimate.py` (pricing), `utils.py`.
+
+`config/factory.py` builds the provider list from config. Provider selection is
+implicit: when a job asks for `type-cx23`, each configured provider is asked
+whether it offers that type, first match wins. Provider type namespaces are
+vendor-specific in practice, so collisions are rare. A `provider-` label pins
+the choice when it matters.
+
+The field order of `provider_list` in `config_schema.py` is the precedence used
+when a job carries no `type-`/`in-` label: hetzner, scaleway, aws,
+dedicated_static. Scaleway sits ahead of AWS deliberately.
+
+`CloudProvider` already carries a large recycling surface (`claim_recycled_server`
+and friends) to support Scaleway's SBS mode. Resist adding more
+provider-specific methods to the base class.
 
 ---
 
 ## Configuration
 
-Three-tier priority (highest to lowest): CLI arguments → YAML file → environment variables.
+Precedence, highest first: CLI arguments → project config (`--project`, see
+`projects.py`) → environment variables (`$GITHUB_TOKEN`, `$GITHUB_REPOSITORY`,
+`$RUNNERS_CONFIG`) → config file → dataclass defaults. The default config file
+is `~/.tfs-runners/config.yaml`. YAML values support `${ENV_VAR}` expansion.
 
-Default config path: `~/.github-hetzner-runners/config.yaml` or `$GITHUB_HETZNER_RUNNERS_CONFIG`.
-
-Supports `${ENV_VAR}` expansion in YAML values.
-
----
-
-## Multi-Provider Design (In Progress)
-
-See `docs/multicloud-plan.md` for the full plan. Key decisions recorded here for agent context:
-
-**Provider selection is implicit, not label-encoded.** Jobs do not specify a provider in their labels. When the runner encounters `type-cx23`, it asks each configured provider whether it offers that type. Provider type namespaces are vendor-specific in practice (Hetzner uses `cx`/`cax`/`ccx` prefixes, AWS uses `t3`/`m5`/`c5`, etc.), so collisions are rare and acceptable.
-
-**`in-` labels map to provider-native location concepts.** For Hetzner this is a DC location (`nbg1`); for AWS this is an AZ (`us-east-1a`), not a region. AZ granularity is intentional — EBS volumes are AZ-scoped, so using AZs now keeps future volume support viable without revisiting the label system.
-
-**Meta-labels are the multi-provider mechanism for jobs.** A meta-label can expand to multiple `type-` labels from different providers, and the existing fallback loop handles trying each:
-
-```yaml
-meta_label:
-  standard-linux: [type-cx23, type-t3medium]
-```
-
-This requires no changes to job workflow files and no new label syntax.
-
-**Abstract interface goes in `cloud_provider.py`.** Hetzner implementation moves to `providers/hetzner.py`. AWS will go in `providers/aws.py`. Provider instances are constructed from config and injected into `scale_up` and `scale_down`.
-
-**Config structure changes.** The top-level `hetzner_token` is replaced by a `providers:` section:
+Credentials live under `providers:`:
 
 ```yaml
 providers:
   hetzner:
     token: ${HETZNER_TOKEN}
   aws:
-    access_key: ${AWS_ACCESS_KEY}
-    secret_key: ${AWS_SECRET_KEY}
-    region: us-east-1
+    access_key_id: ${AWS_ACCESS_KEY_ID}
+    secret_access_key: ${AWS_SECRET_ACCESS_KEY}
 ```
 
-Backwards compatibility with the existing flat `hetzner_token` config should be preserved during transition.
+There is no top-level token field. `Config.hetzner_token` is a read-only
+property derived from `providers.hetzner.token`, kept for the Hetzner-specific
+internal readers. Startup fails if no provider is configured.
+
+### Import Layering
+
+The config package and the providers layer used to import each other. Two rules
+now keep that cycle broken:
+
+- Nothing in `providers/` may import the `config` package or `args`.
+- The leaf modules — `config_schema.py`, `argtypes.py`, `cloud_provider.py` —
+  may not import them either.
+
+`tests/unit/features/import_layering.py` is a static guard that fails if
+anything reintroduces a forbidden edge. In-function imports are exempt.
+
+---
+
+## Testing
+
+The unit suite is TestFlows-based and lives in
+`testflows/github/runners/tests/unit/`. All cloud, SSH, and GitHub I/O is
+mocked, so it runs offline in a few seconds. See `tests/unit/README.md` for how
+to run it and how to add a test.
+
+Verify changes by adding scenarios to that suite, not with throwaway scripts.
+A new feature file needs a line in `regression.py` to run.
 
 ---
 
 ## Conventions
 
-- The codebase uses Python dataclasses for domain objects and config.
-- Threading: `scale_up` uses a `ThreadPoolExecutor` for concurrent server creation. Volume operations are protected by `threading.Lock()`.
-- All cloud operations are retried with exponential backoff (see `request.py`).
-- Metrics are recorded in `metrics.py` using Prometheus counters/histograms. New cloud operations should emit metrics.
-- The `Action` context manager (`actions.py`) should wrap any significant operation for structured logging. Use it in provider implementations.
-- Do not add error handling for conditions that cannot occur. Validate only at system boundaries.
-- Do not add speculative abstractions. Implement what the plan requires, no more.
-- Comments explain *why*, not *what*, and never reference repo history (commit hashes, PR numbers, "changed in X"). That context belongs in git; in a comment it just rots.
+- Dataclasses for domain objects and config.
+- Wrap significant operations in the `Action` context manager for structured logs.
+- Retry cloud calls with exponential backoff (`request.py`).
+- Emit metrics for new cloud operations (`metrics.py`).
+- Volume operations are guarded by `threading.Lock()`.
+- Don't handle errors that can't happen. Validate at system boundaries only.
+- Don't add speculative abstractions. Build what the task needs.
+- Comments explain *why*, not *what*, and never reference repo history — no
+  commit hashes, PR numbers, or "changed in X". That belongs in git.

@@ -101,30 +101,12 @@ def create_time_series_chart(
         ),
     ]
 
-    # Initialize legend visibility state - ensure all series start as visible
-    if f"{chart_id}_legend_visibility" not in st.session_state:
-        st.session_state[f"{chart_id}_legend_visibility"] = {}
+    # The pills selector owns which series are visible; an empty selection
+    # yields an empty frame via isin([]), so no special-case is needed.
+    visible_names = create_series_selector(names, chart_id)
 
-    # Initialize all names as visible if not already set
     if names:
-        for name in names:
-            if name not in st.session_state[f"{chart_id}_legend_visibility"]:
-                st.session_state[f"{chart_id}_legend_visibility"][name] = True
-
-    # Create series visibility controls
-    create_series_selector(names, chart_id)
-
-    # Filter data based on series visibility
-    visible_names = [
-        name
-        for name, visible in st.session_state[f"{chart_id}_legend_visibility"].items()
-        if visible
-    ]
-
-    if names and visible_names:
         filtered_df = window_df[window_df[group_by].isin(visible_names)].copy()
-    elif names and not visible_names:
-        filtered_df = window_df.iloc[:0].copy()  # Empty chart if no names visible
     else:
         filtered_df = window_df  # No series names, show all data
 
@@ -164,28 +146,40 @@ def create_time_series_chart(
 
 
 def create_series_selector(names, chart_id):
-    """Create series visibility selector pills."""
+    """Render the series-visibility pills and return the visible series names.
 
-    # Only create selector if we have more than one name to select
-    if len(names) < 1:
-        return
+    The pills widget's own session-state entry holds the visible set. Before
+    rendering, reconcile it with the current series: drop series that are gone
+    (so stale entries do not accumulate) and select series that appeared since
+    the last render (so a new series shows up visible instead of hidden). A
+    memo of the previously seen options tells a genuinely new series apart from
+    one the user has deliberately deselected, so toggles survive refreshes.
+    """
+    if not names:
+        return list(names)
 
-    # Create pills selector - this is our single source of truth
     pills_key = f"{chart_id}_legend_pills"
-    selected_names = st.pills(
-        "Currently selected",
-        options=[name[0].capitalize() + name[1:] for name in names],
-        default=[
-            name[0].capitalize() + name[1:] for name in names
-        ],  # All selected by default
-        key=pills_key,
-        selection_mode="multi",
-        width="content",
-    )
+    known_key = f"{chart_id}_legend_known"
+    labels = {name: name[0].capitalize() + name[1:] for name in names}
+    options = list(labels.values())
 
-    # Update session state to match pill selection
-    for name in names:
-        capitalized_name = name[0].capitalize() + name[1:]
-        st.session_state[f"{chart_id}_legend_visibility"][name] = (
-            capitalized_name in selected_names
+    if pills_key not in st.session_state:
+        st.session_state[pills_key] = list(options)
+    else:
+        known = st.session_state.get(known_key, [])
+        selected = [o for o in st.session_state[pills_key] if o in options]
+        new = [o for o in options if o not in known and o not in selected]
+        st.session_state[pills_key] = selected + new
+    st.session_state[known_key] = options
+
+    chosen = set(
+        st.pills(
+            "Currently selected",
+            options=options,
+            key=pills_key,
+            selection_mode="multi",
+            width="content",
         )
+        or []
+    )
+    return [name for name, label in labels.items() if label in chosen]

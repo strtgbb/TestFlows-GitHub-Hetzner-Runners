@@ -29,28 +29,13 @@ tracker.track("github_hetzner_runners_servers_total", states=states)
 tracker.track("github_hetzner_runners_zombie_servers_total_count")
 tracker.track("github_hetzner_runners_unused_runners_total_count")
 tracker.track("github_hetzner_runners_recycled_servers_total_count")
-# Register individual standby server status metrics
-for status in states:
-    tracker.track(
-        f"standby_servers_{status}",
-        compute_func=lambda s=status: standby_count_for_status(s),
-    )
-
-
-def standby_count_for_status(status):
-    """Helper function to get count of standby servers for a specific status."""
-    servers_summary = summary()
-    all_servers = servers_summary["details"]
-
-    count = 0
-    for server in all_servers:
-        if (
-            server.get("name", "").startswith(standby_server_name_prefix)
-            and server.get("status", "unknown") == status
-        ):
-            count += 1
-
-    return count
+# One multi-state metric tracks all standby-server statuses at once, computing
+# the per-status counts in a single pass instead of one metric per status.
+tracker.track(
+    "standby_servers",
+    states=states,
+    compute_func=lambda: standby_summary()["by_status"],
+)
 
 
 def summary():
@@ -96,36 +81,6 @@ def standby_summary():
         "total": len(standby_servers),
         "details": standby_servers,
         "by_status": dict(standby_by_status),
-    }
-
-
-def recycled_summary():
-    """Get summary of recycled servers.
-
-    Returns:
-        dict: Summary of recycled servers
-    """
-    # Get all servers and filter for recycled servers
-    servers_summary = summary()
-    all_servers = servers_summary["details"]
-
-    # Filter for recycled servers
-    recycled_servers = [
-        server
-        for server in all_servers
-        if server.get("name", "").startswith(recycle_server_name_prefix)
-    ]
-
-    # Calculate totals by status
-    recycled_by_status = defaultdict(int)
-    for server in recycled_servers:
-        status = server.get("status", "unknown")
-        recycled_by_status[status] += 1
-
-    return {
-        "total": len(recycled_servers),
-        "details": recycled_servers,
-        "by_status": dict(recycled_by_status),
     }
 
 
@@ -424,17 +379,6 @@ def standby_states_history(cutoff_minutes=15):
     Returns:
         dict: Dictionary with standby server states history data
     """
-    standby_history = {}
-
-    for status in states:
-        # Get history for this specific status
-        timestamps, values = history.data(
-            f"standby_servers_{status}",
-            cutoff_minutes=cutoff_minutes,
-        )
-        standby_history[status] = {
-            "timestamps": timestamps,
-            "values": values,
-        }
-
-    return standby_history
+    return history.data_for_states(
+        "standby_servers", states=states, cutoff_minutes=cutoff_minutes
+    )

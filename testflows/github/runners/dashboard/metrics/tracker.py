@@ -68,6 +68,22 @@ def update_computed_metric(metric: Dict[str, Any], timestamp) -> None:
     )
 
 
+def update_computed_states_metric(metric: Dict[str, Any], timestamp) -> None:
+    """Update a multi-state metric whose per-state values come from a compute_func.
+
+    The compute_func returns a {state: value} dict, so one registered metric
+    replaces one computed scalar per state.
+    """
+    history.update_for_states(
+        metric_name=metric["metric_name"],
+        states=metric["states"],
+        values=metric["compute_func"](),
+        labels=metric["labels"],
+        timestamp=timestamp,
+        cutoff_minutes=cutoff_minutes,
+    )
+
+
 def track(
     metric_name: str,
     labels: Dict[str, str] = None,
@@ -94,7 +110,10 @@ def track(
             return
 
     # Determine update function based on parameters
-    if compute_func is not None:
+    if compute_func is not None and states is not None:
+        update_func = update_computed_states_metric
+        metric_type = "computed_states"
+    elif compute_func is not None:
         update_func = update_computed_metric
         metric_type = "computed"
     elif states is not None:

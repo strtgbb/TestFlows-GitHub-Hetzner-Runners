@@ -30,19 +30,13 @@ tracker.track("github_hetzner_runners_runners_busy")
 tracker.track("github_hetzner_runners_runners_idle")
 tracker.track("github_hetzner_runners_runners_total", states=runner_states)
 
-# Register individual standby runner status metrics
-for status in runner_states:
-    tracker.track(
-        f"standby_runners_{status}",
-        compute_func=lambda s=status: standby_count_for_status(s),
-    )
-
-
-def standby_count_for_status(status):
-    """Helper function to get count of standby runners for a specific status."""
-    standby_runners_summary = standby_summary()
-    standby_runners_by_status = standby_runners_summary["by_status"]
-    return standby_runners_by_status.get(status, 0)
+# One multi-state metric tracks all standby-runner statuses at once, computing
+# the per-status counts in a single pass instead of one metric per status.
+tracker.track(
+    "standby_runners",
+    states=runner_states,
+    compute_func=lambda: standby_summary()["by_status"],
+)
 
 
 def summary():
@@ -229,17 +223,6 @@ def standby_states_history(cutoff_minutes=15):
     Returns:
         dict: Dictionary with standby runner states history data
     """
-    standby_history = {}
-
-    for status in runner_states:
-        # Get history for this specific status
-        timestamps, values = history.data(
-            f"standby_runners_{status}",
-            cutoff_minutes=cutoff_minutes,
-        )
-        standby_history[status] = {
-            "timestamps": timestamps,
-            "values": values,
-        }
-
-    return standby_history
+    return history.data_for_states(
+        "standby_runners", states=runner_states, cutoff_minutes=cutoff_minutes
+    )

@@ -134,6 +134,50 @@ class RunnerServer:
             self.server_volumes = []
 
 
+@dataclass
+class PendingServer:
+    """A server-creation attempt in flight during the current scale-up cycle.
+
+    Pairs the worker-pool future with the facts the cycle needs to count it
+    toward capacity and, once it resolves, register the server. Naming the
+    fields keeps the count helpers and the wait loop reading a record rather
+    than attributes bolted onto the Future, so a wrong field is a definition
+    error, not silently-wrong telemetry.
+
+    counts_toward_capacity is False for the synthetic raise_exception futures
+    that carry a rejection rather than a real server.
+    """
+
+    future: Future
+    server_name: str
+    server_type: object
+    server_location: object
+    server_volumes: list
+    server_labels: set[str]
+    provider_name: str = None
+    counts_toward_capacity: bool = True
+
+
+def runner_server_from_pending(pending: PendingServer) -> RunnerServer:
+    """Build the RunnerServer to register once a pending creation succeeds.
+
+    A freshly created server is always STATUS_STARTING; the runner has not
+    checked in yet. The server type and location may be provider objects (with
+    a .name) or already plain strings.
+    """
+    return RunnerServer(
+        name=pending.server_name,
+        server_type=getattr(pending.server_type, "name", None)
+        or str(pending.server_type or ""),
+        server_location=getattr(pending.server_location, "name", None)
+        or str(pending.server_location or ""),
+        server_volumes=pending.server_volumes,
+        server_status=CloudProvider.STATUS_STARTING,
+        labels=set(pending.server_labels),
+        provider_name=pending.provider_name,
+    )
+
+
 def uid():
     """Return unique id - just a timestamp with fixed width up to microseconds."""
     return f"{time.time():.6f}".replace(".", "")
@@ -1143,7 +1187,7 @@ def max_servers_in_workflow_run_reached(
     servers: list[BoundServer],
     max_servers_in_workflow_run: int,
     server_name: str = None,
-    futures: list[Future] = None,
+    futures: list[PendingServer] = None,
 ):
     """Return True if maximum number of servers in workflow run has been reached."""
     with Action(
@@ -1160,13 +1204,17 @@ def max_servers_in_workflow_run_reached(
             if server.name.startswith(run_server_name_prefix)
         ]
 
-        # Count servers being created for this workflow run
+        # Count servers being created for this workflow run. Rejection records
+        # (counts_toward_capacity=False) represent an attempt that was refused,
+        # not a server — counting them would inflate the run count and could
+        # block the cross-provider fallback a provider-cap rejection is about
+        # to try.
         if futures:
             servers_in_run_count = len(servers_in_run) + sum(
                 1
-                for future in futures
-                if hasattr(future, "server_name")
-                and future.server_name.startswith(run_server_name_prefix)
+                for pending in futures
+                if pending.counts_toward_capacity
+                and pending.server_name.startswith(run_server_name_prefix)
             )
         else:
             servers_in_run_count = len(servers_in_run)
@@ -1182,58 +1230,30 @@ def max_servers_in_workflow_run_reached(
     return False
 
 
-def set_future_attributes(
-    future, name, server_type, server_location, server_volumes, labels,
-    provider_name=None, counts_toward_capacity=True,
-):
-    """Set common attributes on a future object.
-
-    Args:
-        future: The future object to set attributes on
-        name: The server name
-        server_type: The server type
-        server_location: The server location
-        labels: The server labels
-        provider_name: Name of the provider that will create this server.
-        counts_toward_capacity: False for synthetic raise_exception futures
-            that represent a rejected attempt rather than a real server.
-    """
-    future.server_name = name
-    future.server_type = server_type
-    future.server_location = server_location
-    future.server_volumes = server_volumes
-    future.server_labels = labels
-    future.provider_name = provider_name
-    future.counts_toward_capacity = counts_toward_capacity
-
-
 def get_total_server_count(servers, futures=None):
     """Get the total count of servers including those being created.
 
     Args:
         servers: List of existing servers
-        futures: List of futures for servers being created (optional)
+        futures: List of PendingServer records for servers being created (optional)
 
     Returns:
         int: Total count of servers
     """
     count = len(servers)
     if futures:
-        count += sum(
-            1 for f in futures
-            if getattr(f, "counts_toward_capacity", True)
-        )
+        count += sum(1 for p in futures if p.counts_toward_capacity)
     return count
 
 
 def get_provider_server_count(servers, futures, provider_name: str) -> int:
-    """Count servers and pending futures belonging to a specific provider."""
+    """Count servers and pending creations belonging to a specific provider."""
     count = sum(1 for s in servers if s.provider_name == provider_name)
     if futures:
         count += sum(
-            1 for f in futures
-            if getattr(f, "provider_name", None) == provider_name
-            and getattr(f, "counts_toward_capacity", True)
+            1
+            for p in futures
+            if p.provider_name == provider_name and p.counts_toward_capacity
         )
     return count
 
@@ -1244,7 +1264,7 @@ def get_server_count_with_labels(servers, label_set, futures=None):
     Args:
         servers: List of existing servers
         label_set: Set of labels to check for
-        futures: List of futures for servers being created (optional)
+        futures: List of PendingServer records for servers being created (optional)
 
     Returns:
         int: Count of servers with the specified labels
@@ -1254,10 +1274,8 @@ def get_server_count_with_labels(servers, label_set, futures=None):
     if futures:
         count += sum(
             1
-            for future in futures
-            if getattr(future, "counts_toward_capacity", True)
-            and hasattr(future, "server_labels")
-            and label_set.issubset(future.server_labels)
+            for p in futures
+            if p.counts_toward_capacity and label_set.issubset(p.server_labels)
         )
 
     return count
@@ -1336,7 +1354,7 @@ def scale_up(
         name: str,
         labels: list[str],
         setup_worker_pool: ThreadPoolExecutor,
-        futures: list[Future],
+        futures: list[PendingServer],
         servers: list[RunnerServer],
         volumes: list[BoundVolume],
         provider: CloudProvider = None,
@@ -1523,16 +1541,17 @@ def scale_up(
                     except Exception:
                         resolved_provider.release_recycle_claim(claim)
                         raise
-                    set_future_attributes(
-                        future,
-                        name,
-                        validated_type,
-                        server_location,
-                        server_volumes,
-                        labels,
-                        provider_name=resolved_provider.name,
+                    futures.append(
+                        PendingServer(
+                            future=future,
+                            server_name=name,
+                            server_type=validated_type,
+                            server_location=server_location,
+                            server_volumes=server_volumes,
+                            server_labels=labels,
+                            provider_name=resolved_provider.name,
+                        )
                     )
-                    futures.append(future)
                     for existing in list(servers):
                         if (
                             existing.provider_name == resolved_provider.name
@@ -1586,7 +1605,7 @@ def scale_up(
                         p.name for p in cycle_providers if p.max_runners is not None
                     }
                     _gs = [s for s in servers if getattr(s, "provider_name", None) not in _capped]
-                    _gf = [f for f in (futures or []) if getattr(f, "provider_name", None) not in _capped]
+                    _gf = [p for p in (futures or []) if p.provider_name not in _capped]
                     total_servers_count = get_total_server_count(_gs, _gf)
                     if total_servers_count >= max_servers:
                         with Action(
@@ -1600,17 +1619,18 @@ def scale_up(
                                     f"maximum number of servers reached {total_servers_count}/{max_servers}"
                                 ),
                             )
-                            set_future_attributes(
-                                future,
-                                name,
-                                validated_type,
-                                server_location,
-                                server_volumes,
-                                labels,
-                                provider_name=resolved_provider.name,
-                                counts_toward_capacity=False,
+                            futures.append(
+                                PendingServer(
+                                    future=future,
+                                    server_name=name,
+                                    server_type=validated_type,
+                                    server_location=server_location,
+                                    server_volumes=server_volumes,
+                                    server_labels=labels,
+                                    provider_name=resolved_provider.name,
+                                    counts_toward_capacity=False,
+                                )
                             )
-                            futures.append(future)
                             raise StopIteration("maximum number of servers reached")
 
                 provider_max = resolved_provider.max_runners
@@ -1630,17 +1650,18 @@ def scale_up(
                                     f"maximum number of servers for provider {resolved_provider.name} reached {provider_count}/{provider_max}"
                                 ),
                             )
-                            set_future_attributes(
-                                future,
-                                name,
-                                validated_type,
-                                server_location,
-                                server_volumes,
-                                labels,
-                                provider_name=resolved_provider.name,
-                                counts_toward_capacity=False,
+                            futures.append(
+                                PendingServer(
+                                    future=future,
+                                    server_name=name,
+                                    server_type=validated_type,
+                                    server_location=server_location,
+                                    server_volumes=server_volumes,
+                                    server_labels=labels,
+                                    provider_name=resolved_provider.name,
+                                    counts_toward_capacity=False,
+                                )
                             )
-                            futures.append(future)
                             continue
 
                 # Check label-specific limits
@@ -1661,17 +1682,18 @@ def scale_up(
                                     f"Maximum number of servers for labels {label_set} reached {count}/{max_count}"
                                 ),
                             )
-                            set_future_attributes(
-                                future,
-                                name,
-                                validated_type,
-                                server_location,
-                                server_volumes,
-                                labels,
-                                provider_name=resolved_provider.name,
-                                counts_toward_capacity=False,
+                            futures.append(
+                                PendingServer(
+                                    future=future,
+                                    server_name=name,
+                                    server_type=validated_type,
+                                    server_location=server_location,
+                                    server_volumes=server_volumes,
+                                    server_labels=labels,
+                                    provider_name=resolved_provider.name,
+                                    counts_toward_capacity=False,
+                                )
                             )
-                            futures.append(future)
                             return
 
                 future = worker_pool.submit(
@@ -1698,11 +1720,17 @@ def scale_up(
                     attempt=create_server_attempt,
                     root_disk_size=min_disk,
                 )
-                set_future_attributes(
-                    future, name, validated_type, server_location, server_volumes, labels,
-                    provider_name=resolved_provider.name,
+                futures.append(
+                    PendingServer(
+                        future=future,
+                        server_name=name,
+                        server_type=validated_type,
+                        server_location=server_location,
+                        server_volumes=server_volumes,
+                        server_labels=labels,
+                        provider_name=resolved_provider.name,
+                    )
                 )
-                futures.append(future)
 
     with Action("Logging in to GitHub"):
         github = Github(auth=Auth.Token(github_token), per_page=100)
@@ -1728,7 +1756,7 @@ def scale_up(
                 # Update service heartbeat
                 metrics.update_heartbeat()
 
-                futures: list[Future] = []
+                futures: list[PendingServer] = []
                 workflow_runs = []
                 runs_jobs = []
                 servers = []
@@ -2031,11 +2059,9 @@ def scale_up(
 
                         configured_hosts: list[ProviderServer] = _p.list_servers()
                         pending_host_names = {
-                            f.server_name
-                            for f in futures
-                            if getattr(f, "provider_name", None) == _p.name
-                            and hasattr(f, "server_name")
-                            and getattr(f, "counts_toward_capacity", True)
+                            p.server_name
+                            for p in futures
+                            if p.provider_name == _p.name and p.counts_toward_capacity
                         }
                         active_runner_names = registered_runner_names
 
@@ -2126,26 +2152,16 @@ def scale_up(
                     except Exception:
                         pass
 
-                for future in futures:
+                for pending in futures:
                     with Action(
-                        f"Waiting to finish creating server {future.server_name}",
+                        f"Waiting to finish creating server {pending.server_name}",
                         ignore_fail=True,
-                        server_name=future.server_name,
+                        server_name=pending.server_name,
                         interval=interval,
                     ):
                         try:
-                            future.result()
-                            servers.append(
-                                RunnerServer(
-                                    name=future.server_name,
-                                    server_type=getattr(future.server_type, "name", None) or str(future.server_type or ""),
-                                    server_location=getattr(future.server_location, "name", None) or str(future.server_location or ""),
-                                    server_volumes=future.server_volumes,
-                                    server_status=CloudProvider.STATUS_STARTING,
-                                    labels=set(future.server_labels),
-                                    provider_name=getattr(future, "provider_name", None),
-                                )
-                            )
+                            pending.future.result()
+                            servers.append(runner_server_from_pending(pending))
 
                         except CanceledServerCreation:
                             pass
@@ -2156,11 +2172,11 @@ def scale_up(
                             error_type = "error"
                             error_details = {
                                 "error": str(exc),
-                                "server_type": future.server_type.name,
+                                "server_type": pending.server_type.name,
                                 "location": (
-                                    _loc_name(future.server_location) or ""
+                                    _loc_name(pending.server_location) or ""
                                 ),
-                                "labels": ",".join(future.server_labels),
+                                "labels": ",".join(pending.server_labels),
                                 "timestamp": time.time(),
                             }
 
@@ -2176,25 +2192,25 @@ def scale_up(
 
                             metrics.record_scale_up_failure(
                                 error_type=error_type,
-                                server_name=future.server_name,
-                                server_type=future.server_type.name,
+                                server_name=pending.server_name,
+                                server_type=pending.server_type.name,
                                 server_location=(
-                                    _loc_name(future.server_location) or ""
+                                    _loc_name(pending.server_location) or ""
                                 ),
                                 error_details=error_details,
                             )
 
                             if send_failure:
                                 with Action(
-                                    f"Adding scale up failure {exc} message to mailbox for {future.server_name}",
-                                    server_name=future.server_name,
+                                    f"Adding scale up failure {exc} message to mailbox for {pending.server_name}",
+                                    server_name=pending.server_name,
                                     interval=interval,
                                 ):
                                     mailbox.put(
                                         ScaleUpFailureMessage(
                                             time=time.time(),
-                                            labels=future.server_labels,
-                                            server_name=future.server_name,
+                                            labels=pending.server_labels,
+                                            server_name=pending.server_name,
                                             exception=exc,
                                         )
                                     )

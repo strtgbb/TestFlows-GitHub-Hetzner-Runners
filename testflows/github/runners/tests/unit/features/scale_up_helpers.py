@@ -12,6 +12,7 @@ from testflows.github.runners.cloud_provider import (
 from testflows.github.runners.recycling import recyclable_server_matches
 import testflows.github.runners.scale_up as scale_up_mod
 from testflows.github.runners.scale_up import (
+    PendingServer,
     RunnerServer,
     check_max_servers_for_label_reached,
     count_available,
@@ -24,8 +25,9 @@ from testflows.github.runners.scale_up import (
     get_total_server_count,
     get_volume_name,
     job_matches_labels,
+    max_servers_in_workflow_run_reached,
+    runner_server_from_pending,
     server_setup,
-    set_future_attributes,
 )
 from github.GithubException import UnknownObjectException
 from testflows.github.runners.constants import (
@@ -63,6 +65,28 @@ def _runner_server(
         server_status=server_status,
         runner_status=status,
         server=ps,
+    )
+
+
+def _pending(
+    server_name="github-runner-run1-0",
+    server_type="cx22",
+    server_location="nbg1",
+    server_volumes=None,
+    server_labels=None,
+    provider_name=None,
+    counts_toward_capacity=True,
+):
+    """Build a minimal PendingServer record for tests."""
+    return PendingServer(
+        future=MagicMock(),
+        server_name=server_name,
+        server_type=server_type,
+        server_location=server_location,
+        server_volumes=server_volumes or [],
+        server_labels=set(server_labels or []),
+        provider_name=provider_name,
+        counts_toward_capacity=counts_toward_capacity,
     )
 
 
@@ -371,7 +395,14 @@ def get_total_server_count_no_futures(self):
 
 @TestScenario
 def get_total_server_count_with_futures(self):
-    assert get_total_server_count(["a"], ["f1", "f2"]) == 3
+    assert get_total_server_count(["a"], [_pending(), _pending()]) == 3
+
+
+@TestScenario
+def get_total_server_count_ignores_rejections(self):
+    """Synthetic rejection records (counts_toward_capacity=False) don't count."""
+    futures = [_pending(), _pending(counts_toward_capacity=False)]
+    assert get_total_server_count(["a"], futures) == 2
 
 
 @TestScenario
@@ -403,22 +434,47 @@ def get_server_count_with_labels_non_matching(self):
 
 @TestScenario
 def get_server_count_with_labels_future_matching_counted(self):
-    f = MagicMock()
-    f.server_labels = {"linux", "self-hosted"}
+    f = _pending(server_labels={"linux", "self-hosted"})
     assert get_server_count_with_labels([], {"linux"}, futures=[f]) == 1
 
 
 @TestScenario
-def get_server_count_with_labels_future_without_attr_skipped(self):
-    f = MagicMock(spec=[])
+def get_server_count_with_labels_rejection_skipped(self):
+    """A rejection record is not a real server, so it is not counted."""
+    f = _pending(server_labels={"linux"}, counts_toward_capacity=False)
     assert get_server_count_with_labels([], {"linux"}, futures=[f]) == 0
+
+
+@TestScenario
+def max_servers_in_workflow_run_counts_real_creations(self):
+    futures = [
+        _pending(server_name=f"{RUNNER_PREFIX}run1-0"),
+        _pending(server_name=f"{RUNNER_PREFIX}run1-1"),
+    ]
+    assert (
+        max_servers_in_workflow_run_reached("run1", [], 2, futures=futures) is True
+    )
+
+
+@TestScenario
+def max_servers_in_workflow_run_ignores_rejections(self):
+    """A rejection record must not count toward the per-run server limit, or a
+    provider-cap refusal would block the cross-provider fallback for the run."""
+    futures = [
+        _pending(server_name=f"{RUNNER_PREFIX}run1-0"),
+        _pending(
+            server_name=f"{RUNNER_PREFIX}run1-1", counts_toward_capacity=False
+        ),
+    ]
+    assert (
+        max_servers_in_workflow_run_reached("run1", [], 2, futures=futures) is False
+    )
 
 
 @TestScenario
 def get_server_count_with_labels_combined(self):
     s = _runner_server(labels=["linux"])
-    f = MagicMock()
-    f.server_labels = {"linux"}
+    f = _pending(server_labels={"linux"})
     assert get_server_count_with_labels([s], {"linux"}, futures=[f]) == 2
 
 
@@ -464,8 +520,7 @@ def check_max_job_labels_not_subset_skipped(self):
 
 @TestScenario
 def check_max_futures_counted(self):
-    f = MagicMock()
-    f.server_labels = {"linux"}
+    f = _pending(server_labels={"linux"})
     reached, info = check_max_servers_for_label_reached(
         [(frozenset(["linux"]), 1)], {"linux"}, [], futures=[f]
     )
@@ -473,21 +528,55 @@ def check_max_futures_counted(self):
 
 
 # ---------------------------------------------------------------------------
-# set_future_attributes
+# PendingServer / runner_server_from_pending
 # ---------------------------------------------------------------------------
 
 
 @TestScenario
-def set_future_attributes_sets_all(self):
-    future = MagicMock()
-    loc = MagicMock()
+def pending_server_defaults_count_toward_capacity(self):
+    """A real creation counts toward capacity; only rejections opt out."""
+    pending = _pending()
+    assert pending.counts_toward_capacity is True
+
+
+@TestScenario
+def runner_server_from_pending_reports_starting_status(self):
+    """Regression (T1-1): a freshly created server registers as STATUS_STARTING,
+    never a stray field like its volume list."""
+    pending = _pending(server_volumes=["vol"], server_labels={"linux"})
+    rs = runner_server_from_pending(pending)
+    assert rs.server_status == CloudProvider.STATUS_STARTING
+    assert rs.server_volumes == ["vol"]
+
+
+@TestScenario
+def runner_server_from_pending_maps_fields(self):
     st = MagicMock()
-    set_future_attributes(future, "myserver", st, loc, [], {"linux"})
-    assert future.server_name == "myserver"
-    assert future.server_type is st
-    assert future.server_location is loc
-    assert future.server_volumes == []
-    assert future.server_labels == {"linux"}
+    st.name = "cx22"
+    loc = MagicMock()
+    loc.name = "nbg1"
+    pending = _pending(
+        server_name="myserver",
+        server_type=st,
+        server_location=loc,
+        server_labels={"linux"},
+        provider_name="hetzner",
+    )
+    rs = runner_server_from_pending(pending)
+    assert rs.name == "myserver"
+    assert rs.server_type == "cx22"
+    assert rs.server_location == "nbg1"
+    assert rs.labels == {"linux"}
+    assert rs.provider_name == "hetzner"
+
+
+@TestScenario
+def runner_server_from_pending_stringifies_plain_type(self):
+    """server_type/location may already be plain strings."""
+    pending = _pending(server_type="cx22", server_location="nbg1")
+    rs = runner_server_from_pending(pending)
+    assert rs.server_type == "cx22"
+    assert rs.server_location == "nbg1"
 
 
 # ---------------------------------------------------------------------------

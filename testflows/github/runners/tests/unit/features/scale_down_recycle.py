@@ -39,7 +39,7 @@ def _server(name, server_type="cx22", location="nbg1"):
 
 def _provider(stored_ssh_key_name, name="hetzner"):
     """A mock provider whose stored SSH-key name is controllable per test."""
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.name = name
     provider.has_matching_ssh_key.side_effect = (
         lambda server, key_names: stored_ssh_key_name in key_names
@@ -191,7 +191,7 @@ def online_runner_without_server_is_left_alone(self):
 @TestScenario
 def delete_recyclable_resolves_provider_per_server(self):
     """delete_recyclable_server deletes the picked server via its own provider."""
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.is_recycle_claimed.return_value = False
     provider.reserve_recycled_server.return_value = True
     s1 = _server(f"{recycle_server_name_prefix}one")
@@ -211,7 +211,7 @@ def delete_recyclable_resolves_provider_per_server(self):
 @TestScenario
 def delete_recyclable_skips_already_reserved_servers(self):
     """A candidate another worker already reserved is skipped for the next one."""
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.is_recycle_claimed.return_value = False
     # First reservation attempt loses the race; the next one wins.
     provider.reserve_recycled_server.side_effect = [False, True]
@@ -232,7 +232,7 @@ def delete_recyclable_skips_already_reserved_servers(self):
 @TestScenario
 def delete_recyclable_returns_none_when_all_reserved(self):
     """If every candidate is reserved, nothing is deleted."""
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.is_recycle_claimed.return_value = False
     provider.reserve_recycled_server.return_value = False
     s1 = _server(f"{recycle_server_name_prefix}one")
@@ -251,7 +251,7 @@ def delete_recyclable_returns_none_when_all_reserved(self):
 @TestScenario
 def delete_recyclable_excludes_claimed_servers(self):
     """A server currently being activated (claimed) is never chosen for deletion."""
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.reserve_recycled_server.return_value = True
     claimed = _server(f"{recycle_server_name_prefix}claimed")
     free = _server(f"{recycle_server_name_prefix}free")
@@ -277,7 +277,7 @@ def delete_recyclable_respects_per_provider_grace_override(self):
     """
     import time as _time
 
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.name = "scaleway"
     provider.recycle_grace_period = 300
     provider.is_recycle_claimed.return_value = False
@@ -297,11 +297,61 @@ def delete_recyclable_respects_per_provider_grace_override(self):
 
 
 @TestScenario
+def delete_recyclable_provider_grace_applies_when_global_disabled(self):
+    """A provider's grace still holds when the global grace is disabled (0).
+
+    Regression: the grace check used to sit behind `if global > 0`, so a
+    provider override was bypassed whenever the global grace was 0 or None and
+    the candidate could be deleted too early.
+    """
+    import time as _time
+
+    provider = MagicMock(recycle_grace_period=None)
+    provider.name = "scaleway"
+    provider.recycle_grace_period = 300
+    provider.is_recycle_claimed.return_value = False
+    provider.reserve_recycled_server.return_value = True
+    provider.get_server_tag.return_value = str(int(_time.time()) - 100)
+    s = _server(f"{recycle_server_name_prefix}one")
+    with When("eviction runs with the global grace disabled (0)"):
+        deleted = delete_recyclable_server(
+            server_name="github-runner-9-0-cx22",
+            recyclable_servers=[(s, provider)],
+            provider_prices={},
+            recycle_grace_period=0,
+        )
+    with Then("the provider's own grace still retains it"):
+        assert deleted is None, deleted
+        provider.delete_server.assert_not_called()
+
+
+@TestScenario
+def delete_recyclable_deletes_when_no_grace_anywhere(self):
+    """Global disabled and no provider override means immediate eligibility."""
+    provider = MagicMock(recycle_grace_period=None)
+    provider.name = "scaleway"
+    provider.recycle_grace_period = None
+    provider.is_recycle_claimed.return_value = False
+    provider.reserve_recycled_server.return_value = True
+    s = _server(f"{recycle_server_name_prefix}one")
+    deleted = delete_recyclable_server(
+        server_name="github-runner-9-0-cx22",
+        recyclable_servers=[(s, provider)],
+        provider_prices={},
+        recycle_grace_period=0,
+    )
+    with Then("the candidate is deleted without stamping a recycle timestamp"):
+        assert deleted == s.name, deleted
+        provider.delete_server.assert_called_once_with(s)
+        provider.set_server_tags.assert_not_called()
+
+
+@TestScenario
 def delete_recyclable_uses_global_grace_without_override(self):
     """With no provider override, the passed global grace applies."""
     import time as _time
 
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.name = "scaleway"
     provider.recycle_grace_period = None
     provider.is_recycle_claimed.return_value = False
@@ -326,6 +376,7 @@ def delete_recyclable_falls_back_to_random_across_currencies(self):
     p_usd = MagicMock()
     p_usd.name = "aws"
     for p in (p_eur, p_usd):
+        p.recycle_grace_period = None
         p.is_recycle_claimed.return_value = False
         p.reserve_recycled_server.return_value = True
     s1 = _server(f"{recycle_server_name_prefix}one")
@@ -350,7 +401,7 @@ def delete_recyclable_falls_back_to_random_across_currencies(self):
 @TestScenario
 def delete_recyclable_uses_price_order_within_one_currency(self):
     """A single currency keeps the cheapest ordering rather than shuffling."""
-    provider = MagicMock()
+    provider = MagicMock(recycle_grace_period=None)
     provider.name = "hetzner"
     provider.is_recycle_claimed.return_value = False
     provider.reserve_recycled_server.return_value = True

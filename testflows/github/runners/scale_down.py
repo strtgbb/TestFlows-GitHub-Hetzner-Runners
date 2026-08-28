@@ -144,51 +144,57 @@ def delete_recyclable_server(
     if not recyclable_servers:
         return
 
-    if recycle_grace_period and recycle_grace_period > 0:
-        now_ts = int(time.time())
-        eligible_servers: list[tuple[ProviderServer, CloudProvider]] = []
-        for server, provider in recyclable_servers:
-            recycle_ts_raw = provider.get_server_tag(server, recycle_timestamp_label)
-            try:
-                recycle_ts = int(recycle_ts_raw)
-            except (TypeError, ValueError):
-                recycle_ts = 0
+    now_ts = int(time.time())
+    eligible_servers: list[tuple[ProviderServer, CloudProvider]] = []
+    for server, provider in recyclable_servers:
+        # Respect a per-provider grace override; fall back to the passed
+        # (global) grace. The pool can span providers, so this is decided per
+        # candidate rather than once at the call site — a provider can set its
+        # own grace even when the global one is disabled. A non-positive
+        # effective grace means no grace applies, so the candidate is eligible
+        # at once (no timestamp is stamped and no wait is imposed).
+        effective_grace = (
+            provider.recycle_grace_period
+            if provider.recycle_grace_period is not None
+            else recycle_grace_period
+        )
+        if not effective_grace or effective_grace <= 0:
+            eligible_servers.append((server, provider))
+            continue
 
-            if recycle_ts <= 0:
-                with Action(
-                    f"Setting recycle timestamp for {server.name} before deletion",
-                    stacklevel=stack_level + 1,
-                    level=logging.DEBUG,
-                    server_name=server_name,
-                ):
-                    provider.set_server_tags(
-                        server, {recycle_timestamp_label: str(now_ts)}
-                    )
+        recycle_ts_raw = provider.get_server_tag(server, recycle_timestamp_label)
+        try:
+            recycle_ts = int(recycle_ts_raw)
+        except (TypeError, ValueError):
+            recycle_ts = 0
+
+        if recycle_ts <= 0:
+            with Action(
+                f"Setting recycle timestamp for {server.name} before deletion",
+                stacklevel=stack_level + 1,
+                level=logging.DEBUG,
+                server_name=server_name,
+            ):
+                provider.set_server_tags(
+                    server, {recycle_timestamp_label: str(now_ts)}
+                )
+            continue
+
+        time_since_recycle = now_ts - recycle_ts
+        if time_since_recycle < effective_grace:
+            with Action(
+                f"Skipping recyclable server {server.name} deletion "
+                f"as it has only been recycled for {time_since_recycle}s "
+                f"(need {effective_grace}s)",
+                stacklevel=stack_level + 1,
+                level=logging.DEBUG,
+                server_name=server_name,
+            ):
                 continue
 
-            # Respect a per-provider grace override; fall back to the passed
-            # (global) grace. The pool can span providers, so this is decided
-            # per candidate rather than once at the call site.
-            effective_grace = (
-                provider.recycle_grace_period
-                if provider.recycle_grace_period is not None
-                else recycle_grace_period
-            )
-            time_since_recycle = now_ts - recycle_ts
-            if time_since_recycle < effective_grace:
-                with Action(
-                    f"Skipping recyclable server {server.name} deletion "
-                    f"as it has only been recycled for {time_since_recycle}s "
-                    f"(need {effective_grace}s)",
-                    stacklevel=stack_level + 1,
-                    level=logging.DEBUG,
-                    server_name=server_name,
-                ):
-                    continue
+        eligible_servers.append((server, provider))
 
-            eligible_servers.append((server, provider))
-
-        recyclable_servers = eligible_servers
+    recyclable_servers = eligible_servers
 
     if not recyclable_servers:
         return

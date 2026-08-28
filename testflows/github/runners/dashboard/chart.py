@@ -148,29 +148,40 @@ def create_time_series_chart(
 def create_series_selector(names, chart_id):
     """Render the series-visibility pills and return the visible series names.
 
-    The pills widget's own session-state entry holds the visible set. Before
-    rendering, reconcile it with the current series: drop series that are gone
-    (so stale entries do not accumulate) and select series that appeared since
-    the last render (so a new series shows up visible instead of hidden). A
-    memo of the previously seen options tells a genuinely new series apart from
-    one the user has deliberately deselected, so toggles survive refreshes.
+    Visibility is stored as the set of *hidden* (user-deselected) series, so
+    visible == current options minus hidden. Storing the hidden set rather than
+    the visible set means a series not explicitly hidden — a brand-new one, or
+    one returning after briefly dropping out of the data — shows up visible,
+    while a deselected series stays hidden across refreshes and disappearances.
+    Only hidden series are remembered, so the state stays bounded by how many
+    the user hid, not by how many series have ever been shown.
     """
     if not names:
         return list(names)
 
     pills_key = f"{chart_id}_legend_pills"
-    known_key = f"{chart_id}_legend_known"
+    hidden_key = f"{chart_id}_legend_hidden"
+    shown_key = f"{chart_id}_legend_shown"
     labels = {name: name[0].capitalize() + name[1:] for name in names}
     options = list(labels.values())
 
-    if pills_key not in st.session_state:
-        st.session_state[pills_key] = list(options)
-    else:
-        known = st.session_state.get(known_key, [])
-        selected = [o for o in st.session_state[pills_key] if o in options]
-        new = [o for o in options if o not in known and o not in selected]
-        st.session_state[pills_key] = selected + new
-    st.session_state[known_key] = options
+    hidden = set(st.session_state.get(hidden_key, ()))
+    # Fold the user's latest interaction into the hidden set. The pills value
+    # was chosen from the options shown last render, so re-evaluate hidden only
+    # among those: the ones the user did not select become hidden, the rest do
+    # not. Options not shown last render — a brand-new series, or one the user
+    # never saw — are left untouched, so a new series is not mistaken for a
+    # deselected one and a still-hidden absent series keeps its status.
+    shown = set(st.session_state.get(shown_key, ()))
+    if pills_key in st.session_state:
+        selected = {o for o in st.session_state[pills_key] if o in shown}
+        hidden = (hidden - shown) | (shown - selected)
+    st.session_state[hidden_key] = list(hidden)
+    st.session_state[shown_key] = list(options)
+
+    # Seed the widget with the visible options before it renders. This equals
+    # the user's own selection for on-screen options, so it never clobbers it.
+    st.session_state[pills_key] = [o for o in options if o not in hidden]
 
     chosen = set(
         st.pills(

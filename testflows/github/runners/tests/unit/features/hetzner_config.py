@@ -39,6 +39,18 @@ def hetzner_parse_section_validates(self):
         cfg = hz_config.parse_config_section({"token": "t"})
         assert cfg.token == "t", cfg
 
+    with And("max_runners 0 allowed; negatives rejected"):
+        assert (
+            hz_config.parse_config_section({"token": "t", "max_runners": 0}).max_runners
+            == 0
+        )
+        rejected = False
+        try:
+            hz_config.parse_config_section({"token": "t", "max_runners": -1})
+        except AssertionError:
+            rejected = True
+        assert rejected, "expected rejection of negative max_runners"
+
     with And("an invalid end_of_life is rejected with an assertion"):
         try:
             hz_config.parse_config_section({"token": "t", "end_of_life": 999})

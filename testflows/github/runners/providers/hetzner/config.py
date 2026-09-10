@@ -56,8 +56,8 @@ def parse_config_section(section: dict) -> "hetzner_provider":
         _hetzner_kwargs["recycle_with_rebuild"] = v
     if h.get("max_runners") is not None:
         v = h["max_runners"]
-        assert isinstance(v, int) and v > 0, (
-            "config.providers.hetzner.max_runners: must be an integer > 0"
+        assert isinstance(v, int) and v >= 0, (
+            "config.providers.hetzner.max_runners: must be an integer >= 0"
         )
         _hetzner_kwargs["max_runners"] = v
     if h.get("end_of_life") is not None:

@@ -34,8 +34,8 @@ def parse_config_section(section: dict) -> "aws_provider":
     )
     if a.get("max_runners") is not None:
         v = a["max_runners"]
-        assert isinstance(v, int) and v > 0, (
-            "config.providers.aws.max_runners: must be an integer > 0"
+        assert isinstance(v, int) and v >= 0, (
+            "config.providers.aws.max_runners: must be an integer >= 0"
         )
         _aws_kwargs["max_runners"] = v
     if a.get("end_of_life") is not None:

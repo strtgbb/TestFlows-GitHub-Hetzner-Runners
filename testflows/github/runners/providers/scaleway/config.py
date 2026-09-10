@@ -30,8 +30,8 @@ def parse_config_section(section: dict) -> "scaleway_provider":
     )
     if s.get("max_runners") is not None:
         v = s["max_runners"]
-        assert isinstance(v, int) and v > 0, (
-            "config.providers.scaleway.max_runners: must be an integer > 0"
+        assert isinstance(v, int) and v >= 0, (
+            "config.providers.scaleway.max_runners: must be an integer >= 0"
         )
         _scaleway_kwargs["max_runners"] = v
     if s.get("end_of_life") is not None:

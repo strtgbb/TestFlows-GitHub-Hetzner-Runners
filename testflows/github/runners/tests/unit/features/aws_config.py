@@ -387,6 +387,21 @@ def aws_parse_section_validates(self):
             }
         )
         assert cfg.access_key_id == "AK", cfg
+    with And("max_runners 0 allowed; negatives rejected"):
+        base = {
+            "access_key_id": "AK",
+            "secret_access_key": "SK",
+            "security_group": "sg-1",
+        }
+        assert (
+            aws_config.parse_config_section({**base, "max_runners": 0}).max_runners == 0
+        )
+        rejected = False
+        try:
+            aws_config.parse_config_section({**base, "max_runners": -1})
+        except AssertionError:
+            rejected = True
+        assert rejected, "expected rejection of negative max_runners"
     with And("an invalid field is rejected"):
         try:
             aws_config.parse_config_section({"access_key_id": 123})

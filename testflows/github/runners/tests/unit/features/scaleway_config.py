@@ -207,6 +207,22 @@ def scaleway_parse_section_validates(self):
             }
         )
         assert cfg.access_key == "k" and cfg.defaults.server_type == "dev1.m", cfg
+    with And("max_runners 0 allowed; negatives rejected"):
+        base = {
+            "access_key": "k",
+            "secret_key": "s",
+            "project_id": "p",
+            "defaults": {"server_type": "dev1.m", "location": "fr-par-1"},
+        }
+        assert (
+            scw_config.parse_config_section({**base, "max_runners": 0}).max_runners == 0
+        )
+        rejected = False
+        try:
+            scw_config.parse_config_section({**base, "max_runners": -1})
+        except AssertionError:
+            rejected = True
+        assert rejected, "expected rejection of negative max_runners"
     with And("a dash-form server_type is rejected"):
         try:
             scw_config.parse_config_section(

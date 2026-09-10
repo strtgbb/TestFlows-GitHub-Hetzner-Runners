@@ -120,6 +120,33 @@ def invalid_cloud_provider_is_rejected(self):
         os.unlink(key)
 
 
+def _flat_cloud_type_config(key):
+    """_MINIMAL_AWS with `type` flat under cloud instead of under deploy."""
+    base = _MINIMAL_AWS.format(ssh_key=key)
+    return base[: base.index("    deploy:")] + "    type: t3.large\n"
+
+
+@TestScenario
+def misplaced_deploy_key_under_cloud_is_rejected(self):
+    """Flat cloud.type is rejected; error shows the key moved under deploy."""
+    key = _key_file()
+    path = _write(_flat_cloud_type_config(key))
+    try:
+        with Then("parse_config raises and shows the corrected cloud block"):
+            try:
+                parse_config(path)
+                assert False, "expected AssertionError for flat cloud.type"
+            except AssertionError as exc:
+                msg = str(exc)
+                assert "cloud.type" in msg, msg
+                assert "deploy:" in msg, msg
+                assert "server_type: t3.large" in msg, msg
+                assert "type: t3.large" not in msg.split("deploy:")[0], msg
+    finally:
+        os.unlink(path)
+        os.unlink(key)
+
+
 # ---------------------------------------------------------------------------
 # Provider selection + host mode
 # ---------------------------------------------------------------------------

@@ -21,6 +21,15 @@ from .config import (
 
 logger = logging.getLogger("testflows.github.runners")
 
+# Flat cloud keys -> cloud.deploy field (`type` -> `server_type`).
+_CLOUD_DEPLOY_FIELDS = {
+    "type": "server_type",
+    "server_type": "server_type",
+    "image": "image",
+    "location": "location",
+    "setup_script": "setup_script",
+}
+
 
 def parse_config(filename: str):
     """Load and parse yaml configuration file into config object.
@@ -356,6 +365,28 @@ def parse_config(filename: str):
                 ), f"config.logger_format.default[{i}].width is not an integer > 0"
 
     if doc.get("cloud") is not None:
+        # Flat deploy keys are silently ignored; reject and show the fix.
+        _cloud = doc["cloud"]
+        _misplaced = [
+            (key, field)
+            for key, field in _CLOUD_DEPLOY_FIELDS.items()
+            if _cloud.get(key) is not None
+        ]
+        if _misplaced:
+            _moved = dict(_misplaced)
+            _fixed = {k: v for k, v in _cloud.items() if k not in _moved}
+            _fixed["deploy"] = dict(_cloud.get("deploy") or {})
+            for _key, _field in _misplaced:
+                _fixed["deploy"][_field] = _cloud[_key]
+            _example = yaml.dump(
+                {"cloud": _fixed}, default_flow_style=False, sort_keys=False
+            ).rstrip()
+            _names = ", ".join(f"cloud.{key}" for key, _ in _misplaced)
+            assert False, (
+                f"config.cloud: {_names} must be under cloud.deploy. "
+                f"Corrected block:\n\n{_example}"
+            )
+
         if doc["cloud"].get("server_name") is not None:
             assert isinstance(
                 doc["cloud"]["server_name"], str

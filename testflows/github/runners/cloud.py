@@ -42,6 +42,11 @@ deploy_tfs_runners = f"{deploy_venv}/bin/tfs-github-runners"
 # images that don't already have it) and its home holds the deploy folders above.
 service_user = "ubuntu"
 
+# Labels for the controller host itself. It is found by name for
+# redeploy/delete, so it needs no discovery label — and must not have one, or the
+# controller running on it would reap it as a zombie runner (self-delete).
+controller_host_labels = {"tfs-github-runners-role": "controller"}
+
 
 def pip_install_args(version: str, redeploy: bool) -> tuple[str, str]:
     """Return ``(pip flags, requirement)`` for ``deploy --version``.
@@ -246,9 +251,11 @@ def deploy(args, config: Config, redeploy=False):
                 location=location,
                 image=image,
                 ssh_keys=ssh_keys,
-                labels=provider.build_server_labels(
-                    [], ssh_keys[0].name if ssh_keys else None
-                ),
+                # The controller host is NOT a runner. It must not carry the
+                # runner discovery label: the controller runs the same config, so
+                # its own runtime scan would find this host under its own id, see
+                # no registered runner, and reap it as a zombie (self-delete).
+                labels=controller_host_labels,
             )
 
         with Action("Wait for SSH connection to be ready"):

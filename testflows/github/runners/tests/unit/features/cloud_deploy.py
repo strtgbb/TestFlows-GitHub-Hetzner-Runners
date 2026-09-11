@@ -101,6 +101,18 @@ def pip_install_args_covers_version_forms(self):
 
 
 @TestScenario
+def controller_host_labels_exclude_runner_discovery(self):
+    """The controller host must not carry the runner discovery label, or the
+    controller running on it finds itself via list_runner_servers, sees no
+    registered runner, and reaps its own host as a zombie."""
+    from testflows.github.runners.constants import github_runner_label
+
+    assert github_runner_label not in cloud.controller_host_labels, (
+        cloud.controller_host_labels
+    )
+
+
+@TestScenario
 def pip_install_args_rejects_spaced_spec(self):
     """Spaced specs are rejected; use a bare git URL."""
     try:

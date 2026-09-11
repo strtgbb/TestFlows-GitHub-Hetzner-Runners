@@ -82,6 +82,24 @@ def sudo_if_needed_only_for_non_root(self):
     assert cloud.sudo_if_needed(ubuntu, "chown x") == "sudo chown x"
 
 
+@TestScenario
+def pip_install_args_covers_version_forms(self):
+    """latest, pin, git ref, and wheel map to pip args; ref redeploy force-reinstalls."""
+    f = cloud.pip_install_args
+    with Then("latest installs the bare package, upgrading only on redeploy"):
+        assert f("latest", False) == ("", "testflows.github.runners")
+        assert f("latest", True) == ("--upgrade", "testflows.github.runners")
+    with And("a bare version pins from PyPI, unchanged on redeploy"):
+        assert f("2.1.0", False) == ("", "testflows.github.runners==2.1.0")
+        assert f("2.1.0", True) == ("", "testflows.github.runners==2.1.0")
+    with And("a git ref passes through and force-reinstalls on redeploy"):
+        spec = "testflows.github.runners @ git+https://x/y@multicloud"
+        assert f(spec, False) == ("", spec)
+        assert f(spec, True) == ("--force-reinstall --no-deps", spec)
+    with And("a local wheel path is treated as a spec"):
+        assert f("/tmp/pkg.whl", False) == ("", "/tmp/pkg.whl")
+
+
 # ---------------------------------------------------------------------------
 # Config parsing
 # ---------------------------------------------------------------------------

@@ -606,10 +606,12 @@ def argparser():
 
     deploy_cloud_parser.add_argument(
         "--version",
-        metavar="number|latest",
+        metavar="version|latest|spec",
         type=str,
         help=(
-            f"service package version to deploy, either version number or 'latest',\n"
+            f"what to install: a release version, 'latest', or a full pip\n"
+            f"requirement for unreleased code — a git ref, local path, or wheel\n"
+            f"(e.g. 'testflows.github.runners @ git+<url>@<branch>').\n"
             f"default: this version {__version__}"
         ),
     )
@@ -666,10 +668,12 @@ def argparser():
 
     redeploy_cloud_parser.add_argument(
         "--version",
-        metavar="number|latest",
+        metavar="version|latest|spec",
         type=str,
         help=(
-            f"service package version to deploy, either version number or 'latest',\n"
+            f"what to install: a release version, 'latest', or a full pip\n"
+            f"requirement for unreleased code — a git ref, local path, or wheel\n"
+            f"(e.g. 'testflows.github.runners @ git+<url>@<branch>').\n"
             f"default: this version {__version__}"
         ),
     )

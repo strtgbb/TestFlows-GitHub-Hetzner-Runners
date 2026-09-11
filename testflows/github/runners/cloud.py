@@ -43,6 +43,37 @@ deploy_tfs_runners = f"{deploy_venv}/bin/tfs-github-runners"
 service_user = "ubuntu"
 
 
+def pip_install_args(version: str, redeploy: bool) -> tuple[str, str]:
+    """Return ``(pip flags, requirement)`` for ``deploy --version``.
+
+    Accepts ``latest``, a PyPI pin, or a full pip spec. Ref redeploys use
+    ``--force-reinstall --no-deps`` — the ref moves but the dev version does not.
+    """
+    v = version.strip()
+    is_latest = v.lower() == "latest"
+    is_spec = (
+        "git+" in v
+        or "://" in v
+        or " @ " in v
+        or v.endswith((".whl", ".tar.gz"))
+        or v.startswith(("/", ".", "~"))
+    )
+
+    if is_latest:
+        requirement = "testflows.github.runners"
+    elif is_spec:
+        requirement = v
+    else:
+        requirement = f"testflows.github.runners=={v}"
+
+    flags = ""
+    if redeploy and is_latest:
+        flags = "--upgrade"
+    elif redeploy and is_spec:
+        flags = "--force-reinstall --no-deps"
+    return flags, requirement
+
+
 def deploy_provider(config: Config) -> CloudProvider:
     """Resolve the CloudProvider that hosts the controller for cloud deploy.
 
@@ -227,15 +258,9 @@ def deploy(args, config: Config, redeploy=False):
             )
 
     with Action(f"Installing tfs-github-runners {version}"):
-        pip_spec = (
-            "testflows.github.runners"
-            if version.strip().lower() == "latest"
-            else f"testflows.github.runners=={version}"
-        )
-        pip_cmd = f"{deploy_pip} install"
-        if version.strip().lower() == "latest" and redeploy:
-            pip_cmd = f"{deploy_pip} install --upgrade"
-        ssh(server, as_service_user(server, f"{pip_cmd} {pip_spec}"), stacklevel=4)
+        flags, requirement = pip_install_args(version, redeploy)
+        pip_cmd = f"{deploy_pip} install {flags}".rstrip()
+        ssh(server, as_service_user(server, f"{pip_cmd} {requirement}"), stacklevel=4)
 
     with Action("Copying any custom scripts"):
         ip = ip_address(server)

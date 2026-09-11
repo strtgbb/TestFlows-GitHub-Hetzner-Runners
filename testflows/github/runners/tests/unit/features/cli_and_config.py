@@ -663,6 +663,18 @@ def schema_places_hetzner_defaults_under_provider(self):
         }, set(hetzner_defaults.keys())
 
 
+@TestScenario
+def version_is_valid_and_not_a_placeholder(self):
+    """__version__ is valid PEP 440, not the unsubstituted placeholder."""
+    from packaging.version import Version
+    from testflows.github.runners import __version__
+
+    with Then("the version carries no leftover build placeholder"):
+        assert "__VERSION__" not in __version__, __version__
+    with And("it parses as a valid PEP 440 version"):
+        assert Version(__version__), __version__
+
+
 # ---------------------------------------------------------------------------
 # Feature entry point
 # ---------------------------------------------------------------------------

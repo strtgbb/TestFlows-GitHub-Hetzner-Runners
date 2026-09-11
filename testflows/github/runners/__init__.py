@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 __author__ = "Vitaliy Zakaznikov, Stuart Gibb"
+# Unsubstituted CI placeholder -> dev version (matches setup.py). Fallback line
+# has no placeholder token, so release substitution skips it.
 __version__ = "2.01.__VERSION__"
+if not __version__.replace(".", "").isdigit():
+    __version__ = "0.0.0.dev0"
 __name__ = "testflows.github.runners"
 __license__ = f"""
 Copyright 2023-2025 Katteli Inc.

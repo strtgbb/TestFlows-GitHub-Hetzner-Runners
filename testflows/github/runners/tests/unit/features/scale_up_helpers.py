@@ -769,7 +769,7 @@ def recyclable_min_disk_reuses_only_known_safe(self):
 def server_setup_reports_success_to_provider(self):
     provider = MagicMock()
     server = MagicMock()
-    with patch.object(scale_up_mod, "_run_server_setup"):
+    with patch.object(scale_up_mod, "run_server_setup"):
         server_setup(
             provider=provider,
             server=server,
@@ -790,7 +790,7 @@ def server_setup_reports_original_failure_to_provider(self):
     provider = MagicMock()
     server = MagicMock()
     boom = RuntimeError("setup blew up")
-    with patch.object(scale_up_mod, "_run_server_setup", side_effect=boom):
+    with patch.object(scale_up_mod, "run_server_setup", side_effect=boom):
         raised = None
         try:
             server_setup(
@@ -819,7 +819,7 @@ def post_setup_hook_failure_does_not_mask_setup_outcome(self):
     server = MagicMock()
     setup_error = RuntimeError("setup failed")
 
-    with patch.object(scale_up_mod, "_run_server_setup", side_effect=setup_error):
+    with patch.object(scale_up_mod, "run_server_setup", side_effect=setup_error):
         try:
             server_setup(
                 provider=provider,
@@ -835,7 +835,7 @@ def post_setup_hook_failure_does_not_mask_setup_outcome(self):
         else:
             assert False, "setup failure must propagate"
 
-    with patch.object(scale_up_mod, "_run_server_setup"):
+    with patch.object(scale_up_mod, "run_server_setup"):
         server_setup(
             provider=provider,
             server=server,
@@ -856,7 +856,7 @@ def post_setup_base_exception_does_not_mask_setup_failure(self):
     server = MagicMock()
     setup_error = RuntimeError("setup failed")
 
-    with patch.object(scale_up_mod, "_run_server_setup", side_effect=setup_error):
+    with patch.object(scale_up_mod, "run_server_setup", side_effect=setup_error):
         try:
             server_setup(
                 provider=provider,

@@ -144,7 +144,7 @@ default_format = {
         "job_id": (5, 11),
         "server_name": (6, 36),
         "threadName": (7, 20),
-        "funcName": (8, 14),
+        "funcName": (8, 20),
         "message": (9, 90),
     },
 }

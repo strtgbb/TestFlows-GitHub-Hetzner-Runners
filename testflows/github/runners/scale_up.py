@@ -201,7 +201,7 @@ def server_setup(
     """Run server setup, then let the provider handle claim cleanup."""
     setup_error = None
     try:
-        _run_server_setup(
+        run_server_setup(
             provider=provider,
             server=server,
             setup_script=setup_script,
@@ -229,7 +229,7 @@ def server_setup(
                 raise
 
 
-def _run_server_setup(
+def run_server_setup(
     provider: CloudProvider,
     server: ProviderServer,
     setup_script: str,

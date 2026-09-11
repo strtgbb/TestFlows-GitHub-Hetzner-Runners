@@ -376,6 +376,31 @@ def create_server_passes_args(self):
 
 
 @TestScenario
+def create_server_dedups_ssh_keys(self):
+    """Duplicate ssh_keys are de-duplicated by id, order preserved."""
+    with Given("a provider and two SSHKey refs to the same key plus a distinct one"):
+        hclient, provider = hetzner_provider()
+        bound = _make_bound_server()
+        resp = MagicMock()
+        resp.server = bound
+        hclient.servers.create.return_value = resp
+        k1, k2, k3 = MagicMock(), MagicMock(), MagicMock()
+        k1.id, k2.id, k3.id = 42, 42, 99  # k1 and k2 are the same key
+    with When("I call create_server with a duplicated key"):
+        provider.create_server(
+            name="s",
+            server_type=MagicMock(),
+            location=MagicMock(),
+            image=MagicMock(),
+            ssh_keys=[k1, k2, k3],
+            labels={},
+        )
+    with Then("servers.create receives each key once, order preserved"):
+        _, kwargs = hclient.servers.create.call_args
+        assert [k.id for k in kwargs["ssh_keys"]] == [42, 99], kwargs["ssh_keys"]
+
+
+@TestScenario
 def create_server_returns_provider_server(self):
     with Given("a Hetzner provider"):
         hclient, provider = hetzner_provider()
@@ -428,6 +453,30 @@ def ssh_key_returns_existing_when_present(self):
     with Then("hclient.ssh_keys.create is not called"):
         hclient.ssh_keys.create.assert_not_called()
         assert result is existing_key
+
+
+@TestScenario
+def ssh_key_strips_trailing_newline_from_file(self):
+    """Trailing newline from a .pub file is stripped before create."""
+    import os
+    import tempfile
+
+    with Given("a Hetzner provider and a key file that ends in a newline"):
+        hclient, provider = hetzner_provider()
+        key_str = _fake_key_str()
+        hclient.ssh_keys.get_by_fingerprint.return_value = None
+        hclient.ssh_keys.create.return_value = MagicMock()
+        f = tempfile.NamedTemporaryFile("w", suffix=".pub", delete=False)
+        f.write(key_str + "\n")
+        f.close()
+    try:
+        with When("I call get_or_create_ssh_key with is_file=True"):
+            provider.get_or_create_ssh_key(public_key=f.name, is_file=True)
+        with Then("the key sent to Hetzner is stripped of the trailing newline"):
+            _, kwargs = hclient.ssh_keys.create.call_args
+            assert kwargs["public_key"] == key_str, repr(kwargs["public_key"])
+    finally:
+        os.unlink(f.name)
 
 
 @TestScenario

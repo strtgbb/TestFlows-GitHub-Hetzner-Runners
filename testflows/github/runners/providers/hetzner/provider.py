@@ -176,6 +176,14 @@ class HetznerCloudProvider(CloudProvider):
         the type's disk meets any requested minimum before reaching here.
         """
         del root_disk_size
+        # De-dupe by key id; Hetzner rejects duplicate ssh_keys.
+        _seen = set()
+        _unique_keys = []
+        for _key in ssh_keys:
+            if _key.id not in _seen:
+                _seen.add(_key.id)
+                _unique_keys.append(_key)
+        ssh_keys = _unique_keys
         response = self._client.servers.create(
             name=name,
             # Unwrap ProviderServerType; accept raw ServerType for callers that
@@ -428,6 +436,8 @@ class HetznerCloudProvider(CloudProvider):
                 public_key_str = fh.read()
         else:
             public_key_str = public_key
+
+        public_key_str = public_key_str.strip()
 
         key_name = hashlib.md5(public_key_str.encode("utf-8")).hexdigest()
         key_fp = fingerprint(public_key_str)

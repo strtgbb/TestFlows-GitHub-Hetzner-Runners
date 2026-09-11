@@ -39,10 +39,8 @@ echo "Create scripts folder"
 mkdir -p /home/ubuntu/.tfs-runners/scripts
 mkdir -p /home/ubuntu/.tfs-runners/configs
 
+# Before venv: root-owned tree blocks ubuntu writes and later scp.
+chown -R ubuntu:ubuntu /home/ubuntu/.tfs-runners
+
 echo "Create Python virtualenv for the service (Ubuntu 24.04 blocks system pip)"
 sudo -u ubuntu python3 -m venv /home/ubuntu/.tfs-runners/venv
-
-# Ensure the deploy tree is owned by the service user so the controller can scp
-# scripts/config in as that user afterwards (on images where the login user is
-# 'ubuntu', e.g. AWS, it cannot write into a root-created directory otherwise).
-chown -R ubuntu:ubuntu /home/ubuntu/.tfs-runners

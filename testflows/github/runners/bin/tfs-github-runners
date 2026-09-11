@@ -610,8 +610,8 @@ def argparser():
         type=str,
         help=(
             f"what to install: a release version, 'latest', or a full pip\n"
-            f"requirement for unreleased code — a git ref, local path, or wheel\n"
-            f"(e.g. 'testflows.github.runners @ git+<url>@<branch>').\n"
+            f"requirement for unreleased code — a git ref, local path, or wheel.\n"
+            f"Use the bare git URL (no spaces): git+<url>@<branch>.\n"
             f"default: this version {__version__}"
         ),
     )
@@ -672,8 +672,8 @@ def argparser():
         type=str,
         help=(
             f"what to install: a release version, 'latest', or a full pip\n"
-            f"requirement for unreleased code — a git ref, local path, or wheel\n"
-            f"(e.g. 'testflows.github.runners @ git+<url>@<branch>').\n"
+            f"requirement for unreleased code — a git ref, local path, or wheel.\n"
+            f"Use the bare git URL (no spaces): git+<url>@<branch>.\n"
             f"default: this version {__version__}"
         ),
     )

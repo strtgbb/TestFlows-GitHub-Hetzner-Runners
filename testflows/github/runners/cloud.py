@@ -59,6 +59,13 @@ def pip_install_args(version: str, redeploy: bool) -> tuple[str, str]:
         or v.startswith(("/", ".", "~"))
     )
 
+    if is_spec and " " in v:
+        # Spaces word-split over ssh/su; use a bare git URL.
+        raise ValueError(
+            f"deploy version spec must be a single token with no spaces: {v!r}. "
+            f"Use the bare git URL, e.g. git+https://github.com/owner/repo@branch"
+        )
+
     if is_latest:
         requirement = "testflows.github.runners"
     elif is_spec:

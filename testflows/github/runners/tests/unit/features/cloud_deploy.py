@@ -92,12 +92,24 @@ def pip_install_args_covers_version_forms(self):
     with And("a bare version pins from PyPI, unchanged on redeploy"):
         assert f("2.1.0", False) == ("", "testflows.github.runners==2.1.0")
         assert f("2.1.0", True) == ("", "testflows.github.runners==2.1.0")
-    with And("a git ref passes through and force-reinstalls on redeploy"):
-        spec = "testflows.github.runners @ git+https://x/y@multicloud"
+    with And("a bare git URL passes through and force-reinstalls on redeploy"):
+        spec = "git+https://github.com/x/y@multicloud"
         assert f(spec, False) == ("", spec)
         assert f(spec, True) == ("--force-reinstall --no-deps", spec)
     with And("a local wheel path is treated as a spec"):
         assert f("/tmp/pkg.whl", False) == ("", "/tmp/pkg.whl")
+
+
+@TestScenario
+def pip_install_args_rejects_spaced_spec(self):
+    """Spaced specs are rejected; use a bare git URL."""
+    try:
+        cloud.pip_install_args(
+            "testflows.github.runners @ git+https://x/y@br", False
+        )
+        assert False, "expected ValueError for a spaced spec"
+    except ValueError as exc:
+        assert "single token" in str(exc), exc
 
 
 # ---------------------------------------------------------------------------

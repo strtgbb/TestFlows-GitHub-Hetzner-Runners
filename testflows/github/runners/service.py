@@ -157,7 +157,11 @@ def log(args, config=None):
     logger_columns = config.logger_format["columns"]
     format = ""
     if not args.raw:
-        format = f" | tfs-github-runners --embedded-mode"
+        # Venv-local path; bare name is not on PATH under systemd/su.
+        tfs_runners = os.path.join(
+            os.path.dirname(sys.executable), "tfs-github-runners"
+        )
+        format = f" | {tfs_runners} --embedded-mode"
         if config.debug:
             format += " --debug"
         if config.config_file:

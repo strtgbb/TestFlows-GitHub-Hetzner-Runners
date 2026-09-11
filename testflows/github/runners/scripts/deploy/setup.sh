@@ -6,6 +6,7 @@ apt-get update
 apt-get -y install python3-pip
 apt-get -y install python3-venv
 apt-get -y install openssh-client
+apt-get -y install git  # git+ pip specs
 
 echo "Create and configure ubuntu user"
 if ! id -u ubuntu >/dev/null 2>&1; then
